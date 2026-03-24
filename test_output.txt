@@ -1,0 +1,48 @@
+﻿==================================================
+TEST 1: FAA Scraper
+==================================================
+[FAA] Inicializando sesi¾n...
+[FAA] Sesi¾n inicializada sin JWT (algunas funciones limitadas).
+[FAA] Error obteniendo filtros: 403 Client Error: Forbidden for url: https://drs.faa.gov/api/browse/doctype/ADFRAWD/metadatas/filtered
+  Makes found: 0
+  No makes via API (likely Akamai blocked).
+  Testing fallback search...
+[FAA] API - Buscando pßgina 1... Bloqueado (403).
+[FAA] API bloqueada, intentando scraping HTML...
+[FAA] La pßgina es una SPA Angular y no se puede scrapear estßticamente.
+[FAA] Recomendaci¾n: Usar la opci¾n 'Save Results List' directamente en el navegador.
+[FAA] URL para abrir en navegador: https://drs.faa.gov/browse/ADFRAWD/doctypeDetails?Make=Boeing&Status=Current
+  Results: 0
+
+==================================================
+TEST 2: EASA Scraper
+==================================================
+[EASA] Obteniendo pßgina principal 1... Encontrados 20 resultados.
+[EASA] Total ADs obtenidos: 20
+  Main page results: 20
+    AD: 2026-0054 | Make: ISSOIRE AVIATION | Model: APM 20, APM 30, APM 
+    AD: 26-034 | Make: AIRBUS S.A.S. | Model: A350
+    AD: 2026-0053 | Make: DASSAULT AVIATION | Model: Falcon 7X
+    AD: 2026-0055 | Make: AIRBUS S.A.S. | Model: A319, A320, A321
+    AD: 2026-0052 | Make: AIRBUS HELICOPTERS | Model: AS 350 / EC 130
+
+==================================================
+TEST 3: Transport Canada Scraper
+==================================================
+  Manufacturers found: 440
+    - ADAMS BALLOONS
+    - AERO ADVENTURE
+    - AERO COMMANDER
+    - AEROMOT
+    - AERONAUTICA MACCHI
+
+  Boeing entries: ['BOEING', 'BOEING HELICOPTERS']
+
+==================================================
+TEST 4: CSV/Excel Export
+==================================================
+  CSV export: OK
+  Excel export: OK
+  Cleanup: OK
+
+All tests complete!
