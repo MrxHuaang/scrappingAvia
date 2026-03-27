@@ -157,10 +157,6 @@ def api_export(fmt):
             df.to_csv(output, index=False, encoding="utf-8-sig")
             output.seek(0)
 
-            # Guardar copia local
-            filepath = os.path.join(OUTPUT_DIR, f"ad_results_{timestamp}.csv")
-            df.to_csv(filepath, index=False, encoding="utf-8-sig")
-
             return send_file(
                 output,
                 mimetype="text/csv",
@@ -172,10 +168,6 @@ def api_export(fmt):
             output = io.BytesIO()
             df.to_excel(output, index=False, engine="openpyxl")
             output.seek(0)
-
-            # Guardar copia local
-            filepath = os.path.join(OUTPUT_DIR, f"ad_results_{timestamp}.xlsx")
-            df.to_excel(filepath, index=False, engine="openpyxl")
 
             return send_file(
                 output,
