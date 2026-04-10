@@ -1,346 +1,248 @@
 <!doctype html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      name="description"
-      content="AD Scraper - Herramienta de busqueda de Airworthiness Directives de FAA, EASA y Transport Canada"
-    />
-    <title>AD Scraper - Airworthiness Directives</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="/static/css/style.css" />
-  </head>
-  <body>
-    <!-- Header -->
-    <header class="header" id="main-header">
-      <div class="header-inner">
-        <div class="logo">
-          <div class="logo-icon">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M2 12L6 3h12l4 9" />
-              <path d="M6 3L12 21 18 3" />
-              <path d="M2 12h20" />
-            </svg>
-          </div>
-          <div class="logo-text">
-            <h1>AD Scraper</h1>
-            <span class="logo-subtitle">Airworthiness Directives</span>
-          </div>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC en un solo lugar.">
+    <meta property="og:title" content="AD Search — Airworthiness Directives">
+    <meta property="og:description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC en un solo lugar.">
+    <meta name="theme-color" content="#0a0e17">
+    <title>AD Search · Airworthiness Directives</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233b82f6' stroke-width='1.5'%3E%3Cpath d='M2 12L6 3h12l4 9'/%3E%3Cpath d='M6 3L12 21 18 3'/%3E%3Cpath d='M2 12h20'/%3E%3C/svg%3E">
+    <link rel="manifest" href="/static/manifest.json">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-layout" id="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-inner">
+                <!-- Logo -->
+                <a href="/" class="sidebar-logo">
+                    <div class="logo-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12L6 3h12l4 9"/><path d="M6 3L12 21 18 3"/><path d="M2 12h20"/></svg>
+                    </div>
+                    <div class="logo-text">
+                        <h1>AD Search</h1>
+                        <span class="logo-subtitle">Airworthiness Directives</span>
+                    </div>
+                </a>
+
+                <!-- Sources -->
+                <div class="sidebar-section">
+                    <h2 class="sidebar-section-title">Fuente de datos</h2>
+                    <div class="sidebar-sources">
+                        <button class="source-card active" data-source="federal_register" id="btn-federal-register">
+                            <div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg></div>
+                            <div class="source-info"><span class="source-name">Federal Register</span><span class="source-count" id="count-federal_register">&mdash;</span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
+                        <button class="source-card" data-source="easa" id="btn-easa">
+                            <div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M3 12h18"/><path d="M5.5 5.5c2 2 4.5 3.5 6.5 3.5s4.5-1.5 6.5-3.5"/><path d="M5.5 18.5c2-2 4.5-3.5 6.5-3.5s4.5 1.5 6.5 3.5"/></svg></div>
+                            <div class="source-info"><span class="source-name">EASA</span><span class="source-count" id="count-easa">&mdash;</span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
+                        <button class="source-card" data-source="transport_canada" id="btn-tc">
+                            <div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+                            <div class="source-info"><span class="source-name">Transport Canada</span><span class="source-count" id="count-transport_canada">&mdash;</span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
+                        <button class="source-card" data-source="anac_brazil" id="btn-anac-brazil">
+                            <div class="source-icon emoji-icon">🇧🇷</div>
+                            <div class="source-info"><span class="source-name">ANAC Brasil</span><span class="source-count" id="count-anac_brazil">&mdash;</span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
+                        <button class="source-card" data-source="all" id="btn-all">
+                            <div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+                            <div class="source-info"><span class="source-name">Todas</span><span class="source-count" id="count-all">&mdash;</span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Filters Form -->
+                <div class="sidebar-section">
+                    <h2 class="sidebar-section-title">Filtros</h2>
+                    <form class="sidebar-form" id="search-form">
+                        <div class="form-group"><label for="input-keyword">Palabra clave</label><input type="text" id="input-keyword" name="keyword" placeholder="Ej: landing gear..." autocomplete="off"></div>
+                        <div class="form-group"><label for="input-make">Fabricante</label><input type="text" id="input-make" name="make" placeholder="Ej: Boeing..." autocomplete="off"></div>
+                        <div class="form-group"><label for="input-model">Modelo</label><input type="text" id="input-model" name="model" placeholder="Ej: 737, A320..." autocomplete="off"></div>
+                        <div class="form-group"><label for="input-product-type">Tipo</label>
+                            <select id="input-product-type" name="product_type"><option value="">Todos</option><option value="Aircraft">Aircraft</option><option value="Engine">Engine</option><option value="Propeller">Propeller</option></select>
+                        </div>
+                        <div class="form-group"><label for="input-date-from">Desde</label><input type="date" id="input-date-from" name="date_from"></div>
+                        <div class="form-group"><label for="input-date-to">Hasta</label><input type="date" id="input-date-to" name="date_to"></div>
+
+                        <div class="sidebar-actions">
+                            <button type="submit" class="btn btn-primary btn-block" id="btn-search">
+                                <svg class="btn-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                                <span class="btn-search-text">Buscar</span>
+                                <span class="btn-search-spinner" style="display:none;"></span>
+                            </button>
+                            <button type="button" class="btn btn-secondary btn-block" id="btn-clear">Limpiar</button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Recent Searches -->
+                <div class="sidebar-section">
+                    <h2 class="sidebar-section-title">Recientes</h2>
+                    <div class="recent-searches" id="recent-searches">
+                        <div class="recent-empty">Sin busquedas recientes</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Sidebar Overlay (mobile) -->
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+        <!-- Main Area -->
+        <div class="main-area">
+            <!-- App Header -->
+            <header class="app-header" id="app-header">
+                <button class="mobile-menu-btn" id="mobile-menu-btn" title="Filtros">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
+                <div class="app-header-spacer"></div>
+                <button id="theme-toggle" class="header-icon-btn" title="Alternar tema">
+                    <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;width:18px;height:18px"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                    <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+                </button>
+                <button id="btn-shortcuts-help" class="header-icon-btn" title="Atajos (?)" style="margin-left:.25rem">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </button>
+                <div class="header-divider"></div>
+                <div class="status-dot" id="status-indicator"></div>
+                <span id="status-text" class="header-status-text">Listo</span>
+            </header>
+
+            <!-- Main Content -->
+            <main class="main-content">
+                <!-- Restore Banner -->
+                <div class="restore-banner" id="restore-banner" style="display:none">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span id="restore-banner-text">Mostrando resultados anteriores</span>
+                    <button class="restore-banner-link" id="restore-search-again">Buscar de nuevo</button>
+                    <button class="restore-banner-close" id="restore-dismiss">&times;</button>
+                </div>
+
+                <!-- Empty State -->
+                <section class="empty-state-section" id="empty-state" style="display:none">
+                    <div class="empty-state-card">
+                        <div class="empty-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="8" y1="11" x2="14" y2="11"/></svg></div>
+                        <h3 class="empty-state-title" id="empty-state-title">Sin resultados</h3>
+                        <p class="empty-state-desc">Intenta con otro fabricante, modelo o palabra clave.</p>
+                        <div class="empty-state-errors" id="empty-state-errors"></div>
+                    </div>
+                </section>
+
+                <!-- Results -->
+                <section class="results-section" id="results-section" style="display:none">
+                    <div class="results-header">
+                        <div class="results-info">
+                            <h2 class="section-title">Resultados</h2>
+                            <span class="results-count" id="results-count">0</span>
+                            <span class="results-time" id="results-time"></span>
+                        </div>
+                        <div class="results-actions">
+                            <!-- Quick filter -->
+                            <div class="quick-filter-wrap">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                                <input type="text" id="quick-filter" placeholder="Filtrar resultados..." autocomplete="off">
+                            </div>
+                            <!-- View toggle -->
+                            <div class="view-toggle" id="view-toggle">
+                                <button class="view-toggle-btn active" data-view="table" id="view-table-btn" title="Vista tabla">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                                </button>
+                                <button class="view-toggle-btn" data-view="cards" id="view-cards-btn" title="Vista tarjetas">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                                </button>
+                            </div>
+                            <!-- Share -->
+                            <button class="btn btn-outline btn-sm" id="btn-share-url" title="Copiar URL de busqueda">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                            </button>
+                            <!-- Export -->
+                            <button class="btn btn-outline btn-sm" id="btn-export-csv">CSV</button>
+                            <button class="btn btn-outline btn-sm" id="btn-export-excel">Excel</button>
+                        </div>
+                    </div>
+
+                    <!-- Table view -->
+                    <div class="table-container" id="table-container">
+                        <table class="results-table" id="results-table">
+                            <thead>
+                                <tr>
+                                    <th class="th-checkbox"><input type="checkbox" id="select-all" title="Seleccionar todo"></th>
+                                    <th class="sortable th-rel" data-sort="_relevance" title="Relevancia">Rel.</th>
+                                    <th class="sortable" data-sort="Source">Fuente</th>
+                                    <th class="sortable" data-sort="AD_Number">N&ordm; AD</th>
+                                    <th class="sortable" data-sort="Make">Fabricante</th>
+                                    <th class="sortable" data-sort="Model">Modelo</th>
+                                    <th class="sortable col-tipo" data-sort="Product_Type">Tipo</th>
+                                    <th class="sortable col-subject" data-sort="Subject">Asunto</th>
+                                    <th class="sortable" data-sort="Effective_Date">Fecha</th>
+                                    <th>Enlace</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-body"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Cards view -->
+                    <div class="cards-container" id="cards-container" style="display:none"></div>
+
+                    <!-- Pagination -->
+                    <div class="pagination" id="pagination"></div>
+                </section>
+
+                <!-- Bulk Bar -->
+                <div class="bulk-bar" id="bulk-bar" style="display:none">
+                    <span class="bulk-bar-text" id="bulk-bar-text">0 seleccionados</span>
+                    <span class="bulk-bar-filter-badge" id="bulk-filter-badge" style="display:none">Filtro activo</span>
+                    <div class="bulk-bar-actions">
+                        <button class="btn btn-outline bulk-bar-btn" id="bulk-export-csv">CSV</button>
+                        <button class="btn btn-outline bulk-bar-btn" id="bulk-export-excel">Excel</button>
+                        <button class="btn btn-outline bulk-bar-btn" id="bulk-export-zip">ZIP</button>
+                        <button class="btn btn-secondary bulk-bar-close" id="bulk-deselect">&times;</button>
+                    </div>
+                </div>
+
+                <!-- Toast -->
+                <div class="toast-container" id="toast-container"></div>
+            </main>
         </div>
-        <div class="header-status" id="header-status">
-          <button id="theme-toggle" class="btn btn-outline" title="Alternar Modo Claro/Oscuro" style="margin-right: 1rem; border: none;">
-            <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none; width: 18px; height: 18px;">
-                <circle cx="12" cy="12" r="5"></circle>
-                <line x1="12" y1="1" x2="12" y2="3"></line>
-                <line x1="12" y1="21" x2="12" y2="23"></line>
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-                <line x1="1" y1="12" x2="3" y2="12"></line>
-                <line x1="21" y1="12" x2="23" y2="12"></line>
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-            </svg>
-            <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px;">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-            </svg>
-          </button>
-          <div class="status-dot" id="status-indicator"></div>
-          <span id="status-text">Listo</span>
+    </div>
+
+    <!-- Shortcuts Help Modal -->
+    <div class="modal-overlay" id="shortcuts-modal" style="display:none">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Atajos de teclado</h3>
+                <button class="modal-close" id="shortcuts-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="shortcut-row"><kbd>/</kbd><span>Enfocar campo de busqueda</span></div>
+                <div class="shortcut-row"><kbd>Esc</kbd><span>Cerrar dropdown / deseleccionar</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+Enter</kbd><span>Ejecutar busqueda</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+Shift+C</kbd><span>Copiar URL de busqueda</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+A</kbd><span>Seleccionar pagina actual (en tabla)</span></div>
+                <div class="shortcut-row"><kbd>?</kbd><span>Mostrar esta ayuda</span></div>
+            </div>
         </div>
-      </div>
-    </header>
+    </div>
 
-    <!-- Main Content -->
-    <main class="main-content">
-      <!-- Source Selector -->
-      <section class="sources-section" id="sources-section">
-        <h2 class="section-title">Fuente de datos</h2>
-        <div class="sources-grid">
-          <button
-            class="source-card active"
-            data-source="federal_register"
-            id="btn-federal-register"
-          >
-            <div class="source-icon">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M3 9h18" />
-                <path d="M9 3v18" />
-              </svg>
-            </div>
-            <div class="source-info">
-              <span class="source-name">Federal Register</span>
-              <span class="source-region">Estados Unidos</span>
-            </div>
-            <div class="source-status-dot online" id="status-fr"></div>
-          </button>
-
-          <button class="source-card" data-source="easa" id="btn-easa">
-            <div class="source-icon">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 3v18" />
-                <path d="M3 12h18" />
-                <path d="M5.5 5.5c2 2 4.5 3.5 6.5 3.5s4.5-1.5 6.5-3.5" />
-                <path d="M5.5 18.5c2-2 4.5-3.5 6.5-3.5s4.5 1.5 6.5 3.5" />
-              </svg>
-            </div>
-            <div class="source-info">
-              <span class="source-name">EASA</span>
-              <span class="source-region">Europa</span>
-            </div>
-            <div class="source-status-dot online" id="status-easa"></div>
-          </button>
-
-          <button
-            class="source-card"
-            data-source="transport_canada"
-            id="btn-tc"
-          >
-            <div class="source-icon">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                <path d="M2 17l10 5 10-5" />
-                <path d="M2 12l10 5 10-5" />
-              </svg>
-            </div>
-            <div class="source-info">
-              <span class="source-name">Transport Canada</span>
-              <span class="source-region">Canada</span>
-            </div>
-            <div class="source-status-dot online" id="status-tc"></div>
-          </button>
-          <button
-            class="source-card"
-            data-source="anac_brazil"
-            id="btn-anac-brazil"
-          >
-            <div class="source-icon">🇧🇷</div>
-            <div class="source-info">
-              <span class="source-name">ANAC</span>
-              <span class="source-region">Brasil</span>
-            </div>
-            <div class="source-status-dot online" id="status-anac-brazil"></div>
-          </button>
-          <button class="source-card" data-source="all" id="btn-all">
-            <div class="source-icon">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <path d="M2 12h20" />
-                <path
-                  d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
-                />
-              </svg>
-            </div>
-            <div class="source-info">
-              <span class="source-name">Todas las fuentes</span>
-              <span class="source-region">Global</span>
-            </div>
-            <div class="source-status-dot online"></div>
-          </button>
-        </div>
-      </section>
-
-      <!-- Search Form -->
-      <section class="search-section" id="search-section">
-        <h2 class="section-title">Parametros de busqueda</h2>
-        <form class="search-form" id="search-form">
-          <div class="form-row">
-            <div class="form-group">
-              <label for="input-keyword">Palabra clave</label>
-              <input
-                type="text"
-                id="input-keyword"
-                name="keyword"
-                placeholder="Ej: landing gear, fuel tank..."
-                autocomplete="off"
-              />
-            </div>
-            <div class="form-group">
-              <label for="input-make">Fabricante</label>
-              <input
-                type="text"
-                id="input-make"
-                name="make"
-                placeholder="Ej: Boeing, Airbus..."
-                autocomplete="off"
-              />
-            </div>
-            <div class="form-group">
-              <label for="input-model">Modelo</label>
-              <input
-                type="text"
-                id="input-model"
-                name="model"
-                placeholder="Ej: 737, A320..."
-                autocomplete="off"
-              />
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label for="input-product-type">Tipo de producto</label>
-              <select id="input-product-type" name="product_type">
-                <option value="">Todos</option>
-                <option value="Aircraft">Aircraft</option>
-                <option value="Engine">Engine</option>
-                <option value="Propeller">Propeller</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="input-date-from">Desde</label>
-              <input type="date" id="input-date-from" name="date_from" />
-            </div>
-            <div class="form-group">
-              <label for="input-date-to">Hasta</label>
-              <input type="date" id="input-date-to" name="date_to" />
-            </div>
-          </div>
-
-          <div class="form-actions">
-            <button type="submit" class="btn btn-primary" id="btn-search">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              >
-                <circle cx="11" cy="11" r="8" />
-                <path d="M21 21l-4.35-4.35" />
-              </svg>
-              Buscar
-            </button>
-            <button type="button" class="btn btn-secondary" id="btn-clear">
-              Limpiar
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <!-- Results -->
-      <section
-        class="results-section"
-        id="results-section"
-        style="display: none"
-      >
-        <div class="results-header">
-          <div class="results-info">
-            <h2 class="section-title">Resultados</h2>
-            <span class="results-count" id="results-count">0 registros</span>
-          </div>
-          <div class="results-actions">
-            <button class="btn btn-outline" id="btn-export-csv">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              CSV
-            </button>
-            <button class="btn btn-outline" id="btn-export-excel">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-              >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              Excel
-            </button>
-          </div>
-        </div>
-
-        <div class="table-container" id="table-container">
-          <table class="results-table" id="results-table">
-            <thead>
-              <tr>
-                <th class="sortable" data-sort="Source">Fuente</th>
-                <th class="sortable" data-sort="AD_Number">Numero AD</th>
-                <th class="sortable" data-sort="Make">Fabricante</th>
-                <th class="sortable" data-sort="Model">Modelo</th>
-                <th class="sortable" data-sort="Subject">Asunto</th>
-                <th class="sortable" data-sort="Effective_Date">Fecha</th>
-                <th>Enlace</th>
-              </tr>
-            </thead>
-            <tbody id="results-body"></tbody>
-          </table>
-        </div>
-
-        <!-- Pagination -->
-        <div class="pagination" id="pagination"></div>
-      </section>
-
-      <!-- Loading Overlay -->
-      <div class="loading-overlay" id="loading-overlay" style="display: none">
-        <div class="loading-content">
-          <div class="loading-spinner"></div>
-          <p class="loading-text" id="loading-text">
-            Buscando Airworthiness Directives...
-          </p>
-          <div class="loading-progress">
-            <div class="loading-bar" id="loading-bar"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Toast Container -->
-      <div class="toast-container" id="toast-container"></div>
-    </main>
-
-    <footer class="footer">
-      <p>AD Scraper &mdash; Airworthiness Directives Search Tool</p>
-      <p class="footer-sources">
-        Fuentes: Federal Register (USA) | EASA (Europa) | Transport Canada |
-        ANAC (Brasil)
-      </p>
-    </footer>
-
+    <script src="/static/js/aircraft_data.js"></script>
     <script src="/static/js/app.js"></script>
-  </body>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+        }
+    </script>
+</body>
 </html>

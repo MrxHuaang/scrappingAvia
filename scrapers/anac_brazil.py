@@ -9,6 +9,8 @@ Estructura del sitio:
 - DA_ProdE.asp     → Listado por fabricante/producto
 - DA_Last2E.asp    → ADs emitidas en las últimas 2 semanas
 - DA_DetailE.asp   → Detalle de un AD individual (?Emd=<id>)
+- DA_ModProdE.asp  → Modelos de un fabricante (?OrgCodi=<id>)
+- DA_ConsE.asp     → ADs de un modelo particular
 
 El sitio usa HTML clásico sin JavaScript obligatorio ni ViewState de ASP.NET.
 Las páginas de listado tienen tablas HTML simples con links a detalles.
@@ -25,6 +27,8 @@ ANAC_LIST_BY_NUM_URL = f"{ANAC_BASE_URL}/DA_NumE.asp"
 ANAC_LIST_BY_PROD_URL = f"{ANAC_BASE_URL}/DA_ProdE.asp"
 ANAC_RECENT_URL = f"{ANAC_BASE_URL}/DA_Last2E.asp"
 ANAC_DETAIL_URL = f"{ANAC_BASE_URL}/DA_DetailE.asp"
+ANAC_MOD_PROD_URL = f"{ANAC_BASE_URL}/DA_ModProdE.asp"
+ANAC_CONS_URL = f"{ANAC_BASE_URL}/DA_ConsE.asp"
 
 # Rangos de años disponibles en el sitio
 YEAR_RANGES = [
@@ -45,6 +49,16 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.5",
     "Referer": "https://sistemas.anac.gov.br/certificacao/DA/DAE.asp",
+}
+
+# Mapping de fabricantes conocidos a sus OrgCodi en ANAC (para búsqueda directa)
+# Estos se descubren via DA_ProdE.asp?Letr=<letra> → links a DA_ModProdE.asp?OrgCodi=<id>
+KNOWN_MANUFACTURERS = {
+    "embraer": "000332",
+    "boeing": None,       # Boeing no figura como fabricante ANAC-directo
+    "airbus": None,
+    "bombardier": None,
+    "helibras": "000013",
 }
 
 
@@ -156,7 +170,7 @@ def _fetch_recent(session):
             timeout=30,
         )
         resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or "latin-1"
+        resp.encoding = "latin-1"
         soup = BeautifulSoup(resp.text, "lxml")
         return _parse_list_table(soup, source_tag="recent")
     except requests.RequestException as e:
@@ -180,7 +194,7 @@ def _fetch_list_by_number(session, year_range="2021-2025"):
             timeout=30,
         )
         resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or "latin-1"
+        resp.encoding = "latin-1"
         soup = BeautifulSoup(resp.text, "lxml")
         results = _parse_list_table(soup, source_tag="list_num")
         print(f"[ANAC Brasil] Rango {year_range}: {len(results)} ADs encontrados.")
@@ -196,90 +210,285 @@ def _fetch_list_by_number(session, year_range="2021-2025"):
 
 def _search_by_manufacturer(session, make, model=None, keyword=None):
     """
-    Descartamos el camino del abecedario DA_ProdE.asp por su arquitectura obsoleta 
-    llena de subtablas de modelos vacías e inaccesibles, procedemos con un dump del listado general
-    por rangos y ejecutamos filtrado en memoria (Fallback escalado).
+    Busca ADs para un fabricante dado. Usa estrategia dual:
+
+    1. Intenta buscar directamente en el índice por producto (DA_ProdE)
+       si el fabricante tiene un OrgCodi conocido o lo descubrimos vía la
+       página del abecedario.
+    2. Como fallback robusto, descarga los listados cronológicos (DA_NumE)
+       y filtra en memoria por patrones del fabricante en el Subject.
     """
-    print(f"[ANAC Brasil] Delegando búsqueda de fabricante '{make}' a listado general cronológico (Fallback Mejorado).")
+    make_lower = make.lower().strip()
+
+    # --- Estrategia 1: Buscar el OrgCodi del fabricante ---
+    org_codi = KNOWN_MANUFACTURERS.get(make_lower)
+
+    if not org_codi:
+        # Buscar en la página del abecedario
+        org_codi = _discover_org_codi(session, make)
+
+    if org_codi:
+        print(f"[ANAC Brasil] Usando página de producto directa (OrgCodi={org_codi}).")
+        results = _fetch_by_product(session, org_codi, make)
+        if results:
+            # Filtrar por modelo si se especificó
+            if model:
+                model_lower = model.lower()
+                results = [
+                    r for r in results
+                    if model_lower in r.get("Model", "").lower()
+                    or model_lower in r.get("Subject", "").lower()
+                ]
+            print(f"[ANAC Brasil] {len(results)} ADs encontrados vía producto directo.")
+            return results
+
+    # --- Estrategia 2: Fallback a listados cronológicos con filtro amplio ---
+    print(f"[ANAC Brasil] Delegando búsqueda de '{make}' a listado cronológico con filtro amplio.")
     results = []
-    
-    # Buscamos en los dos rangos históricos más recientes prioritariamente para no saturar al servidor viejo
-    for year_range in ["2021-2025", "2016-2020"]:
-        batch = _fetch_list_by_number(session, year_range)
+
+    for yr in ["2021-2025", "2016-2020"]:
+        batch = _fetch_list_by_number(session, yr)
         results.extend(batch)
-        
-    make_lower = make.lower()
-    filtered_results = []
-    
+
+    # Filtro amplio: busca por nombre de fabricante Y por prefijos de modelos conocidos
+    model_prefixes = _get_model_prefixes_for_make(make_lower)
+    filtered = []
+
     for r in results:
-        # Se verifica si 'make' conincide estricitamente
-        if make_lower in r.get("Make", "").lower() or make_lower in r.get("Subject", "").lower():
-            filtered_results.append(r)
-            
-    # Filtramos recursivamente por modelo si existe
+        subject_lower = r.get("Subject", "").lower()
+        make_field = r.get("Make", "").lower()
+        model_field = r.get("Model", "").lower()
+        all_text = f"{make_field} {model_field} {subject_lower}"
+
+        # Coincidencia directa del nombre del fabricante
+        if make_lower in all_text:
+            filtered.append(r)
+            continue
+
+        # Coincidencia por prefijos de modelo (ERJ, EMB, etc.)
+        if any(pfx in all_text for pfx in model_prefixes):
+            # Asegurarnos de asignar el Make si estaba vacío
+            if not r["Make"]:
+                r["Make"] = make
+            filtered.append(r)
+            continue
+
+    # Filtrar por modelo si se especificó
     if model:
         model_lower = model.lower()
-        filtered_results = [
-            r for r in filtered_results
+        filtered = [
+            r for r in filtered
             if model_lower in r.get("Model", "").lower()
             or model_lower in r.get("Subject", "").lower()
         ]
-        
-    print(f"[ANAC Brasil] {len(filtered_results)} ADs filtrados en memoria para '{make}'.")
-    return filtered_results
+
+    print(f"[ANAC Brasil] {len(filtered)} ADs filtrados para '{make}'.")
+    return filtered
+
+
+def _discover_org_codi(session, make):
+    """
+    Descubre el OrgCodi de un fabricante buscando en la página
+    DA_ProdE.asp?Letr=<primera letra>.
+    """
+    first_letter = make.strip()[0].upper()
+    make_lower = make.lower()
+
+    try:
+        resp = session.get(
+            ANAC_LIST_BY_PROD_URL,
+            params={"Letr": first_letter},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        resp.encoding = "latin-1"
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            text = a.get_text(strip=True).lower()
+            if "DA_ModProdE.asp" in href and make_lower in text:
+                match = re.search(r"OrgCodi=(\d+)", href)
+                if match:
+                    org_codi = match.group(1)
+                    print(f"[ANAC Brasil] Descubierto OrgCodi={org_codi} para '{make}'.")
+                    return org_codi
+    except requests.RequestException as e:
+        print(f"[ANAC Brasil] Error descubriendo OrgCodi para '{make}': {e}")
+
+    return None
+
+
+def _fetch_by_product(session, org_codi, make_name):
+    """
+    Obtiene ADs desde la página de producto directo del fabricante.
+    Primero lista los modelos (DA_ModProdE.asp?OrgCodi=X), luego
+    obtiene los ADs de cada modelo (DA_ConsE.asp?...).
+    """
+    try:
+        resp = session.get(
+            ANAC_MOD_PROD_URL,
+            params={"OrgCodi": org_codi},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        resp.encoding = "latin-1"
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        # Buscar links a páginas de consulta de ADs por modelo
+        model_links = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            text = a.get_text(strip=True)
+            if "DA_ConsE" in href or ("ModCodi" in href and "Prod" not in href):
+                model_links.append((text, href))
+
+        if not model_links:
+            # Si no hay links a modelos específicos, el fabricante lista ADs en esta misma página
+            return _parse_list_table(soup, source_tag="product", make_override=make_name)
+
+        print(f"[ANAC Brasil] {len(model_links)} modelos para {make_name}.")
+        all_results = []
+
+        for model_text, href in model_links:
+            full_url = _resolve_url(href)
+            try:
+                resp2 = session.get(full_url, timeout=25)
+                resp2.raise_for_status()
+                resp2.encoding = "latin-1"
+                soup2 = BeautifulSoup(resp2.text, "lxml")
+                ads = _parse_list_table(soup2, source_tag="product", make_override=make_name)
+
+                for ad in ads:
+                    if not ad["Model"]:
+                        ad["Model"] = model_text
+                    if not ad["Make"]:
+                        ad["Make"] = make_name
+
+                all_results.extend(ads)
+                time.sleep(0.3)  # Rate limiting
+            except requests.RequestException as e:
+                print(f"[ANAC Brasil] Error obteniendo modelo '{model_text}': {e}")
+
+        # Deduplicar
+        seen = set()
+        unique = []
+        for r in all_results:
+            key = r["AD_Number"]
+            if key not in seen:
+                seen.add(key)
+                unique.append(r)
+
+        return unique
+
+    except requests.RequestException as e:
+        print(f"[ANAC Brasil] Error obteniendo productos para OrgCodi={org_codi}: {e}")
+        return []
+
+
+def _get_model_prefixes_for_make(make_lower):
+    """
+    Devuelve prefijos de modelo comunes para un fabricante dado,
+    para poder encontrar ADs en el subject incluso cuando el nombre
+    del fabricante no aparece explícitamente.
+    """
+    prefix_map = {
+        "embraer": ["erj", "emb-", "emb ", "e170", "e175", "e190", "e195", "phenom", "legacy", "praetor", "lineage"],
+        "boeing": ["737", "747", "757", "767", "777", "787", "717", "727"],
+        "airbus": ["a318", "a319", "a320", "a321", "a330", "a340", "a350", "a380", "a220"],
+        "bombardier": ["crj", "dhc-8", "cl-600", "challenger", "global", "learjet", "bd-"],
+        "bell": ["bell "],
+        "helibras": ["helibras", "esquilo"],
+    }
+    return prefix_map.get(make_lower, [make_lower])
 
 
 # ---------------------------------------------------------------------------
-# Parser de tablas de listado
+# Parser de tablas de listado — MEJORADO
 # ---------------------------------------------------------------------------
 
-def _parse_list_table(soup, source_tag=""):
+def _parse_list_table(soup, source_tag="", make_override=None):
     """
     Parsea una tabla HTML de listado de ADs del sitio ANAC Brasil.
 
-    El sitio tiene tablas con columnas típicas:
-      DA Number | Subject / Applicability | Effective Date | PDF / Detail link
+    El sitio emite tablas de navegación y tablas de datos mezcladas. La tabla
+    de datos correcta se identifica por la presencia de links a
+    DA_DetailE.asp?Emd= (página de detalle de cada AD).
 
-    Como el HTML puede variar entre páginas, el parser es defensivo:
-    primero intenta identificar columnas por encabezado, luego por posición.
+    Columnas típicas de la tabla de datos:
+      Directive No. | Effective Date | Subject / Reference | Action | Texts
     """
     results = []
 
-    # Buscar todas las tablas
     tables = soup.find_all("table")
     if not tables:
         return results
 
-    # Tomar la tabla con más filas (la tabla de datos principal)
-    main_table = max(tables, key=lambda t: len(t.find_all("tr")))
-    rows = main_table.find_all("tr")
+    # --- Identificar la tabla de datos por presencia de links DA_DetailE ---
+    # IMPORTANTE: lxml anida tablas, así que una tabla padre también "contiene"
+    # los links de sus hijas. Buscamos la tabla MÁS INTERNA (menos sub-tablas)
+    # que tiene links de detalle, ya que esa es la tabla de datos real.
+    candidates_with_links = []
 
+    for t in tables:
+        detail_links = t.find_all("a", href=re.compile(r"DA_DetailE\.asp\?Emd=", re.I))
+        if detail_links:
+            # Contar sub-tablas anidadas — menos = más interno
+            child_tables = t.find_all("table")
+            candidates_with_links.append((t, len(detail_links), len(child_tables)))
+
+    main_table = None
+    if candidates_with_links:
+        # Elegir la tabla con MÁS detail links pero MENOS sub-tablas anidadas
+        # (la tabla de datos real no tiene sub-tablas)
+        candidates_with_links.sort(key=lambda x: (x[2], -x[1]))
+        main_table = candidates_with_links[0][0]
+
+    if not main_table:
+        # Fallback: tabla con más filas que tenga al menos un link
+        fallback = [(t, len(t.find_all("tr"))) for t in tables if t.find("a", href=True)]
+        if fallback:
+            main_table = max(fallback, key=lambda x: x[1])[0]
+        else:
+            return results
+
+    rows = main_table.find_all("tr")
     if not rows:
         return results
 
     # --- Detectar índices de columnas por encabezado ---
-    header_row = rows[0]
-    headers = [th.get_text(strip=True).lower() for th in header_row.find_all(["th", "td"])]
+    # Buscamos la fila que contiene headers reconocibles
+    header_row_idx = 0
+    col_num = None
+    col_subject = None
+    col_date = None
+    col_make = None
+    col_model = None
 
-    col_num = _find_col(headers, ["number", "número", "da number", "diretriz", "num"])
-    col_subject = _find_col(headers, ["subject", "assunto", "description", "título", "title"])
-    col_date = _find_col(headers, ["effective", "date", "data", "emissão", "issued"])
-    col_make = _find_col(headers, ["manufacturer", "fabricante", "holder", "make"])
-    col_model = _find_col(headers, ["model", "modelo", "aircraft", "type"])
+    for idx, row in enumerate(rows):
+        cells_text = [c.get_text(strip=True).lower() for c in row.find_all(["th", "td"])]
+        # Verificar si esta fila parece un encabezado
+        if any(h in " ".join(cells_text) for h in ["directive", "effective", "subject", "action"]):
+            header_row_idx = idx
+            col_num = _find_col(cells_text, ["directive", "number", "diretriz", "num"])
+            col_subject = _find_col(cells_text, ["subject", "assunto", "reference"])
+            col_date = _find_col(cells_text, ["effective", "date", "data"])
+            col_make = _find_col(cells_text, ["manufacturer", "fabricante", "holder", "make"])
+            col_model = _find_col(cells_text, ["model", "modelo", "aircraft", "type"])
+            break
 
-    # Si no detectamos columnas por nombre, usamos posición por defecto
-    # (patrón común en ANAC: col0=número, col1=subject, col2=date)
+    # Defaults si no encontramos encabezados
     if col_num is None:
         col_num = 0
-    if col_subject is None:
-        col_subject = 1
     if col_date is None:
-        col_date = 2
+        col_date = 1
+    if col_subject is None:
+        col_subject = 2
 
     # --- Parsear filas de datos ---
-    for row in rows[1:]:
+    for row in rows[header_row_idx + 1:]:
         cells = row.find_all(["td", "th"])
-        if not cells or len(cells) < 2:
+        if not cells or len(cells) < 3:
             continue
 
         def cell_text(idx):
@@ -288,13 +497,16 @@ def _parse_list_table(soup, source_tag=""):
             return ""
 
         ad_number_raw = cell_text(col_num)
-        subject_raw = cell_text(col_subject)
         effective_date_raw = cell_text(col_date)
+        subject_raw = cell_text(col_subject)
         make_raw = cell_text(col_make) if col_make is not None else ""
         model_raw = cell_text(col_model) if col_model is not None else ""
 
-        # Saltar filas vacías o que son sub-encabezados
-        if not ad_number_raw and not subject_raw:
+        # Saltar filas vacías, footer, o sub-encabezados
+        if not ad_number_raw or not subject_raw:
+            continue
+        # Saltar filas que parecen footer (ej: "Action:F- Terminal...")
+        if ad_number_raw.lower().startswith("action") or "last modified" in ad_number_raw.lower():
             continue
 
         # --- Extraer link al detalle y al PDF ---
@@ -308,7 +520,8 @@ def _parse_list_table(soup, source_tag=""):
                 if "detail" in href.lower() or "emd=" in href.lower():
                     detail_link = href_full
                 elif ".pdf" in href.lower() or "pdf" in link_text:
-                    pdf_link = href_full
+                    if not pdf_link:
+                        pdf_link = href_full
                 elif not detail_link and href_full:
                     detail_link = href_full
 
@@ -319,10 +532,17 @@ def _parse_list_table(soup, source_tag=""):
         effective_date = _normalize_date(effective_date_raw)
 
         # --- Inferir make/model del subject si no están en columnas propias ---
-        if not make_raw:
+        if make_override:
+            if not make_raw:
+                make_raw = make_override
+        elif not make_raw:
             make_raw, inferred_model = _extract_make_model_from_subject(subject_raw)
             if not model_raw:
                 model_raw = inferred_model
+
+        # Intentar extraer modelo del subject si aún no tenemos
+        if not model_raw:
+            _, model_raw = _extract_make_model_from_subject(subject_raw)
 
         result = {
             "Source": "ANAC (Brasil)",
@@ -338,7 +558,6 @@ def _parse_list_table(soup, source_tag=""):
         }
 
         results.append(result)
-        time.sleep(0)  # placeholder para rate limiting si se necesita
 
     return results
 
@@ -355,7 +574,7 @@ def get_ad_detail(session, detail_url):
     try:
         resp = session.get(detail_url, timeout=20)
         resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding or "latin-1"
+        resp.encoding = "latin-1"
         soup = BeautifulSoup(resp.text, "lxml")
 
         detail = {}
@@ -420,37 +639,60 @@ def _normalize_ad_number(raw):
     """
     Normaliza el número de AD de ANAC Brasil.
     Formato típico: 2022-04-01 o DA 2022-04-01 o 2022-04-01R01
+    El sitio a veces concatena "Amdt NNNN" sin espacio, hay que limpiar.
     """
     if not raw:
         return raw
     # Remover prefijos comunes
-    cleaned = re.sub(r"^(DA\s*|AD\s*)", "", raw.strip(), flags=re.I)
+    cleaned = re.sub(r"^(DA\s*|AD\s*|E)", "", raw.strip(), flags=re.I)
+    # Separar el Amdt si viene pegado (ej: "2021-02-01Amdt 1477" → "2021-02-01")
+    cleaned = re.sub(r"Amdt\s*\d+.*$", "", cleaned, flags=re.I)
     return cleaned.strip()
 
 
 def _normalize_date(raw):
     """
-    Normaliza fechas del formato ANAC Brasil (DD/MM/YYYY o similar) a YYYY-MM-DD.
+    Normaliza fechas del formato ANAC Brasil a YYYY-MM-DD.
+    Acepta: DD/MM/YYYY, DD Mon. YYYY, YYYY-MM-DD
     """
     if not raw:
         return ""
+
     # Formato DD/MM/YYYY
     m = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})", raw)
     if m:
         day, month, year = m.group(1), m.group(2), m.group(3)
         return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+
+    # Formato "15 Feb. 2021" o "23 Mar. 2023"
+    MONTH_MAP = {
+        "jan": "01", "feb": "02", "mar": "03", "apr": "04", "may": "05", "jun": "06",
+        "jul": "07", "aug": "08", "sep": "09", "oct": "10", "nov": "11", "dec": "12",
+        "fev": "02", "abr": "04", "mai": "05", "ago": "08", "set": "09", "out": "10", "dez": "12"
+    }
+    m = re.search(r"(\d{1,2})\s+([A-Za-z]{3,4})\.?\s+(\d{4})", raw)
+    if m:
+        day = m.group(1).zfill(2)
+        month_str = m.group(2).lower()[:3]
+        year = m.group(3)
+        month = MONTH_MAP.get(month_str, "01")
+        return f"{year}-{month}-{day}"
+
     # Formato YYYY-MM-DD (ya correcto)
     m = re.search(r"(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})", raw)
     if m:
         return f"{m.group(1)}-{m.group(2).zfill(2)}-{m.group(3).zfill(2)}"
+
     return raw.strip()
 
 
 def _extract_make_model_from_subject(subject):
     """
     Infiere fabricante y modelo a partir del texto del subject/título.
-    ANAC Brasil principalmente publica ADs de Embraer, pero también
-    adopta ADs de Boeing, Airbus, etc.
+
+    ANAC Brasil concatena título y modelo sin separador:
+    "DETECTORES DE FUMCAÇAERJ190-300; ERJ190-400"
+    Así que buscamos patrones de modelo directamente.
     """
     known_makes = [
         "Embraer", "Boeing", "Airbus", "Bombardier", "ATR",
@@ -458,6 +700,7 @@ def _extract_make_model_from_subject(subject):
         "Leonardo", "Robinson", "Rolls-Royce", "General Electric",
         "Pratt & Whitney", "Honeywell", "Textron", "Pilatus",
         "Gulfstream", "Dassault", "Diamond", "Cirrus",
+        "Helibras",
     ]
 
     make = ""
@@ -466,24 +709,41 @@ def _extract_make_model_from_subject(subject):
             make = known
             break
 
-    # Intentar extraer modelo: patrón "ERJ 170", "737", "A320", etc.
+    # Intentar extraer modelo y, si lo encontramos, inferir el fabricante
     model = ""
     model_patterns = [
-        r"\b(ERJ\s*[-\s]?\d{3}(?:[-\s]\d{3})?(?:\s*[A-Z]{2,4})?)\b",
-        r"\b(E\d{3}(?:\s*[A-Z]{2})?)\b",
-        r"\b(EMB[-\s]?\d{3})\b",
-        r"\b(737[-\s]?\w{0,4}(?:\s*MAX)?)\b",
-        r"\b(A\s?3[0-9]{2}(?:[-\s]\d{3})?(?:\s*neo)?)\b",
-        r"\b(777[-\s]?\d{0,3})\b",
-        r"\b(787[-\s]?\d{0,3})\b",
-        r"\b(CRJ[-\s]?\d{3})\b",
-        r"\b(DHC[-\s]?\d+)\b",
-        r"\b(ATR[-\s]?\d{2})\b",
+        # Embraer patterns — estas son las más importantes para ANAC
+        (r"\b(ERJ\s*[-\s]?\d{3}(?:[-\s]\d{3})?(?:\s*[A-Z]{0,4})?)", "Embraer"),
+        (r"\b(E\d{3}(?:\s*[A-Z]{2})?)\b", "Embraer"),
+        (r"\b(EMB[-\s]?\d{3}(?:[A-Z\d]*)?)", "Embraer"),
+        # Boeing patterns
+        (r"\b(737[-\s]?\w{0,4}(?:\s*MAX)?)\b", "Boeing"),
+        (r"\b(747[-\s]?\w{0,4})\b", "Boeing"),
+        (r"\b(757[-\s]?\w{0,4})\b", "Boeing"),
+        (r"\b(767[-\s]?\w{0,4})\b", "Boeing"),
+        (r"\b(777[-\s]?\w{0,4})\b", "Boeing"),
+        (r"\b(787[-\s]?\w{0,4})\b", "Boeing"),
+        # Airbus patterns
+        (r"\b(A\s?3[0-9]{2}(?:[-\s]\d{3})?(?:\s*neo)?)\b", "Airbus"),
+        # Bombardier
+        (r"\b(CRJ[-\s]?\d{3})\b", "Bombardier"),
+        (r"\b(DHC[-\s]?\d+)\b", "de Havilland Canada"),
+        (r"\b(BD[-\s]?\d{3}[-\s]?\w+)\b", "Bombardier"),
+        # ATR
+        (r"\b(ATR[-\s]?\d{2})\b", "ATR"),
+        # Helicopter patterns
+        (r"\b(AS\s?3[0-9]{2}[A-Z]?\d*)\b", "Eurocopter"),
+        (r"\b(EC\s?\d{3}[A-Z]?\d*)\b", "Eurocopter"),
     ]
-    for pattern in model_patterns:
+
+    for pattern_tuple in model_patterns:
+        pattern = pattern_tuple[0]
+        implied_make = pattern_tuple[1] if len(pattern_tuple) > 1 else None
         m = re.search(pattern, subject, re.I)
         if m:
             model = m.group(1).strip()
+            if not make and implied_make:
+                make = implied_make
             break
 
     return make, model
@@ -501,11 +761,13 @@ def get_recent_ads(days=14):
 
 if __name__ == "__main__":
     print("=== ANAC Brasil AD Search - Test ===")
-    results = search_ads(make="Embraer", max_results=10)
-    for r in results[:5]:
+    results = search_ads(make="Embraer", max_results=20)
+    print(f"\nTotal: {len(results)} results")
+    for r in results[:10]:
         print(
             f"  AD: {r['AD_Number']} | "
             f"Make: {r['Make']} | "
+            f"Model: {r['Model']} | "
             f"Date: {r['Effective_Date']} | "
             f"Subject: {r['Subject'][:60]}"
         )
