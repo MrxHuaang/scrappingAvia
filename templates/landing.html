@@ -3,325 +3,633 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC en un solo lugar.">
-    <meta property="og:title" content="AD Search — Airworthiness Directives">
-    <meta property="og:description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC en un solo lugar.">
-    <meta name="theme-color" content="#000000">
-    <title>AD Search — Todas las ADs de aviación en un solo lugar</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%233b82f6'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='Inter,sans-serif' font-weight='700' font-size='15' fill='white'%3EAD%3C/text%3E%3C/svg%3E">
+    <meta name="description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestanas.">
+    <meta property="og:title" content="Zephr — Airworthiness Directives">
+    <meta property="og:description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestanas.">
+    <meta name="theme-color" content="#0a0a0a">
+    <title>Zephr — Airworthiness Directives</title>
+    <link rel="icon" type="image/png" href="/static/img/logo.png">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-        html{font-size:14px;scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
-        body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#000;color:#fff;line-height:1.6;min-height:100vh;overflow-x:hidden}
-        ::selection{background:rgba(99,102,241,.3)}
+        html{font-size:16px;scroll-behavior:smooth;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+        body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0a0a0a;color:#fff;line-height:1.6;min-height:100vh;overflow-x:hidden}
+        ::selection{background:rgba(255,255,255,0.12)}
+        a{color:inherit;text-decoration:none}
+        .wordmark{font-family:'Space Grotesk',sans-serif;font-weight:700;letter-spacing:-0.03em;color:#fff}
 
-        /* ==================
-           ORBS — ambient light
-           ================== */
-        .orb{position:fixed;pointer-events:none;z-index:0;border-radius:50%}
-        .orb-1{top:-200px;left:20%;width:600px;height:600px;background:radial-gradient(circle,rgba(99,102,241,.15) 0%,transparent 70%);filter:blur(80px);-webkit-filter:blur(80px)}
-        .orb-2{top:40%;right:-100px;width:400px;height:400px;background:radial-gradient(circle,rgba(139,92,246,.1) 0%,transparent 70%);filter:blur(60px);-webkit-filter:blur(60px)}
-        .orb-3{bottom:10%;left:10%;width:500px;height:500px;background:radial-gradient(circle,rgba(59,130,246,.08) 0%,transparent 70%);filter:blur(100px);-webkit-filter:blur(100px)}
-
-        /* ==================
-           GLASS system
-           ================== */
-        .glass{
-            background:rgba(255,255,255,.04);
-            backdrop-filter:blur(24px) saturate(180%);
-            -webkit-backdrop-filter:blur(24px) saturate(180%);
-            border:1px solid rgba(255,255,255,.08);
-            border-radius:16px;
-            position:relative;
-        }
-        .glass::before{
-            content:'';position:absolute;inset:0;border-radius:inherit;
-            background:linear-gradient(135deg,rgba(255,255,255,.12) 0%,transparent 50%);
-            pointer-events:none;
-        }
-        .glass-strong{
-            background:rgba(255,255,255,.07);
-            backdrop-filter:blur(32px) saturate(180%);
-            -webkit-backdrop-filter:blur(32px) saturate(180%);
-            border:1px solid rgba(255,255,255,.1);
-            border-radius:16px;
-            position:relative;
-        }
-        .glass-strong::before{
-            content:'';position:absolute;inset:0;border-radius:inherit;
-            background:linear-gradient(135deg,rgba(255,255,255,.12) 0%,transparent 50%);
-            pointer-events:none;
-        }
-        .glass-subtle{
-            background:rgba(255,255,255,.02);
-            backdrop-filter:blur(16px);
-            -webkit-backdrop-filter:blur(16px);
-            border:1px solid rgba(255,255,255,.06);
-            border-radius:16px;
-        }
-        .glass-pill{
-            display:inline-flex;align-items:center;gap:.4rem;
-            background:rgba(255,255,255,.04);
-            backdrop-filter:blur(16px);
-            -webkit-backdrop-filter:blur(16px);
-            border:1px solid rgba(255,255,255,.08);
-            border-radius:999px;
-            padding:6px 16px;
-        }
-
-        /* ==================
-           NAV
-           ================== */
+        /* ==================== NAV ==================== */
         .nav{
             position:fixed;top:0;width:100%;z-index:100;
             display:flex;align-items:center;justify-content:space-between;
-            padding:1rem 2rem;
-            background:rgba(0,0,0,.4);
-            backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-            border-bottom:1px solid rgba(255,255,255,.06);
+            padding:0 48px;height:60px;
+            background:rgba(10,10,10,0.8);
+            backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+            border-bottom:1px solid rgba(255,255,255,0.08);
         }
-        .nav-logo{color:#fff;text-decoration:none;font-size:1.05rem;font-weight:600;letter-spacing:-.01em}
-        .nav-cta{
-            background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
-            color:#fff;padding:.5rem 1.1rem;border-radius:10px;
-            font-family:inherit;font-size:.82rem;font-weight:500;
-            text-decoration:none;cursor:pointer;
-            transition:background 200ms,border-color 200ms;
+        .nav-left .wordmark{font-size:18px}
+        .nav-center{display:flex;align-items:center;gap:32px}
+        .nav-center a{color:rgba(255,255,255,0.55);font-size:14px;transition:color 200ms}
+        .nav-center a:hover{color:#fff}
+        .nav-right{display:flex;align-items:center;gap:16px}
+        .nav-right .nav-link{color:rgba(255,255,255,0.55);font-size:14px;transition:color 200ms}
+        .nav-right .nav-link:hover{color:#fff}
+        .nav-btn{
+            border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.06);
+            color:#fff;padding:8px 18px;border-radius:8px;font-family:inherit;
+            font-size:14px;font-weight:500;cursor:pointer;transition:background 200ms,border-color 200ms;
         }
-        .nav-cta:hover{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.25)}
+        .nav-btn:hover{background:rgba(255,255,255,0.12);border-color:rgba(255,255,255,0.3)}
 
-        /* ==================
-           CONTENT wrapper
-           ================== */
-        .content{position:relative;z-index:1}
-
-        /* ==================
-           HERO
-           ================== */
+        /* ==================== HERO ==================== */
         .hero{
-            padding:160px 2rem 80px;text-align:center;
-            display:flex;flex-direction:column;align-items:center;
+            padding-top:160px;padding-bottom:0;
+            max-width:1100px;margin:0 auto;padding-left:48px;padding-right:48px;
         }
-        .hero-eyebrow{
-            font-size:12px;letter-spacing:.08em;text-transform:uppercase;
-            color:rgba(255,255,255,.5);margin-bottom:32px;
+        .hero h1{
+            font-family:'Space Grotesk',sans-serif;font-size:72px;font-weight:600;
+            color:#fff;line-height:1.05;max-width:700px;
         }
-        .hero h1{font-size:clamp(2.5rem,6vw,80px);font-weight:700;line-height:1.1;margin-bottom:0;color:#fff}
-        .hero .hero-light{font-weight:300;color:rgba(255,255,255,.35);display:block;font-size:inherit;line-height:inherit}
-        .hero-sub{font-size:17px;color:rgba(255,255,255,.45);max-width:480px;margin:24px auto 0;line-height:1.65}
-        .hero-ctas{display:flex;gap:12px;justify-content:center;margin-top:48px;flex-wrap:wrap}
+        .hero-sub{
+            font-size:18px;color:rgba(255,255,255,0.5);max-width:480px;
+            margin-top:20px;line-height:1.6;
+        }
+        .hero-ctas{display:flex;gap:12px;margin-top:40px;flex-wrap:wrap}
         .cta-primary{
-            color:#fff;border:1px solid rgba(255,255,255,.2);
-            padding:14px 32px;border-radius:12px;
-            font-family:inherit;font-size:.95rem;font-weight:500;
-            text-decoration:none;cursor:pointer;
-            transition:all 200ms ease;
+            display:inline-flex;align-items:center;gap:8px;
+            background:#fff;color:#0a0a0a;font-weight:600;
+            padding:12px 24px;border-radius:8px;border:none;
+            font-family:inherit;font-size:15px;cursor:pointer;
+            transition:background 200ms;
         }
-        .cta-primary:hover{border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.1)}
+        .cta-primary:hover{background:rgba(255,255,255,0.9)}
         .cta-secondary{
-            background:transparent;border:1px solid rgba(255,255,255,.08);
-            color:rgba(255,255,255,.5);
-            padding:14px 32px;border-radius:12px;
-            font-family:inherit;font-size:.95rem;font-weight:500;
-            text-decoration:none;cursor:pointer;
-            transition:all 200ms ease;
+            display:inline-flex;align-items:center;gap:8px;
+            background:transparent;color:rgba(255,255,255,0.6);
+            border:1px solid rgba(255,255,255,0.15);
+            padding:12px 24px;border-radius:8px;
+            font-family:inherit;font-size:15px;font-weight:500;cursor:pointer;
+            transition:color 200ms,border-color 200ms;
         }
-        .cta-secondary:hover{color:#fff;border-color:rgba(255,255,255,.15)}
+        .cta-secondary:hover{color:#fff;border-color:rgba(255,255,255,0.3)}
 
-        /* ==================
-           STATS BAR
-           ================== */
-        .stats{max-width:700px;margin:80px auto;padding:28px 0;display:grid;grid-template-columns:repeat(4,1fr)}
-        .stat{text-align:center;padding:0 12px}
-        .stat:not(:last-child){border-right:1px solid rgba(255,255,255,.06)}
-        .stat-val{font-size:clamp(1.5rem,3vw,36px);font-weight:600;color:#fff;display:block}
-        .stat-lbl{font-size:11px;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.1em;margin-top:4px;display:block}
-
-        /* ==================
-           FEATURES
-           ================== */
-        .features{max-width:900px;margin:0 auto;padding:80px 2rem}
-        .features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
-        .feature-card{
-            padding:28px;border-radius:16px;
-            transition:border-color 250ms,background 250ms,transform 200ms;
-            cursor:default;
+        /* ==================== MOCKUP ==================== */
+        .mockup-section{
+            max-width:1100px;margin:64px auto 0;padding:0 48px;
         }
-        .feature-card:hover{border-color:rgba(255,255,255,.15);background:rgba(255,255,255,.06);transform:translateY(-2px)}
-        .feature-num{font-size:12px;color:rgba(255,255,255,.15);font-weight:600;letter-spacing:.1em;margin-bottom:20px}
-        .feature-card h3{font-size:17px;font-weight:500;color:#fff;margin-bottom:8px}
-        .feature-card p{font-size:14px;color:rgba(255,255,255,.45);line-height:1.6}
-
-        /* ==================
-           PARA QUIÉN
-           ================== */
-        .audience{max-width:900px;margin:0 auto;padding:80px 2rem}
-        .audience-title{font-size:11px;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:.1em;text-align:center;margin-bottom:48px}
-        .audience-grid{display:grid;grid-template-columns:repeat(3,1fr);text-align:center}
-        .audience-item{padding:0 24px}
-        .audience-item:not(:last-child){border-right:1px solid rgba(255,255,255,.06)}
-        .audience-icon{margin-bottom:16px}
-        .audience-icon svg{width:28px;height:28px;color:rgba(255,255,255,.25);stroke-width:1.5}
-        .audience-name{font-size:16px;font-weight:500;color:#fff;margin-bottom:4px}
-        .audience-desc{font-size:14px;color:rgba(255,255,255,.4);line-height:1.5}
-
-        /* ==================
-           CTA FINAL
-           ================== */
-        .cta-final{max-width:600px;margin:40px auto 80px;padding:60px;text-align:center;border-radius:24px}
-        .cta-final::before{
-            content:'';position:absolute;inset:0;border-radius:inherit;
-            background:radial-gradient(circle at 50% 0%,rgba(255,255,255,.06) 0%,transparent 60%);
-            pointer-events:none;
+        .mockup-outer{
+            position:relative;overflow:hidden;border-radius:12px;
         }
-        .cta-final h2{font-size:32px;font-weight:600;color:#fff;margin-bottom:12px;position:relative}
-        .cta-final p{font-size:16px;color:rgba(255,255,255,.45);margin-bottom:32px;position:relative}
-        .cta-final .cta-primary{position:relative;border-color:rgba(255,255,255,.25)}
-        .cta-final .cta-primary:hover{border-color:rgba(255,255,255,.5)}
+        .mockup-fade{
+            position:absolute;bottom:0;left:0;right:0;height:40%;
+            background:linear-gradient(transparent 0%,#0a0a0a 100%);
+            z-index:2;pointer-events:none;
+        }
+        .mockup-window{
+            border-radius:12px;overflow:hidden;
+            box-shadow:0 40px 80px rgba(0,0,0,0.6);
+            border:1px solid rgba(255,255,255,0.08);
+        }
+        .mockup-titlebar{
+            background:#1a1a1a;padding:12px 16px;
+            display:flex;align-items:center;position:relative;
+            border-radius:12px 12px 0 0;
+        }
+        .traffic-lights{display:flex;gap:8px}
+        .traffic-dot{width:10px;height:10px;border-radius:50%}
+        .traffic-dot.red{background:#ff5f57}
+        .traffic-dot.yellow{background:#febc2e}
+        .traffic-dot.green{background:#28c840}
+        .titlebar-text{
+            position:absolute;left:50%;transform:translateX(-50%);
+            color:rgba(255,255,255,0.4);font-size:13px;
+        }
+        .mockup-body{
+            background:#0d0d0d;display:flex;height:380px;
+            border-radius:0 0 12px 12px;
+        }
+        .mockup-sidebar{
+            width:200px;flex-shrink:0;
+            background:rgba(255,255,255,0.02);
+            border-right:1px solid rgba(255,255,255,0.06);
+            padding:20px 16px;display:flex;flex-direction:column;gap:14px;
+        }
+        .mock-line{border-radius:4px;background:rgba(255,255,255,0.06)}
+        .mockup-main{flex:1;padding:16px 20px;display:flex;flex-direction:column;gap:10px}
+        .mock-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04)}
+        .mock-badge{width:40px;height:6px;border-radius:3px;background:rgba(100,130,255,0.4);flex-shrink:0}
+        .mock-cell{height:8px;border-radius:3px;background:rgba(255,255,255,0.06)}
 
-        /* ==================
-           FOOTER
-           ================== */
+        /* ==================== SOCIAL PROOF ==================== */
+        .social-proof{
+            border-top:1px solid rgba(255,255,255,0.06);
+            border-bottom:1px solid rgba(255,255,255,0.06);
+            padding:48px 48px;margin-top:80px;
+            text-align:center;
+        }
+        .social-proof-label{
+            font-size:11px;color:rgba(255,255,255,0.25);
+            text-transform:uppercase;letter-spacing:0.12em;
+            margin-bottom:28px;
+        }
+        .social-proof-logos{
+            display:flex;align-items:center;justify-content:center;gap:48px;
+        }
+        .social-proof-logos span{
+            font-weight:600;font-size:15px;color:rgba(255,255,255,0.35);
+            transition:color 200ms;cursor:default;
+        }
+        .social-proof-logos span:hover{color:rgba(255,255,255,0.7)}
+
+        /* ==================== FEATURES ==================== */
+        .features-section{
+            max-width:1100px;margin:0 auto;padding:100px 48px;
+        }
+        .feature-block{
+            display:grid;grid-template-columns:1fr 1fr;gap:64px;
+            align-items:center;margin-bottom:100px;
+        }
+        .feature-block:last-child{margin-bottom:0}
+        .feature-block.reversed{direction:rtl}
+        .feature-block.reversed > *{direction:ltr}
+        .feature-label{
+            font-size:12px;color:rgba(255,255,255,0.2);font-weight:600;
+            letter-spacing:0.1em;margin-bottom:16px;
+        }
+        .feature-title{
+            font-family:'Space Grotesk',sans-serif;font-size:36px;font-weight:600;
+            color:#fff;line-height:1.15;margin-bottom:16px;
+        }
+        .feature-desc{
+            font-size:16px;color:rgba(255,255,255,0.5);line-height:1.65;
+            margin-bottom:20px;
+        }
+        .feature-link{
+            color:rgba(255,255,255,0.4);font-size:14px;font-weight:500;
+            transition:color 200ms;
+        }
+        .feature-link:hover{color:#fff}
+        .feature-visual-terminal{
+            background:#111;border:1px solid rgba(255,255,255,0.08);
+            border-radius:8px;padding:20px;font-family:'JetBrains Mono','Cascadia Code',ui-monospace,monospace;
+            font-size:13px;line-height:1.8;
+        }
+        .term-line{color:rgba(100,200,100,0.7)}
+        .term-line .prefix{color:rgba(100,200,100,0.4)}
+        .feature-visual-export{display:flex;flex-direction:column;gap:10px}
+        .export-btn-mock{
+            display:flex;align-items:center;gap:10px;
+            padding:12px 20px;border-radius:8px;
+            background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);
+            color:rgba(255,255,255,0.7);font-size:14px;font-weight:500;
+            transition:background 200ms,border-color 200ms;cursor:default;
+        }
+        .export-btn-mock:hover{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.18)}
+        .export-btn-mock svg{width:18px;height:18px;color:rgba(255,255,255,0.4)}
+
+        /* ==================== PRICING ==================== */
+        .pricing-section{
+            max-width:1100px;margin:0 auto;padding:100px 48px;
+            text-align:center;
+        }
+        .pricing-title{
+            font-family:'Space Grotesk',sans-serif;font-size:48px;font-weight:600;
+            color:#fff;margin-bottom:32px;
+        }
+        .pricing-toggle{
+            display:inline-flex;background:rgba(255,255,255,0.04);
+            border:1px solid rgba(255,255,255,0.08);border-radius:8px;
+            overflow:hidden;margin-bottom:48px;
+        }
+        .toggle-pill{
+            padding:8px 20px;font-family:inherit;font-size:14px;font-weight:500;
+            color:rgba(255,255,255,0.5);background:transparent;border:none;
+            cursor:pointer;transition:all 200ms;border-radius:7px;margin:3px;
+        }
+        .toggle-pill.active{
+            background:rgba(255,255,255,0.1);color:#fff;
+            border:1px solid rgba(255,255,255,0.15);
+        }
+        .toggle-pill:not(.active){border:1px solid transparent}
+        .pricing-grid{
+            display:grid;grid-template-columns:repeat(3,1fr);gap:20px;
+            text-align:left;
+        }
+        .pricing-card{
+            background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);
+            border-radius:12px;padding:32px;display:flex;flex-direction:column;
+        }
+        .pricing-card.featured{border-color:rgba(255,255,255,0.2)}
+        .pricing-card-name{
+            font-size:16px;font-weight:600;color:#fff;margin-bottom:8px;
+        }
+        .pricing-card-desc{
+            font-size:14px;color:rgba(255,255,255,0.4);margin-bottom:24px;line-height:1.5;
+        }
+        .pricing-card-price{
+            font-family:'Space Grotesk',sans-serif;font-size:40px;font-weight:600;
+            color:#fff;margin-bottom:4px;
+        }
+        .pricing-card-price span{font-size:16px;font-weight:400;color:rgba(255,255,255,0.4)}
+        .pricing-card-period{font-size:13px;color:rgba(255,255,255,0.3);margin-bottom:28px}
+        .pricing-features{list-style:none;display:flex;flex-direction:column;gap:12px;margin-bottom:32px;flex:1}
+        .pricing-features li{
+            font-size:14px;color:rgba(255,255,255,0.7);display:flex;align-items:center;gap:10px;
+        }
+        .pricing-features li .check{color:rgba(255,255,255,0.4);font-size:14px;flex-shrink:0}
+        .pricing-card .card-cta{
+            width:100%;text-align:center;padding:12px;border-radius:8px;
+            font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;
+            transition:all 200ms;
+        }
+        .pricing-card .card-cta-primary{
+            background:#fff;color:#0a0a0a;border:none;
+        }
+        .pricing-card .card-cta-primary:hover{background:rgba(255,255,255,0.9)}
+        .pricing-card .card-cta-outline{
+            background:transparent;color:rgba(255,255,255,0.6);
+            border:1px solid rgba(255,255,255,0.15);
+        }
+        .pricing-card .card-cta-outline:hover{color:#fff;border-color:rgba(255,255,255,0.3)}
+        .price-annual{display:none}
+
+        /* ==================== PARA QUIEN ==================== */
+        .audience-section{
+            background:rgba(255,255,255,0.01);
+            padding:100px 0;
+        }
+        .audience-inner{
+            max-width:1100px;margin:0 auto;padding:0 48px;
+        }
+        .audience-title{
+            font-family:'Space Grotesk',sans-serif;font-size:36px;font-weight:600;
+            color:#fff;margin-bottom:56px;line-height:1.15;max-width:600px;
+        }
+        .audience-grid{
+            display:grid;grid-template-columns:repeat(3,1fr);gap:48px;
+        }
+        .audience-name{font-size:18px;font-weight:500;color:#fff;margin-bottom:8px}
+        .audience-desc{font-size:15px;color:rgba(255,255,255,0.45);line-height:1.6}
+
+        /* ==================== CTA FINAL ==================== */
+        .cta-final{
+            text-align:center;padding:120px 48px;
+        }
+        .cta-final h2{
+            font-family:'Space Grotesk',sans-serif;font-size:56px;font-weight:600;
+            color:#fff;margin-bottom:16px;
+        }
+        .cta-final p{
+            font-size:17px;color:rgba(255,255,255,0.45);margin-bottom:40px;
+        }
+
+        /* ==================== FOOTER ==================== */
         .footer{
-            border-top:1px solid rgba(255,255,255,.06);
-            background:rgba(0,0,0,.3);
-            backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-            display:flex;justify-content:space-between;align-items:center;
-            padding:24px 2rem;
+            border-top:1px solid rgba(255,255,255,0.06);
+            padding:48px;
         }
-        .footer-left{color:rgba(255,255,255,.25);font-size:13px}
-        .footer-right{color:rgba(255,255,255,.15);font-size:13px}
-        .footer-right a{color:rgba(255,255,255,.35);text-decoration:none;transition:color 200ms}
-        .footer-right a:hover{color:#fff}
+        .footer-grid{
+            max-width:1100px;margin:0 auto;
+            display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px;
+        }
+        .footer-brand .wordmark{font-size:16px;display:block;margin-bottom:8px}
+        .footer-brand-tagline{font-size:13px;color:rgba(255,255,255,0.3)}
+        .footer-links{display:flex;flex-direction:column;gap:10px}
+        .footer-links-title{font-size:12px;color:rgba(255,255,255,0.2);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px}
+        .footer-links a{font-size:14px;color:rgba(255,255,255,0.3);transition:color 200ms}
+        .footer-links a:hover{color:rgba(255,255,255,0.7)}
+        .footer-legal{display:flex;flex-direction:column;gap:10px;text-align:right}
+        .footer-legal a{font-size:14px;color:rgba(255,255,255,0.3);transition:color 200ms}
+        .footer-legal a:hover{color:rgba(255,255,255,0.7)}
+        .footer-copyright{font-size:13px;color:rgba(255,255,255,0.2);margin-top:8px}
 
-        /* ==================
-           RESPONSIVE
-           ================== */
-        @media(max-width:768px){
-            .hero{padding:120px 1.5rem 60px}
-            .hero h1{font-size:clamp(2rem,8vw,3rem)}
-            .stats{grid-template-columns:repeat(2,1fr);gap:24px;padding:24px 20px}
-            .stat:not(:last-child){border-right:none}
-            .stat:nth-child(odd){border-right:1px solid rgba(255,255,255,.06)}
-            .features-grid{grid-template-columns:1fr}
+        /* ==================== MOBILE NAV ==================== */
+        .nav-mobile-btn{
+            display:none;background:none;border:none;color:rgba(255,255,255,0.6);
+            cursor:pointer;padding:4px;
+        }
+        .nav-mobile-btn svg{width:22px;height:22px}
+
+        /* ==================== RESPONSIVE ==================== */
+        @media(max-width:900px){
+            .nav{padding:0 24px}
+            .nav-center{display:none}
+            .nav-right .nav-link{display:none}
+            .nav-mobile-btn{display:block}
+            .hero{padding:120px 24px 0}
+            .hero h1{font-size:42px}
+            .hero-sub{font-size:16px}
+            .mockup-section{padding:0 24px}
+            .mockup-body{height:260px}
+            .mockup-sidebar{width:140px;padding:14px 10px}
+            .social-proof{padding:36px 24px}
+            .social-proof-logos{gap:24px;flex-wrap:wrap}
+            .features-section{padding:60px 24px}
+            .feature-block{grid-template-columns:1fr;gap:32px}
+            .feature-block.reversed{direction:ltr}
+            .pricing-section{padding:60px 24px}
+            .pricing-title{font-size:36px}
+            .pricing-grid{grid-template-columns:1fr}
+            .audience-section{padding:60px 0}
+            .audience-inner{padding:0 24px}
+            .audience-title{font-size:28px}
             .audience-grid{grid-template-columns:1fr;gap:32px}
-            .audience-item{border-right:none !important}
-            .cta-final{margin:40px 1rem 60px;padding:40px 24px}
-            .footer{flex-direction:column;gap:.5rem;text-align:center}
-            .nav{padding:.8rem 1.2rem}
+            .cta-final{padding:80px 24px}
+            .cta-final h2{font-size:36px}
+            .footer{padding:36px 24px}
+            .footer-grid{grid-template-columns:1fr;gap:24px;text-align:left}
+            .footer-legal{text-align:left}
         }
     </style>
 </head>
 <body>
 
-<!-- Ambient Orbs -->
-<div class="orb orb-1"></div>
-<div class="orb orb-2"></div>
-<div class="orb orb-3"></div>
-
-<div class="content">
-
 <!-- Nav -->
 <nav class="nav">
-    <a href="/" class="nav-logo">AD Search</a>
-    <a href="/app" class="nav-cta">Acceder &rarr;</a>
+    <a href="/" class="nav-left"><span class="wordmark">Zephr</span></a>
+    <div class="nav-center">
+        <a href="#producto">Producto</a>
+        <a href="#precios">Precios</a>
+        <a href="#fuentes">Fuentes</a>
+    </div>
+    <div class="nav-right">
+        <a href="/login" class="nav-link">Iniciar sesion</a>
+        <a href="/app" class="nav-btn">Acceder &rarr;</a>
+    </div>
 </nav>
 
 <!-- Hero -->
 <section class="hero">
-    <span class="glass-pill hero-eyebrow">Airworthiness Directives &middot; 4 fuentes oficiales</span>
-    <h1>
-        Todas las ADs de aviaci&oacute;n.
-        <span class="hero-light">En un solo lugar.</span>
-    </h1>
-    <p class="hero-sub">Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil en segundos. Sin abrir cuatro pesta&ntilde;as.</p>
+    <h1>El lugar donde viven todas las ADs de aviacion.</h1>
+    <p class="hero-sub">Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestanas.</p>
     <div class="hero-ctas">
-        <a href="/app" class="cta-primary glass-strong">Acceder a la herramienta &rarr;</a>
-        <a href="#features" class="cta-secondary glass-subtle" id="btn-features">Ver caracter&iacute;sticas</a>
+        <a href="/app" class="cta-primary">Comenzar gratis &rarr;</a>
+        <a href="#producto" class="cta-secondary">Ver producto</a>
     </div>
 </section>
 
-<!-- Stats -->
-<section class="stats glass">
-    <div class="stat"><span class="stat-val">4</span><span class="stat-lbl">Fuentes</span></div>
-    <div class="stat"><span class="stat-val">1,198</span><span class="stat-lbl">Modelos</span></div>
-    <div class="stat"><span class="stat-val">83+</span><span class="stat-lbl">ADs Embraer</span></div>
-    <div class="stat"><span class="stat-val">45s</span><span class="stat-lbl">Timeout</span></div>
+<!-- Mockup -->
+<section class="mockup-section">
+    <div class="mockup-outer">
+        <div class="mockup-fade"></div>
+        <div class="mockup-window">
+            <div class="mockup-titlebar">
+                <div class="traffic-lights">
+                    <span class="traffic-dot red"></span>
+                    <span class="traffic-dot yellow"></span>
+                    <span class="traffic-dot green"></span>
+                </div>
+                <span class="titlebar-text">Zephr &mdash; Boeing 737</span>
+            </div>
+            <div class="mockup-body">
+                <div class="mockup-sidebar">
+                    <div class="mock-line" style="height:10px;width:70%"></div>
+                    <div class="mock-line" style="height:8px;width:90%"></div>
+                    <div class="mock-line" style="height:8px;width:60%"></div>
+                    <div class="mock-line" style="height:10px;width:85%"></div>
+                    <div class="mock-line" style="height:8px;width:75%"></div>
+                </div>
+                <div class="mockup-main">
+                    <div class="mock-row">
+                        <div class="mock-badge"></div>
+                        <div class="mock-cell" style="width:80px"></div>
+                        <div class="mock-cell" style="width:120px"></div>
+                        <div class="mock-cell" style="width:200px"></div>
+                        <div class="mock-cell" style="width:60px"></div>
+                    </div>
+                    <div class="mock-row">
+                        <div class="mock-badge"></div>
+                        <div class="mock-cell" style="width:70px"></div>
+                        <div class="mock-cell" style="width:140px"></div>
+                        <div class="mock-cell" style="width:180px"></div>
+                        <div class="mock-cell" style="width:50px"></div>
+                    </div>
+                    <div class="mock-row">
+                        <div class="mock-badge"></div>
+                        <div class="mock-cell" style="width:90px"></div>
+                        <div class="mock-cell" style="width:110px"></div>
+                        <div class="mock-cell" style="width:220px"></div>
+                        <div class="mock-cell" style="width:70px"></div>
+                    </div>
+                    <div class="mock-row">
+                        <div class="mock-badge"></div>
+                        <div class="mock-cell" style="width:75px"></div>
+                        <div class="mock-cell" style="width:130px"></div>
+                        <div class="mock-cell" style="width:190px"></div>
+                        <div class="mock-cell" style="width:55px"></div>
+                    </div>
+                    <div class="mock-row">
+                        <div class="mock-badge"></div>
+                        <div class="mock-cell" style="width:85px"></div>
+                        <div class="mock-cell" style="width:100px"></div>
+                        <div class="mock-cell" style="width:210px"></div>
+                        <div class="mock-cell" style="width:65px"></div>
+                    </div>
+                    <div class="mock-row" style="border-bottom:none">
+                        <div class="mock-badge"></div>
+                        <div class="mock-cell" style="width:95px"></div>
+                        <div class="mock-cell" style="width:125px"></div>
+                        <div class="mock-cell" style="width:175px"></div>
+                        <div class="mock-cell" style="width:45px"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Social Proof -->
+<section class="social-proof" id="fuentes">
+    <div class="social-proof-label">Conectado a fuentes oficiales</div>
+    <div class="social-proof-logos">
+        <span>FAA</span>
+        <span>EASA</span>
+        <span>Transport Canada</span>
+        <span>ANAC</span>
+    </div>
 </section>
 
 <!-- Features -->
-<section class="features" id="features">
-    <div class="features-grid">
-        <div class="feature-card glass">
-            <div class="feature-num">01</div>
-            <h3>4 fuentes en una b&uacute;squeda</h3>
-            <p>FAA Federal Register, EASA, Transport Canada y ANAC Brasil. Resultados en tiempo real con streaming SSE.</p>
+<section class="features-section" id="producto">
+    <div class="feature-block">
+        <div class="feature-text">
+            <div class="feature-label">01</div>
+            <h3 class="feature-title">Resultados en tiempo real.</h3>
+            <p class="feature-desc">Los ADs aparecen fuente por fuente mientras se buscan. Sin esperar a que termine todo.</p>
+            <a href="/app" class="feature-link">Ver demo &rarr;</a>
         </div>
-        <div class="feature-card glass">
-            <div class="feature-num">02</div>
-            <h3>Exportaci&oacute;n en CSV, Excel y ZIP</h3>
-            <p>Descarga los resultados en el formato que necesites. Selecci&oacute;n individual o masiva con un click.</p>
+        <div class="feature-visual">
+            <div class="feature-visual-terminal">
+                <div class="term-line"><span class="prefix">&gt; </span>Conectando a Federal Register...</div>
+                <div class="term-line"><span class="prefix">&gt; </span>42 ADs encontradas (FAA)</div>
+                <div class="term-line"><span class="prefix">&gt; </span>Conectando a EASA...</div>
+                <div class="term-line"><span class="prefix">&gt; </span>18 ADs encontradas (EASA)</div>
+                <div class="term-line"><span class="prefix">&gt; </span>Conectando a Transport Canada...</div>
+                <div class="term-line"><span class="prefix">&gt; </span>7 ADs encontradas (TC)</div>
+                <div class="term-line" style="color:rgba(255,255,255,0.3)"><span class="prefix">&gt; </span>Listo. 67 resultados totales.</div>
+            </div>
         </div>
-        <div class="feature-card glass">
-            <div class="feature-num">03</div>
-            <h3>Autocompletado inteligente</h3>
-            <p>Base de datos de 1,198 modelos de aeronaves con autocompletado por fabricante y modelo exacto.</p>
+    </div>
+
+    <div class="feature-block reversed">
+        <div class="feature-text">
+            <div class="feature-label">02</div>
+            <h3 class="feature-title">Exporta lo que necesitas.</h3>
+            <p class="feature-desc">CSV, Excel o PDFs originales de los ADs seleccionados. Descarga masiva con un click.</p>
+            <a href="/app" class="feature-link">Probar ahora &rarr;</a>
+        </div>
+        <div class="feature-visual">
+            <div class="feature-visual-export">
+                <div class="export-btn-mock">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Exportar CSV
+                </div>
+                <div class="export-btn-mock">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    Exportar Excel
+                </div>
+                <div class="export-btn-mock">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+                    Descargar PDFs
+                </div>
+            </div>
         </div>
     </div>
 </section>
 
-<!-- Para quién -->
-<section class="audience">
-    <div class="audience-title">Pensado para</div>
-    <div class="audience-grid">
-        <div class="audience-item">
-            <div class="audience-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-            </div>
-            <div class="audience-name">T&eacute;cnicos de mantenimiento</div>
-            <div class="audience-desc">Consulta r&aacute;pida de ADs por modelo y fabricante sin navegar m&uacute;ltiples sitios.</div>
+<!-- Pricing -->
+<section class="pricing-section" id="precios">
+    <h2 class="pricing-title">Precios</h2>
+    <div class="pricing-toggle">
+        <button class="toggle-pill active" data-period="monthly">Mensual</button>
+        <button class="toggle-pill" data-period="annual">Anual</button>
+    </div>
+    <div class="pricing-grid">
+        <!-- Free -->
+        <div class="pricing-card">
+            <div class="pricing-card-name">Free</div>
+            <div class="pricing-card-desc">Para explorar y empezar.</div>
+            <div class="pricing-card-price price-monthly">$0<span>/mes</span></div>
+            <div class="pricing-card-price price-annual">$0<span>/mes</span></div>
+            <div class="pricing-card-period price-monthly">Gratis para siempre</div>
+            <div class="pricing-card-period price-annual">Gratis para siempre</div>
+            <ul class="pricing-features">
+                <li><span class="check">&#10003;</span>10 busquedas por dia</li>
+                <li><span class="check">&#10003;</span>1 fuente a la vez</li>
+                <li><span class="check">&#10003;</span>Exportar CSV</li>
+                <li><span class="check">&#10003;</span>Historial 7 dias</li>
+            </ul>
+            <a href="/register" class="card-cta card-cta-outline">Comenzar gratis</a>
         </div>
-        <div class="audience-item">
-            <div class="audience-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M2 12L6 3h12l4 9"/><path d="M6 3L12 21 18 3"/><path d="M2 12h20"/></svg>
-            </div>
-            <div class="audience-name">Operadores a&eacute;reos</div>
-            <div class="audience-desc">Monitoreo centralizado de directivas aplicables a toda la flota en una sola b&uacute;squeda.</div>
+        <!-- Professional -->
+        <div class="pricing-card featured">
+            <div class="pricing-card-name">Professional</div>
+            <div class="pricing-card-desc">Para quienes trabajan con ADs todos los dias.</div>
+            <div class="pricing-card-price price-monthly">$29<span>/mes</span></div>
+            <div class="pricing-card-price price-annual">$19<span>/mes</span></div>
+            <div class="pricing-card-period price-monthly">Facturado mensualmente</div>
+            <div class="pricing-card-period price-annual">Facturado anualmente ($228/ano)</div>
+            <ul class="pricing-features">
+                <li><span class="check">&#10003;</span>Busquedas ilimitadas</li>
+                <li><span class="check">&#10003;</span>Todas las fuentes</li>
+                <li><span class="check">&#10003;</span>CSV + Excel + ZIP</li>
+                <li><span class="check">&#10003;</span>Descarga de PDFs</li>
+                <li><span class="check">&#10003;</span>Historial 30 dias</li>
+            </ul>
+            <a href="/register" class="card-cta card-cta-primary">Comenzar prueba gratis</a>
         </div>
-        <div class="audience-item">
-            <div class="audience-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 5H2v7l6.29 6.29c.94.94 2.48.94 3.42 0l3.58-3.58c.94-.94.94-2.48 0-3.42L9 5z"/><path d="M6 9.01V9"/><path d="M15 5l6.3 6.3a2.4 2.4 0 0 1 0 3.4L17 19"/></svg>
+        <!-- Team -->
+        <div class="pricing-card">
+            <div class="pricing-card-name">Team</div>
+            <div class="pricing-card-desc">Para equipos y organizaciones.</div>
+            <div class="pricing-card-price price-monthly">$79<span>/mes</span></div>
+            <div class="pricing-card-price price-annual">$59<span>/mes</span></div>
+            <div class="pricing-card-period price-monthly">Facturado mensualmente</div>
+            <div class="pricing-card-period price-annual">Facturado anualmente ($708/ano)</div>
+            <ul class="pricing-features">
+                <li><span class="check">&#10003;</span>Todo en Professional</li>
+                <li><span class="check">&#10003;</span>5 usuarios incluidos</li>
+                <li><span class="check">&#10003;</span>Panel de equipo</li>
+                <li><span class="check">&#10003;</span>Soporte prioritario</li>
+                <li><span class="check">&#10003;</span>Acceso a API</li>
+            </ul>
+            <a href="/register" class="card-cta card-cta-outline">Contactar ventas</a>
+        </div>
+    </div>
+</section>
+
+<!-- Para Quien -->
+<section class="audience-section">
+    <div class="audience-inner">
+        <h2 class="audience-title">Para quienes trabajan con ADs todos los dias.</h2>
+        <div class="audience-grid">
+            <div>
+                <div class="audience-name">Tecnicos de mantenimiento</div>
+                <p class="audience-desc">Consulta rapida de ADs por modelo y fabricante sin navegar multiples sitios gubernamentales.</p>
             </div>
-            <div class="audience-name">Consultoras de aeronavegabilidad</div>
-            <div class="audience-desc">Exporta datos estructurados en CSV y Excel para reportes e informes regulatorios.</div>
+            <div>
+                <div class="audience-name">Operadores aereos</div>
+                <p class="audience-desc">Monitoreo centralizado de directivas aplicables a toda la flota. Exporta datos estructurados para cumplimiento.</p>
+            </div>
+            <div>
+                <div class="audience-name">Consultoras</div>
+                <p class="audience-desc">Descarga ADs de multiples fuentes en CSV, Excel y PDFs originales para reportes e informes regulatorios.</p>
+            </div>
         </div>
     </div>
 </section>
 
 <!-- CTA Final -->
-<section class="cta-final glass-strong">
-    <h2>Empieza ahora</h2>
-    <p>Busca ADs de aviaci&oacute;n de 4 fuentes oficiales en segundos.</p>
-    <a href="/app" class="cta-primary">Acceder a la herramienta &rarr;</a>
+<section class="cta-final">
+    <h2>Empieza hoy.</h2>
+    <p>Accede gratis. Sin tarjeta de credito.</p>
+    <a href="/register" class="cta-primary">Crear cuenta gratis &rarr;</a>
 </section>
 
 <!-- Footer -->
 <footer class="footer">
-    <span class="footer-left">AD Search</span>
-    <span class="footer-right">&copy; Hyvento 2026 &middot; <a href="/app">Acceder &rarr;</a></span>
+    <div class="footer-grid">
+        <div class="footer-brand">
+            <span class="wordmark">Zephr</span>
+            <span class="footer-brand-tagline">Airworthiness Directives</span>
+        </div>
+        <div class="footer-links">
+            <div class="footer-links-title">Navegacion</div>
+            <a href="#producto">Producto</a>
+            <a href="#precios">Precios</a>
+            <a href="/app">Acceder</a>
+        </div>
+        <div class="footer-legal">
+            <a href="#">Terminos</a>
+            <a href="#">Privacidad</a>
+            <span class="footer-copyright">&copy; Hyvento 2026</span>
+        </div>
+    </div>
 </footer>
 
-</div>
-
 <script>
-    document.getElementById('btn-features').addEventListener('click', function(e) {
-        e.preventDefault();
-        document.getElementById('features').scrollIntoView({ behavior: 'smooth', block: 'start' });
+(function(){
+    // Pricing toggle
+    document.querySelectorAll('.toggle-pill').forEach(function(btn){
+        btn.addEventListener('click',function(){
+            document.querySelectorAll('.toggle-pill').forEach(function(b){b.classList.remove('active')});
+            btn.classList.add('active');
+            var p=btn.dataset.period;
+            document.querySelectorAll('.price-monthly').forEach(function(el){el.style.display=p==='monthly'?'':'none'});
+            document.querySelectorAll('.price-annual').forEach(function(el){el.style.display=p==='annual'?'':'none'});
+        });
     });
+    // Smooth scroll for anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(function(a){
+        a.addEventListener('click',function(e){
+            var target=document.querySelector(a.getAttribute('href'));
+            if(target){e.preventDefault();target.scrollIntoView({behavior:'smooth',block:'start'})}
+        });
+    });
+})();
 </script>
 
 </body>

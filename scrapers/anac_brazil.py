@@ -760,7 +760,7 @@ def get_recent_ads(days=14):
 
 
 if __name__ == "__main__":
-    print("=== ANAC Brasil AD Search - Test ===")
+    print("=== ANAC Brasil Zephr - Test ===")
     results = search_ads(make="Embraer", max_results=20)
     print(f"\nTotal: {len(results)} results")
     for r in results[:10]:

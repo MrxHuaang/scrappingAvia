@@ -1,5 +1,5 @@
 """
-AD Scrapers - Modulo de scrapers para Airworthiness Directives.
+Zephr Scrapers - Modulo de scrapers para Airworthiness Directives.
 Fuentes: Federal Register (USA), EASA (Europa), Transport Canada.
 """
 

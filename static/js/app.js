@@ -1,31 +1,23 @@
 /**
- * AD Search — Frontend Application
- * SSE streaming, sidebar, card/table view, URL params, keyboard shortcuts,
- * relevance scoring, recent searches, quick filter, sessionStorage.
- *
- * Bug fixes in this version:
- * - Race condition: requestId per search, SSE events ignored if stale
- * - Ctrl+A selects only visible/filtered page results
- * - Pagination reflects filtered count
- * - URL params priority over sessionStorage (no flash)
- * - Render guard: skip identical re-renders
- * - Inverted index for autocomplete performance
+ * Zephr — Frontend Application
+ * Liquid glass redesign, SSE streaming, ZIP with real PDFs,
+ * date formatting, copy AD#, recent search preview.
  */
 (function () {
     'use strict';
 
-    const DEFAULT_TITLE = 'AD Search \u00b7 Airworthiness Directives';
+    const DEFAULT_TITLE = 'Zephr \u00b7 Airworthiness Directives';
     document.title = DEFAULT_TITLE;
 
     // ================================================================
     // STATE
     // ================================================================
-    let _requestId = 0; // monotonic ID for race-condition guard
+    let _requestId = 0;
 
     const state = {
         selectedSource: 'federal_register',
         results: [],
-        filteredResults: null, // null = no filter
+        filteredResults: null,
         sortField: '_relevance',
         sortOrder: 'desc',
         currentPage: 1,
@@ -43,7 +35,6 @@
         streamAbort: null,
         viewMode: localStorage.getItem('viewMode') || 'table',
         quickFilter: '',
-        // Render guard
         _lastRenderKey: null,
     };
 
@@ -80,6 +71,8 @@
         inputKeyword: $('input-keyword'),
         inputMake: $('input-make'),
         inputModel: $('input-model'),
+        inputDateFrom: $('input-date-from'),
+        inputDateTo: $('input-date-to'),
         emptyState: $('empty-state'),
         emptyStateTitle: $('empty-state-title'),
         emptyStateErrors: $('empty-state-errors'),
@@ -100,6 +93,10 @@
         shortcutsModal: $('shortcuts-modal'),
         shortcutsModalClose: $('shortcuts-modal-close'),
         btnShortcutsHelp: $('btn-shortcuts-help'),
+        confirmModal: $('confirm-modal'),
+        confirmModalText: $('confirm-modal-text'),
+        confirmModalOk: $('confirm-modal-ok'),
+        confirmModalCancel: $('confirm-modal-cancel'),
     };
 
     // ================================================================
@@ -140,12 +137,55 @@
         if (dom.viewCardsBtn) dom.viewCardsBtn.classList.toggle('active', mode === 'cards');
         if (dom.tableContainer) dom.tableContainer.style.display = mode === 'table' ? '' : 'none';
         if (dom.cardsContainer) dom.cardsContainer.style.display = mode === 'cards' ? '' : 'none';
-        state._lastRenderKey = null; // force re-render on mode switch
+        state._lastRenderKey = null;
         if (state.results.length > 0) renderResults();
     }
     if (dom.viewTableBtn) dom.viewTableBtn.addEventListener('click', () => setViewMode('table'));
     if (dom.viewCardsBtn) dom.viewCardsBtn.addEventListener('click', () => setViewMode('cards'));
     setViewMode(state.viewMode);
+
+    // ================================================================
+    // DATE INPUTS — dd/mm/aaaa text formatting
+    // ================================================================
+    function setupDateInput(input) {
+        if (!input) return;
+        input.addEventListener('input', function (e) {
+            let v = this.value.replace(/[^\d]/g, '');
+            if (v.length > 8) v = v.slice(0, 8);
+            if (v.length >= 5) v = v.slice(0,2) + '/' + v.slice(2,4) + '/' + v.slice(4);
+            else if (v.length >= 3) v = v.slice(0,2) + '/' + v.slice(2);
+            this.value = v;
+            // Validate
+            if (v.length === 10) {
+                const valid = isValidDate(v);
+                this.classList.toggle('input-error', !valid);
+            } else {
+                this.classList.remove('input-error');
+            }
+        });
+    }
+    function isValidDate(str) {
+        const m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (!m) return false;
+        const d = parseInt(m[1]), mo = parseInt(m[2]), y = parseInt(m[3]);
+        if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1900 || y > 2100) return false;
+        const dt = new Date(y, mo - 1, d);
+        return dt.getFullYear() === y && dt.getMonth() === mo - 1 && dt.getDate() === d;
+    }
+    function parseDateInput(str) {
+        if (!str) return '';
+        const m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+        return str;
+    }
+    function formatDateForInput(isoStr) {
+        if (!isoStr) return '';
+        const m = isoStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+        return isoStr;
+    }
+    setupDateInput(dom.inputDateFrom);
+    setupDateInput(dom.inputDateTo);
 
     // ================================================================
     // QUICK FILTER
@@ -161,10 +201,7 @@
     }
 
     function applyQuickFilter() {
-        if (!state.quickFilter) {
-            state.filteredResults = null;
-            return;
-        }
+        if (!state.quickFilter) { state.filteredResults = null; return; }
         const q = state.quickFilter;
         state.filteredResults = state.results.filter(r =>
             (r.AD_Number || '').toLowerCase().includes(q) ||
@@ -179,25 +216,29 @@
     }
 
     // ================================================================
-    // SEARCH — SSE STREAMING (with requestId race guard)
+    // SEARCH — SSE STREAMING
     // ================================================================
     dom.searchForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (state.searching) {
-            // Abort current search and start new one
             if (state.streamAbort) state.streamAbort.abort();
             state.searching = false;
         }
 
-        const formData = new FormData(dom.searchForm);
+        // Validate dates
+        const dfVal = dom.inputDateFrom ? dom.inputDateFrom.value : '';
+        const dtVal = dom.inputDateTo ? dom.inputDateTo.value : '';
+        if (dfVal && dfVal.length === 10 && !isValidDate(dfVal)) { showToast('Fecha "Desde" inválida.', 'error'); return; }
+        if (dtVal && dtVal.length === 10 && !isValidDate(dtVal)) { showToast('Fecha "Hasta" inválida.', 'error'); return; }
+
         const params = {
             source: state.selectedSource,
-            keyword: formData.get('keyword') || '',
-            make: formData.get('make') || '',
-            model: formData.get('model') || '',
-            product_type: formData.get('product_type') || '',
-            date_from: formData.get('date_from') || '',
-            date_to: formData.get('date_to') || '',
+            keyword: (dom.inputKeyword ? dom.inputKeyword.value : '').trim(),
+            make: (dom.inputMake ? dom.inputMake.value : '').trim(),
+            model: (dom.inputModel ? dom.inputModel.value : '').trim(),
+            product_type: ($('input-product-type') ? $('input-product-type').value : ''),
+            date_from: parseDateInput(dfVal),
+            date_to: parseDateInput(dtVal),
         };
 
         const hasInput = params.keyword || params.make || params.model;
@@ -211,7 +252,6 @@
         dismissRestoreBanner();
         closeSidebar();
 
-        // Push URL state
         const qs = new URLSearchParams(params).toString();
         history.pushState(params, '', '/app?' + qs);
 
@@ -219,7 +259,6 @@
     });
 
     async function streamSearch(params) {
-        // Generate unique request ID for race-condition guard
         const thisRequestId = ++_requestId;
 
         state.searching = true;
@@ -252,8 +291,6 @@
         try {
             const response = await fetch(`/api/search/stream?${qs}`, { signal: abortCtrl.signal });
             if (!response.ok) throw new Error(`Error del servidor (${response.status})`);
-
-            // Check if this request is still active
             if (thisRequestId !== _requestId) return;
 
             const reader = response.body.getReader();
@@ -263,7 +300,6 @@
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                // Race guard: if a newer search started, abandon this one
                 if (thisRequestId !== _requestId) { reader.cancel(); return; }
 
                 buffer += decoder.decode(value, { stream: true });
@@ -277,7 +313,6 @@
                     try {
                         const event = JSON.parse(jsonStr);
                         if (event.event === 'done') continue;
-                        // Race guard
                         if (thisRequestId !== _requestId) return;
 
                         const srcResults = event.results || [];
@@ -292,14 +327,13 @@
 
                         state.lastResultCount = state.results.length;
                         state.lastSearchMs = Math.round(performance.now() - t0);
-                        state._lastRenderKey = null; // force render for streaming updates
+                        state._lastRenderKey = null;
                         renderResults();
                         updateTitle('results');
                     } catch (_) {}
                 }
             }
 
-            // Final race guard
             if (thisRequestId !== _requestId) return;
 
             state.lastSearchMs = Math.round(performance.now() - t0);
@@ -362,7 +396,6 @@
         const subjectWords = (r.Subject || '').toLowerCase().split(/\s+/);
         const subjectFull = (r.Subject || '').toLowerCase();
         const first3 = subjectWords.slice(0, 3).join(' ');
-
         if (adNum.includes(term) || first3.includes(term)) return 3;
         if (subjectFull.includes(term)) return 2;
         return 1;
@@ -421,9 +454,10 @@
     // CLEAR
     // ================================================================
     dom.btnClear.addEventListener('click', () => {
-        // If searching, abort
         if (state.streamAbort) { state.streamAbort.abort(); state.streamAbort = null; }
         dom.searchForm.reset();
+        if (dom.inputDateFrom) dom.inputDateFrom.value = '';
+        if (dom.inputDateTo) dom.inputDateTo.value = '';
         state.results = []; state.filteredResults = null; state.currentPage = 1;
         state.activeManufacturerKey = null; state.activeManufacturerModels = null;
         state.lastErrors = []; state.sourceCounts = {}; state.lastParams = null;
@@ -441,7 +475,7 @@
     });
 
     // ================================================================
-    // SELECTION — operates on filtered + paged results only
+    // SELECTION
     // ================================================================
     function clearSelection() { state.selectedIds.clear(); if (dom.selectAll) dom.selectAll.checked = false; updateBulkBar(); }
     function updateBulkBar() {
@@ -483,7 +517,71 @@
     if (dom.bulkDeselect) dom.bulkDeselect.addEventListener('click', () => { clearSelection(); state._lastRenderKey = null; renderResults(); });
     if (dom.bulkExportCsv) dom.bulkExportCsv.addEventListener('click', () => exportSelected('csv'));
     if (dom.bulkExportExcel) dom.bulkExportExcel.addEventListener('click', () => exportSelected('excel'));
-    if (dom.bulkExportZip) dom.bulkExportZip.addEventListener('click', () => exportSelected('zip'));
+    if (dom.bulkExportZip) dom.bulkExportZip.addEventListener('click', () => handleZipExport());
+
+    // ================================================================
+    // ZIP EXPORT — with PDF download + confirmation
+    // ================================================================
+    function showConfirmModal(message) {
+        return new Promise((resolve) => {
+            if (!dom.confirmModal) { resolve(true); return; }
+            dom.confirmModalText.textContent = message;
+            dom.confirmModal.style.display = 'flex';
+            const cleanup = () => { dom.confirmModal.style.display = 'none'; };
+            dom.confirmModalOk.onclick = () => { cleanup(); resolve(true); };
+            dom.confirmModalCancel.onclick = () => { cleanup(); resolve(false); };
+            dom.confirmModal.onclick = (e) => { if (e.target === dom.confirmModal) { cleanup(); resolve(false); } };
+        });
+    }
+
+    async function handleZipExport() {
+        if (state.selectedIds.size === 0) { showToast('No hay registros seleccionados.', 'error'); return; }
+        const selectedResults = [...state.selectedIds].map(idx => state.results[idx]).filter(Boolean);
+        const pdfCount = selectedResults.filter(r => r.PDF_Link).length;
+
+        if (pdfCount > 20) {
+            const confirmed = await showConfirmModal(`Vas a descargar ${pdfCount} PDFs. Esto puede tardar un momento. ¿Continuar?`);
+            if (!confirmed) return;
+        }
+
+        // Button loading state
+        if (dom.bulkExportZip) {
+            dom.bulkExportZip.disabled = true;
+            dom.bulkExportZip.innerHTML = '<span class="btn-search-spinner" style="display:inline-block;width:12px;height:12px"></span> Descargando...';
+        }
+
+        showToast(`Preparando ZIP con ${pdfCount} PDFs...`, 'info');
+
+        try {
+            const payload = { results: selectedResults };
+            if (state.lastParams) payload.filters = state.lastParams;
+            const response = await fetch('/api/export/zip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                const errData = await response.json().catch(() => null);
+                throw new Error(errData?.error || `Error ${response.status}`);
+            }
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            a.download = `AD_Export_${ts}_${selectedResults.length}_documentos.zip`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast(`ZIP descargado (${selectedResults.length} ADs, ${pdfCount} PDFs).`, 'success');
+        } catch (error) {
+            showToast(`Error ZIP: ${error.message}`, 'error');
+        } finally {
+            if (dom.bulkExportZip) {
+                dom.bulkExportZip.disabled = false;
+                dom.bulkExportZip.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg> Descargar PDFs';
+            }
+        }
+    }
 
     async function exportSelected(format) {
         if (state.selectedIds.size === 0) { showToast('No hay registros seleccionados.', 'error'); return; }
@@ -491,7 +589,6 @@
         try {
             showToast(`Exportando ${format.toUpperCase()}...`, 'info');
             const payload = { results: selectedResults };
-            if (format === 'zip' && state.lastParams) payload.filters = state.lastParams;
             const response = await fetch(`/api/export/${format}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
             if (!response.ok) throw new Error('Error al exportar');
             const blob = await response.blob();
@@ -500,7 +597,7 @@
     }
 
     // ================================================================
-    // RENDER (with guard against identical re-renders)
+    // RENDER
     // ================================================================
     function renderResults() {
         const active = getActiveResults();
@@ -510,12 +607,10 @@
         const end = start + state.pageSize;
         const pageResults = sorted.slice(start, end);
 
-        // Render guard: build key from page, sort, filter, viewMode, selection count, result count
         const renderKey = `${state.currentPage}|${state.sortField}|${state.sortOrder}|${state.quickFilter}|${state.viewMode}|${state.selectedIds.size}|${active.length}|${state.results.length}`;
-        if (state._lastRenderKey === renderKey) return; // skip identical render
+        if (state._lastRenderKey === renderKey) return;
         state._lastRenderKey = renderKey;
 
-        // Count display
         if (state.filteredResults !== null) {
             dom.resultsCount.textContent = `Mostrando ${active.length.toLocaleString('es-ES')} de ${state.results.length.toLocaleString('es-ES')}`;
         } else {
@@ -541,7 +636,7 @@
                 <td class="td-checkbox"><input type="checkbox" class="row-check" data-idx="${idx}" ${checked}></td>
                 <td style="text-align:center">${relevanceBarsHtml(rel)}</td>
                 <td>${getSourceBadge(r.Source)}</td>
-                <td class="td-ad-number" title="${esc(r.AD_Number)}">${esc(r.AD_Number)}</td>
+                <td class="td-ad-number" title="${esc(r.AD_Number)}">${esc(r.AD_Number)}<button class="copy-ad-btn" data-ad="${esc(r.AD_Number)}" title="Copiar AD#">Copiar</button></td>
                 <td title="${esc(r.Make)}">${esc(r.Make)}</td>
                 <td title="${esc(r.Model)}">${esc(r.Model)}</td>
                 <td class="col-tipo">${getTypeBadge(r.Product_Type)}</td>
@@ -551,6 +646,7 @@
             </tr>`;
         }).join('');
         bindRowChecks();
+        bindCopyAdBtns();
     }
 
     function renderCards(pageResults) {
@@ -587,15 +683,38 @@
         });
     }
 
+    // ================================================================
+    // COPY AD# BUTTON (Bloque 3.1)
+    // ================================================================
+    function bindCopyAdBtns() {
+        dom.resultsBody.querySelectorAll('.copy-ad-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const ad = btn.dataset.ad;
+                navigator.clipboard.writeText(ad).then(() => {
+                    showMicroToast(`${ad} copiado`);
+                }).catch(() => showMicroToast('Error al copiar'));
+            });
+        });
+    }
+
+    function showMicroToast(msg) {
+        const t = document.createElement('div');
+        t.className = 'toast toast-success';
+        t.innerHTML = `<svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg><span class="toast-message">${esc(msg)}</span>`;
+        dom.toastContainer.appendChild(t);
+        setTimeout(() => { t.classList.add('removing'); setTimeout(() => t.remove(), 250); }, 1500);
+    }
+
     function pdfCell(r) {
         return r.PDF_Link
-            ? `<a href="${esc(r.PDF_Link)}" target="_blank" rel="noopener" class="pdf-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Ver</a>`
-            : '<span style="color:var(--text-muted)">--</span>';
+            ? `<a href="${esc(r.PDF_Link)}" target="_blank" rel="noopener" class="pdf-link">Ver</a>`
+            : '<span style="color:var(--t25)">—</span>';
     }
 
     function pdfCellCard(r) {
         return r.PDF_Link
-            ? `<a href="${esc(r.PDF_Link)}" target="_blank" rel="noopener" class="pdf-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Ver</a>`
+            ? `<a href="${esc(r.PDF_Link)}" target="_blank" rel="noopener" class="pdf-link">Ver</a>`
             : '<span class="card-no-link">Sin enlace</span>';
     }
 
@@ -717,9 +836,7 @@
     // ================================================================
     // SHARE URL
     // ================================================================
-    if (dom.btnShareUrl) {
-        dom.btnShareUrl.addEventListener('click', copySearchUrl);
-    }
+    if (dom.btnShareUrl) dom.btnShareUrl.addEventListener('click', copySearchUrl);
     function copySearchUrl() {
         navigator.clipboard.writeText(window.location.href).then(() => {
             showToast('URL copiada al portapapeles.', 'success');
@@ -727,7 +844,7 @@
     }
 
     // ================================================================
-    // URL PARAMS — Auto-search on load (priority over sessionStorage)
+    // URL PARAMS
     // ================================================================
     function loadFromUrlParams() {
         const params = new URLSearchParams(window.location.search);
@@ -790,7 +907,7 @@
     if (dom.restoreSearchAgain) dom.restoreSearchAgain.addEventListener('click', () => { dismissRestoreBanner(); dom.searchForm.dispatchEvent(new Event('submit')); });
 
     // ================================================================
-    // RECENT SEARCHES
+    // RECENT SEARCHES (with result count preview — Bloque 3.3)
     // ================================================================
     const RECENT_KEY = 'recentSearches';
     const MAX_RECENT = 5;
@@ -800,7 +917,11 @@
 
     function saveRecentSearch(params, count) {
         const items = loadRecent();
-        const label = [params.source !== 'all' ? params.source.replace('_',' ') : 'Todas', params.make, params.model, params.keyword].filter(Boolean).join(' \u00b7 ');
+        const parts = [];
+        if (params.make) parts.push(params.make);
+        if (params.model) parts.push(params.model);
+        if (params.keyword && !parts.length) parts.push(params.keyword);
+        const label = parts.join(' \u00b7 ') || params.source.replace('_',' ');
         const entry = { label, params, count, ts: Date.now() };
         const filtered = items.filter(i => i.label !== label);
         filtered.unshift(entry);
@@ -812,14 +933,14 @@
         if (!dom.recentSearches) return;
         const items = loadRecent();
         if (items.length === 0) { dom.recentSearches.innerHTML = '<div class="recent-empty">Sin busquedas recientes</div>'; return; }
-        dom.recentSearches.innerHTML = items.map((item, i) =>
-            `<div class="recent-item" data-idx="${i}">
+        dom.recentSearches.innerHTML = items.map((item, i) => {
+            const countLabel = item.count != null ? `${item.count} ADs` : '';
+            return `<div class="recent-item" data-idx="${i}">
                 <svg class="recent-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                <span class="recent-item-text" title="${esc(item.label)}">${esc(item.label)}</span>
-                <span class="recent-item-count">${item.count || 0}</span>
+                <span class="recent-item-text" title="${esc(item.label)}${countLabel ? ' — ' + countLabel : ''}">${esc(item.label)}${countLabel ? ' <span style="color:var(--t25)">— ' + countLabel + '</span>' : ''}</span>
                 <button class="recent-item-remove" data-idx="${i}" title="Eliminar">&times;</button>
-            </div>`
-        ).join('');
+            </div>`;
+        }).join('');
 
         dom.recentSearches.querySelectorAll('.recent-item').forEach(el => {
             el.addEventListener('click', (e) => {
@@ -855,8 +976,9 @@
         setVal('input-make', p.make);
         setVal('input-model', p.model);
         setVal('input-product-type', p.product_type);
-        setVal('input-date-from', p.date_from);
-        setVal('input-date-to', p.date_to);
+        // Convert ISO dates to dd/mm/aaaa for display
+        if (dom.inputDateFrom) dom.inputDateFrom.value = formatDateForInput(p.date_from);
+        if (dom.inputDateTo) dom.inputDateTo.value = formatDateForInput(p.date_to);
         if (p.source) {
             document.querySelectorAll('.source-card').forEach(c => c.classList.toggle('active', c.dataset.source === p.source));
             state.selectedSource = p.source;
@@ -864,10 +986,8 @@
     }
 
     // ================================================================
-    // AUTOCOMPLETADO — Inverted index for performance
+    // AUTOCOMPLETE — Inverted index
     // ================================================================
-
-    // Build inverted index once on load
     const _acIndex = { make: new Map(), model: new Map() };
     (function buildAutocompleteIndex() {
         function addToIndex(map, text, ref) {
@@ -945,16 +1065,13 @@
         else dom.inputModel.placeholder = 'Ej: 737, A320...';
     }
 
-    // Use inverted index for make autocomplete
     const makeAC = createAutocomplete(dom.inputMake, (q) => {
         const ql = q.toLowerCase();
         const hits = _acIndex.make.get(ql.substring(0, Math.min(ql.length, 8)));
         if (hits) {
-            // Filter to those that actually contain the full query
             const unique = [...new Set(hits)].filter(k => k.toLowerCase().includes(ql));
             return unique.slice(0, 6).map(k => ({label:k, value:k}));
         }
-        // Fallback
         if (typeof AIRCRAFT_DATA === 'undefined') return [];
         const m = [];
         for (const [k,e] of Object.entries(AIRCRAFT_DATA)) { if (k.toLowerCase().includes(ql)||e.aliases.some(a=>a.includes(ql))) m.push({label:k,value:k}); }
@@ -974,23 +1091,18 @@
         const found=findManufacturer(val);state.activeManufacturerKey=found?found.key:null;state.activeManufacturerModels=found?found.entry.models:null;updateModelPlaceholder();
     });
 
-    // Use inverted index for model autocomplete
     const modelAC = createAutocomplete(dom.inputModel, (q) => {
         const ql = q.toLowerCase();
         const pool = state.activeManufacturerModels;
         if (pool) {
-            // Manufacturer-scoped: filter models directly (small array)
             return pool.filter(m => m.toLowerCase().includes(ql)).slice(0,6).map(m => ({label:m,value:m}));
         }
-        // Global: use inverted index
         const hits = _acIndex.model.get(ql.substring(0, Math.min(ql.length, 8)));
         if (hits) {
-            const unique = [];
-            const seen = new Set();
+            const unique = []; const seen = new Set();
             for (const h of hits) {
                 if (h.model.toLowerCase().includes(ql) && !seen.has(h.model)) {
-                    seen.add(h.model);
-                    unique.push(h.model);
+                    seen.add(h.model); unique.push(h.model);
                     if (unique.length >= 6) break;
                 }
             }
@@ -1017,19 +1129,14 @@
     if (dom.btnShortcutsHelp) dom.btnShortcutsHelp.addEventListener('click', showShortcutsModal);
 
     document.addEventListener('keydown', (e) => {
-        // Ctrl+Enter: search
         if (e.key === 'Enter' && e.ctrlKey) { dom.searchForm.dispatchEvent(new Event('submit')); return; }
-        // Ctrl+Shift+C: copy URL
         if (e.key === 'C' && e.ctrlKey && e.shiftKey) { e.preventDefault(); copySearchUrl(); return; }
-        // Ctrl+A: select all on page (only filtered/visible)
         if (e.key === 'a' && e.ctrlKey && !e.shiftKey && !isInputFocused()) {
             e.preventDefault();
             if (dom.selectAll) { dom.selectAll.checked = true; dom.selectAll.dispatchEvent(new Event('change')); }
             return;
         }
-
         if (isInputFocused()) return;
-
         if (e.key === '/') { e.preventDefault(); if (dom.inputKeyword) dom.inputKeyword.focus(); return; }
         if (e.key === '?') { e.preventDefault(); showShortcutsModal(); return; }
         if (e.key === 'Escape') {
@@ -1045,8 +1152,8 @@
     // DYNAMIC TITLE
     // ================================================================
     function updateTitle(mode) {
-        if (mode === 'searching') document.title = 'Buscando... \u2014 AD Search';
-        else if (mode === 'results' && state.lastResultCount > 0) document.title = `${state.lastResultCount.toLocaleString('es-ES')} ADs \u2014 AD Search`;
+        if (mode === 'searching') document.title = 'Buscando... \u2014 Zephr';
+        else if (mode === 'results' && state.lastResultCount > 0) document.title = `${state.lastResultCount.toLocaleString('es-ES')} ADs \u2014 Zephr`;
         else document.title = DEFAULT_TITLE;
     }
 
@@ -1093,10 +1200,6 @@
     // INIT
     // ================================================================
     renderRecentSearches();
-
-    // Priority: URL params > session restore (no flash)
-    if (!loadFromUrlParams()) {
-        restoreSession();
-    }
+    if (!loadFromUrlParams()) { restoreSession(); }
 
 })();

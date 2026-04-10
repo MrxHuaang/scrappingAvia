@@ -1,5 +1,5 @@
 """
-AD Search - Utilidades compartidas
+Zephr - Utilidades compartidas
 Helpers de mapeo, timeout, y funciones auxiliares.
 """
 

@@ -1,17 +1,20 @@
 """
-AD Search - Servidor Web
+Zephr - Servidor Web
 Interfaz web para busqueda de Airworthiness Directives.
 Fuentes: Federal Register (USA), EASA (Europa), Transport Canada, ANAC (Brasil).
 """
 
 import os
 import io
+import re
 import sys
 import json
 import zipfile
 import threading
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import requests as http_requests
 from flask import Flask, render_template, request, jsonify, send_file, Response
 import pandas as pd
 
@@ -28,13 +31,17 @@ from utils import map_product_type, run_with_timeout, VALID_SOURCES
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Timeout máximo por fuente (en segundos)
 SCRAPER_TIMEOUT = 45
+
+PDF_DOWNLOAD_TIMEOUT = 15
+PDF_MAX_WORKERS = 5
+PDF_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 
 # ------------------------------------------------------------------
@@ -48,6 +55,16 @@ def landing():
 @app.route("/app")
 def index():
     return render_template("index.html")
+
+
+@app.route("/login")
+def login_page():
+    return render_template("auth.html", mode="login")
+
+
+@app.route("/register")
+def register_page():
+    return render_template("auth.html", mode="register")
 
 
 # ------------------------------------------------------------------
@@ -246,6 +263,8 @@ def api_search_stream():
 # ------------------------------------------------------------------
 def _build_dataframe(results):
     """Construye un DataFrame ordenado a partir de resultados."""
+    if not results:
+        return pd.DataFrame()
     df = pd.DataFrame(results)
     col_order = [
         "Source", "AD_Number", "Subject", "Make", "Model",
@@ -254,6 +273,33 @@ def _build_dataframe(results):
     existing_cols = [c for c in col_order if c in df.columns]
     extra_cols = [c for c in df.columns if c not in col_order]
     return df[existing_cols + extra_cols]
+
+
+def _safe_filename(name):
+    """Sanitiza un nombre para usar como archivo."""
+    if not name:
+        return "unknown"
+    return re.sub(r'[<>:"/\\|?*]', '_', name).strip()
+
+
+def _download_pdf(url, timeout=PDF_DOWNLOAD_TIMEOUT):
+    """Descarga un PDF y devuelve (bytes, None) o (None, error_msg)."""
+    try:
+        resp = http_requests.get(
+            url,
+            timeout=timeout,
+            headers={"User-Agent": PDF_USER_AGENT},
+            allow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return None, f"HTTP {resp.status_code}"
+        if len(resp.content) < 100:
+            return None, "Archivo vacío o inválido"
+        return resp.content, None
+    except http_requests.Timeout:
+        return None, f"Timeout ({timeout}s)"
+    except Exception as e:
+        return None, str(e)
 
 
 @app.route("/api/export/<fmt>", methods=["POST"])
@@ -288,59 +334,107 @@ def api_export(fmt):
             )
 
         elif fmt == "zip":
-            return _export_zip(data, df, timestamp)
+            return _export_zip(results, df, timestamp, data.get("filters"))
 
         else:
             return jsonify({"error": f"Formato no soportado: {fmt}"}), 400
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
-def _export_zip(data, df, timestamp):
-    """Genera un ZIP con CSV + XLSX + README.txt."""
+def _export_zip(results, df, timestamp, filters=None):
+    """Genera un ZIP con CSV + XLSX + PDFs descargados + README.txt."""
     zip_buffer = io.BytesIO()
 
+    # Descargar PDFs en paralelo
+    pdf_tasks = []
+    for r in results:
+        link = r.get("PDF_Link")
+        ad_num = r.get("AD_Number", "unknown")
+        if link:
+            pdf_tasks.append((ad_num, link))
+
+    pdf_results = {}  # ad_num -> (bytes|None, error|None)
+
+    if pdf_tasks:
+        with ThreadPoolExecutor(max_workers=PDF_MAX_WORKERS) as executor:
+            futures = {}
+            for ad_num, link in pdf_tasks:
+                safe_name = _safe_filename(ad_num)
+                future = executor.submit(_download_pdf, link)
+                futures[future] = (safe_name, link)
+
+            for future in as_completed(futures):
+                safe_name, link = futures[future]
+                try:
+                    content, error = future.result()
+                    pdf_results[safe_name] = (content, error, link)
+                except Exception as e:
+                    pdf_results[safe_name] = (None, str(e), link)
+
+    pdfs_ok = sum(1 for _, (c, e, _) in pdf_results.items() if c is not None)
+    pdfs_fail = sum(1 for _, (c, e, _) in pdf_results.items() if c is None)
+
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        # CSV
         csv_buf = io.BytesIO()
         df.to_csv(csv_buf, index=False, encoding="utf-8-sig")
         zf.writestr("ad_results.csv", csv_buf.getvalue())
 
+        # XLSX
         xlsx_buf = io.BytesIO()
         df.to_excel(xlsx_buf, index=False, engine="openpyxl")
         zf.writestr("ad_results.xlsx", xlsx_buf.getvalue())
 
-        filters = data.get("filters", {})
+        # PDFs
+        for safe_name, (content, error, link) in pdf_results.items():
+            if content:
+                zf.writestr(f"PDFs/{safe_name}.pdf", content)
+            else:
+                error_text = f"No se pudo descargar el PDF.\nURL: {link}\nError: {error}\n"
+                zf.writestr(f"PDFs/{safe_name}_NO_DISPONIBLE.txt", error_text)
+
+        # README
         readme_lines = [
-            "AD Search - Export",
-            "=" * 40,
+            "Zephr - Export",
+            "=" * 50,
             f"Fecha de exportacion: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"Total de registros: {len(df)}",
+            f"Total de ADs: {len(df)}",
+            f"PDFs descargados: {pdfs_ok}",
+            f"PDFs no disponibles: {pdfs_fail}",
             "",
-            "Filtros utilizados:",
         ]
         if filters:
+            readme_lines.append("Filtros utilizados:")
             for k, v in filters.items():
                 if v:
                     readme_lines.append(f"  {k}: {v}")
         else:
-            readme_lines.append("  (sin filtros registrados)")
+            readme_lines.append("Filtros: (sin filtros registrados)")
 
         readme_lines += [
             "",
             "Archivos incluidos:",
-            "  ad_results.csv   - Formato CSV (UTF-8 BOM)",
-            "  ad_results.xlsx  - Formato Excel",
-            "  README.txt       - Este archivo",
+            "  ad_results.csv    - Formato CSV (UTF-8 BOM)",
+            "  ad_results.xlsx   - Formato Excel",
+            f"  PDFs/             - {pdfs_ok} PDFs descargados",
+            "  README.txt        - Este archivo",
             "",
             "Fuentes: FAA Federal Register | EASA | Transport Canada | ANAC Brasil",
         ]
         zf.writestr("README.txt", "\n".join(readme_lines))
 
     zip_buffer.seek(0)
+
+    n_docs = len(results)
+    download_name = f"AD_Export_{timestamp}_{n_docs}_documentos.zip"
+
     return send_file(
         zip_buffer, mimetype="application/zip",
-        as_attachment=True, download_name=f"ad_export_{timestamp}.zip",
+        as_attachment=True, download_name=download_name,
     )
 
 
@@ -364,7 +458,7 @@ def api_status():
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     print("\n" + "=" * 55)
-    print("  AD Search - Interfaz Web")
+    print("  Zephr - Airworthiness Directives")
     print("  Fuentes: Federal Register | EASA | Transport Canada | ANAC")
     print("=" * 55)
     print(f"\n  Landing:  http://127.0.0.1:5000/")

@@ -1,6 +1,6 @@
 {
-    "name": "AD Search — Airworthiness Directives",
-    "short_name": "AD Search",
+    "name": "Zephr — Airworthiness Directives",
+    "short_name": "Zephr",
     "description": "Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC en un solo lugar.",
     "start_url": "/app",
     "display": "standalone",

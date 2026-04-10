@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a0a0a">
+    <title>{% if mode == 'register' %}Crear cuenta{% else %}Iniciar sesion{% endif %} — Zephr</title>
+    <link rel="icon" type="image/png" href="/static/img/logo.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+        html{font-size:16px;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+        body{
+            font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+            background:#0a0a0a;color:#fff;min-height:100vh;
+            display:flex;flex-direction:column;align-items:center;justify-content:center;
+            padding:40px 20px;
+        }
+        ::selection{background:rgba(255,255,255,0.12)}
+        a{color:inherit;text-decoration:none}
+        .wordmark{
+            font-family:'Space Grotesk',sans-serif;font-weight:700;
+            letter-spacing:-0.03em;color:#fff;
+        }
+
+        /* Brand */
+        .auth-brand{margin-bottom:40px;text-align:center}
+        .auth-brand a{font-size:24px;transition:opacity 200ms}
+        .auth-brand a:hover{opacity:0.8}
+
+        /* Card */
+        .auth-card{
+            width:100%;max-width:400px;
+            background:rgba(255,255,255,0.04);
+            border:1px solid rgba(255,255,255,0.08);
+            border-radius:12px;padding:40px;
+        }
+        .auth-title{
+            font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:600;
+            color:#fff;margin-bottom:6px;
+        }
+        .auth-subtitle{
+            font-size:14px;color:rgba(255,255,255,0.4);margin-bottom:28px;
+        }
+
+        /* Form */
+        .auth-form{display:flex;flex-direction:column;gap:16px}
+        .form-group{display:flex;flex-direction:column;gap:6px}
+        .form-group label{
+            font-size:13px;font-weight:500;color:rgba(255,255,255,0.5);
+        }
+        .form-group input[type="text"],
+        .form-group input[type="email"],
+        .form-group input[type="password"]{
+            padding:10px 14px;
+            background:rgba(255,255,255,0.04);
+            border:1px solid rgba(255,255,255,0.08);
+            border-radius:8px;color:#fff;
+            font-family:inherit;font-size:14px;
+            outline:none;transition:border-color 200ms,background 200ms;
+        }
+        .form-group input:focus{
+            border-color:rgba(255,255,255,0.25);
+            background:rgba(255,255,255,0.06);
+        }
+        .form-group input::placeholder{color:rgba(255,255,255,0.2)}
+
+        /* Password strength */
+        .strength-bars{display:flex;gap:4px;margin-top:4px}
+        .strength-bar{
+            height:3px;flex:1;border-radius:2px;
+            background:rgba(255,255,255,0.08);transition:background 300ms;
+        }
+        .strength-bar.level-1{background:#ef4444}
+        .strength-bar.level-2{background:#f59e0b}
+        .strength-bar.level-3{background:#eab308}
+        .strength-bar.level-4{background:#22c55e}
+
+        /* Checkbox */
+        .checkbox-group{
+            display:flex;align-items:flex-start;gap:10px;margin-top:4px;
+        }
+        .checkbox-group input[type="checkbox"]{
+            width:16px;height:16px;margin-top:2px;
+            accent-color:rgba(255,255,255,0.6);cursor:pointer;flex-shrink:0;
+        }
+        .checkbox-group label{
+            font-size:13px;color:rgba(255,255,255,0.5);line-height:1.4;cursor:pointer;
+        }
+        .checkbox-group label a{
+            color:rgba(255,255,255,0.7);text-decoration:underline;
+            text-underline-offset:2px;
+        }
+        .checkbox-group label a:hover{color:#fff}
+
+        /* Buttons */
+        .btn-submit{
+            width:100%;padding:12px;border-radius:8px;border:none;
+            background:#fff;color:#0a0a0a;
+            font-family:inherit;font-size:15px;font-weight:600;
+            cursor:pointer;transition:background 200ms;margin-top:4px;
+        }
+        .btn-submit:hover{background:rgba(255,255,255,0.9)}
+
+        /* Separator */
+        .separator{
+            display:flex;align-items:center;gap:16px;
+            margin:20px 0;
+        }
+        .separator::before,.separator::after{
+            content:'';flex:1;height:1px;background:rgba(255,255,255,0.1);
+        }
+        .separator span{
+            font-size:13px;color:rgba(255,255,255,0.3);flex-shrink:0;
+        }
+
+        /* Google button */
+        .btn-google{
+            width:100%;padding:12px;border-radius:8px;
+            background:rgba(255,255,255,0.06);
+            border:1px solid rgba(255,255,255,0.12);
+            color:rgba(255,255,255,0.8);
+            font-family:inherit;font-size:14px;font-weight:500;
+            cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;
+            transition:background 200ms,border-color 200ms;
+        }
+        .btn-google:hover{background:rgba(255,255,255,0.1);border-color:rgba(255,255,255,0.2)}
+        .btn-google svg{width:18px;height:18px;flex-shrink:0}
+
+        /* Switch link */
+        .auth-switch{
+            text-align:center;margin-top:24px;font-size:14px;
+            color:rgba(255,255,255,0.4);
+        }
+        .auth-switch a{
+            color:rgba(255,255,255,0.6);font-weight:500;
+            transition:color 200ms;
+        }
+        .auth-switch a:hover{color:#fff}
+
+        /* Card footer */
+        .auth-card-footer{
+            text-align:center;margin-top:24px;padding-top:20px;
+            border-top:1px solid rgba(255,255,255,0.06);
+            font-size:12px;color:rgba(255,255,255,0.25);
+        }
+        .auth-card-footer a{
+            color:rgba(255,255,255,0.25);transition:color 200ms;
+        }
+        .auth-card-footer a:hover{color:rgba(255,255,255,0.5)}
+
+        /* Page footer */
+        .page-footer{
+            margin-top:40px;font-size:13px;color:rgba(255,255,255,0.2);
+        }
+    </style>
+</head>
+<body>
+
+<!-- Brand -->
+<div class="auth-brand">
+    <a href="/"><span class="wordmark">Zephr</span></a>
+</div>
+
+<!-- Card -->
+<div class="auth-card">
+    {% if mode == 'register' %}
+    <!-- ===== REGISTER MODE ===== -->
+    <h1 class="auth-title">Crear cuenta</h1>
+    <p class="auth-subtitle">Empieza a buscar ADs de aviacion en segundos.</p>
+
+    <!-- TODO: Conectar este formulario al backend de auth (POST /api/auth/register) -->
+    <form class="auth-form" onsubmit="return false">
+        <div class="form-group">
+            <label for="name">Nombre completo</label>
+            <input type="text" id="name" name="name" placeholder="Tu nombre" autocomplete="name" required>
+        </div>
+        <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" placeholder="tu@email.com" autocomplete="email" required>
+        </div>
+        <div class="form-group">
+            <label for="password">Contrasena</label>
+            <input type="password" id="password" name="password" placeholder="Minimo 8 caracteres" autocomplete="new-password" required>
+            <div class="strength-bars">
+                <div class="strength-bar" id="str-1"></div>
+                <div class="strength-bar" id="str-2"></div>
+                <div class="strength-bar" id="str-3"></div>
+                <div class="strength-bar" id="str-4"></div>
+            </div>
+        </div>
+        <div class="checkbox-group">
+            <input type="checkbox" id="terms" name="terms" required>
+            <label for="terms">Acepto los <a href="#">Terminos de Servicio</a> y la <a href="#">Politica de Privacidad</a></label>
+        </div>
+        <button type="submit" class="btn-submit">Crear cuenta</button>
+    </form>
+
+    <div class="separator"><span>o</span></div>
+
+    <!-- TODO: Conectar boton de Google OAuth -->
+    <button class="btn-google" type="button">
+        <svg viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+        Continuar con Google
+    </button>
+
+    <div class="auth-switch">
+        Ya tienes cuenta? <a href="/login">Iniciar sesion</a>
+    </div>
+
+    {% else %}
+    <!-- ===== LOGIN MODE ===== -->
+    <h1 class="auth-title">Bienvenido a Zephr</h1>
+    <p class="auth-subtitle">Inicia sesion para acceder a tu cuenta.</p>
+
+    <!-- TODO: Conectar este formulario al backend de auth (POST /api/auth/login) -->
+    <form class="auth-form" onsubmit="return false">
+        <div class="form-group">
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email" placeholder="tu@email.com" autocomplete="email" required>
+        </div>
+        <div class="form-group">
+            <label for="password">Contrasena</label>
+            <input type="password" id="password" name="password" placeholder="Tu contrasena" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn-submit">Continuar</button>
+    </form>
+
+    <div class="separator"><span>o</span></div>
+
+    <!-- TODO: Conectar boton de Google OAuth -->
+    <button class="btn-google" type="button">
+        <svg viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+        Continuar con Google
+    </button>
+
+    <div class="auth-switch">
+        No tienes cuenta? <a href="/register">Registrarse</a>
+    </div>
+    {% endif %}
+
+    <div class="auth-card-footer">
+        <a href="#">Terminos de Servicio</a> &middot; <a href="#">Politica de Privacidad</a>
+    </div>
+</div>
+
+<!-- Page Footer -->
+<div class="page-footer">&copy; Hyvento 2026</div>
+
+<script>
+(function(){
+    var pw = document.getElementById('password');
+    if (!pw) return;
+    var bars = [
+        document.getElementById('str-1'),
+        document.getElementById('str-2'),
+        document.getElementById('str-3'),
+        document.getElementById('str-4')
+    ];
+    if (!bars[0]) return;
+
+    pw.addEventListener('input', function(){
+        var v = pw.value;
+        var score = 0;
+        if (v.length >= 8) score++;
+        if (/[A-Z]/.test(v)) score++;
+        if (/[0-9]/.test(v)) score++;
+        if (/[^A-Za-z0-9]/.test(v)) score++;
+
+        bars.forEach(function(bar, i){
+            bar.className = 'strength-bar';
+            if (i < score) bar.classList.add('level-' + score);
+        });
+    });
+})();
+</script>
+
+</body>
+</html>
