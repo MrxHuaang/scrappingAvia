@@ -8,7 +8,7 @@
     <meta property="og:description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC en un solo lugar.">
     <meta name="theme-color" content="#0a0e17">
     <title>AD Search · Airworthiness Directives</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233b82f6' stroke-width='1.5'%3E%3Cpath d='M2 12L6 3h12l4 9'/%3E%3Cpath d='M6 3L12 21 18 3'/%3E%3Cpath d='M2 12h20'/%3E%3C/svg%3E">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%233b82f6'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='Inter,sans-serif' font-weight='700' font-size='15' fill='white'%3EAD%3C/text%3E%3C/svg%3E">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -112,8 +112,8 @@
                     <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;width:18px;height:18px"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
                     <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                 </button>
-                <button id="btn-shortcuts-help" class="header-icon-btn" title="Atajos (?)" style="margin-left:.25rem">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <button id="btn-shortcuts-help" class="header-icon-btn" title="Atajos (?)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                 </button>
                 <div class="header-divider"></div>
                 <div class="status-dot" id="status-indicator"></div>
@@ -241,7 +241,24 @@
     <script src="/static/js/app.js"></script>
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+            navigator.serviceWorker.register('/static/sw.js').then((reg) => {
+                reg.addEventListener('updatefound', () => {
+                    const newSW = reg.installing;
+                    if (!newSW) return;
+                    newSW.addEventListener('statechange', () => {
+                        if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+                            const bar = document.createElement('div');
+                            bar.className = 'sw-update-bar';
+                            bar.innerHTML = 'Nueva version disponible <button id="sw-update-btn">Actualizar</button>';
+                            document.body.appendChild(bar);
+                            document.getElementById('sw-update-btn').addEventListener('click', () => {
+                                newSW.postMessage({type:'SKIP_WAITING'});
+                                window.location.reload();
+                            });
+                        }
+                    });
+                });
+            }).catch(() => {});
         }
     </script>
 </body>

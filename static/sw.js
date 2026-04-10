@@ -1,4 +1,5 @@
-const CACHE_NAME = 'ad-search-v1';
+const CACHE_VERSION = 'v-20260410-2235';
+const CACHE_NAME = 'ad-search-' + CACHE_VERSION;
 const STATIC_ASSETS = [
     '/static/css/style.css',
     '/static/js/app.js',
@@ -9,7 +10,7 @@ self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
     );
-    self.skipWaiting();
+    // Don't skipWaiting automatically — let the client decide via message
 });
 
 self.addEventListener('activate', (event) => {
@@ -19,6 +20,13 @@ self.addEventListener('activate', (event) => {
         )
     );
     self.clients.claim();
+});
+
+// Listen for skip-waiting message from client
+self.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
+    }
 });
 
 self.addEventListener('fetch', (event) => {

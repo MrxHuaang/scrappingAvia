@@ -2,6 +2,14 @@
  * AD Search — Frontend Application
  * SSE streaming, sidebar, card/table view, URL params, keyboard shortcuts,
  * relevance scoring, recent searches, quick filter, sessionStorage.
+ *
+ * Bug fixes in this version:
+ * - Race condition: requestId per search, SSE events ignored if stale
+ * - Ctrl+A selects only visible/filtered page results
+ * - Pagination reflects filtered count
+ * - URL params priority over sessionStorage (no flash)
+ * - Render guard: skip identical re-renders
+ * - Inverted index for autocomplete performance
  */
 (function () {
     'use strict';
@@ -12,6 +20,8 @@
     // ================================================================
     // STATE
     // ================================================================
+    let _requestId = 0; // monotonic ID for race-condition guard
+
     const state = {
         selectedSource: 'federal_register',
         results: [],
@@ -33,6 +43,8 @@
         streamAbort: null,
         viewMode: localStorage.getItem('viewMode') || 'table',
         quickFilter: '',
+        // Render guard
+        _lastRenderKey: null,
     };
 
     // ================================================================
@@ -128,6 +140,7 @@
         if (dom.viewCardsBtn) dom.viewCardsBtn.classList.toggle('active', mode === 'cards');
         if (dom.tableContainer) dom.tableContainer.style.display = mode === 'table' ? '' : 'none';
         if (dom.cardsContainer) dom.cardsContainer.style.display = mode === 'cards' ? '' : 'none';
+        state._lastRenderKey = null; // force re-render on mode switch
         if (state.results.length > 0) renderResults();
     }
     if (dom.viewTableBtn) dom.viewTableBtn.addEventListener('click', () => setViewMode('table'));
@@ -142,6 +155,7 @@
             state.quickFilter = dom.quickFilter.value.trim().toLowerCase();
             state.currentPage = 1;
             applyQuickFilter();
+            state._lastRenderKey = null;
             renderResults();
         });
     }
@@ -165,11 +179,15 @@
     }
 
     // ================================================================
-    // SEARCH — SSE STREAMING
+    // SEARCH — SSE STREAMING (with requestId race guard)
     // ================================================================
     dom.searchForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        if (state.searching) return;
+        if (state.searching) {
+            // Abort current search and start new one
+            if (state.streamAbort) state.streamAbort.abort();
+            state.searching = false;
+        }
 
         const formData = new FormData(dom.searchForm);
         const params = {
@@ -201,6 +219,9 @@
     });
 
     async function streamSearch(params) {
+        // Generate unique request ID for race-condition guard
+        const thisRequestId = ++_requestId;
+
         state.searching = true;
         state.currentPage = 1;
         state.sortField = '_relevance';
@@ -210,6 +231,7 @@
         state.filteredResults = null;
         state.sourceCounts = {};
         state.quickFilter = '';
+        state._lastRenderKey = null;
         if (dom.quickFilter) dom.quickFilter.value = '';
         clearSelection();
 
@@ -231,6 +253,9 @@
             const response = await fetch(`/api/search/stream?${qs}`, { signal: abortCtrl.signal });
             if (!response.ok) throw new Error(`Error del servidor (${response.status})`);
 
+            // Check if this request is still active
+            if (thisRequestId !== _requestId) return;
+
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
@@ -238,6 +263,9 @@
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
+                // Race guard: if a newer search started, abandon this one
+                if (thisRequestId !== _requestId) { reader.cancel(); return; }
+
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
                 buffer = lines.pop();
@@ -249,6 +277,8 @@
                     try {
                         const event = JSON.parse(jsonStr);
                         if (event.event === 'done') continue;
+                        // Race guard
+                        if (thisRequestId !== _requestId) return;
 
                         const srcResults = event.results || [];
                         const srcError = event.error;
@@ -262,17 +292,22 @@
 
                         state.lastResultCount = state.results.length;
                         state.lastSearchMs = Math.round(performance.now() - t0);
+                        state._lastRenderKey = null; // force render for streaming updates
                         renderResults();
                         updateTitle('results');
                     } catch (_) {}
                 }
             }
 
+            // Final race guard
+            if (thisRequestId !== _requestId) return;
+
             state.lastSearchMs = Math.round(performance.now() - t0);
             state.lastResultCount = state.results.length;
 
             if (state.results.length > 0) {
                 showToast(`${state.results.length.toLocaleString('es-ES')} resultados encontrados.`, 'success');
+                state._lastRenderKey = null;
                 renderResults();
                 if (dom.emptyState) dom.emptyState.style.display = 'none';
             } else {
@@ -287,13 +322,16 @@
 
         } catch (error) {
             if (error.name === 'AbortError') return;
+            if (thisRequestId !== _requestId) return;
             showToast(`Error: ${error.message}`, 'error');
             setStatus('error', 'Error');
             updateTitle('default');
         } finally {
-            state.searching = false;
-            state.streamAbort = null;
-            showButtonLoading(false);
+            if (thisRequestId === _requestId) {
+                state.searching = false;
+                state.streamAbort = null;
+                showButtonLoading(false);
+            }
         }
     }
 
@@ -383,13 +421,16 @@
     // CLEAR
     // ================================================================
     dom.btnClear.addEventListener('click', () => {
+        // If searching, abort
+        if (state.streamAbort) { state.streamAbort.abort(); state.streamAbort = null; }
         dom.searchForm.reset();
         state.results = []; state.filteredResults = null; state.currentPage = 1;
         state.activeManufacturerKey = null; state.activeManufacturerModels = null;
         state.lastErrors = []; state.sourceCounts = {}; state.lastParams = null;
-        state.quickFilter = '';
+        state.quickFilter = ''; state._lastRenderKey = null; state.searching = false;
         if (dom.quickFilter) dom.quickFilter.value = '';
         clearSelection();
+        showButtonLoading(false);
         dom.resultsSection.style.display = 'none';
         if (dom.emptyState) dom.emptyState.style.display = 'none';
         if (dom.inputModel) dom.inputModel.placeholder = 'Ej: 737, A320...';
@@ -400,7 +441,7 @@
     });
 
     // ================================================================
-    // SELECTION
+    // SELECTION — operates on filtered + paged results only
     // ================================================================
     function clearSelection() { state.selectedIds.clear(); if (dom.selectAll) dom.selectAll.checked = false; updateBulkBar(); }
     function updateBulkBar() {
@@ -411,37 +452,42 @@
             if (dom.bulkFilterBadge) dom.bulkFilterBadge.style.display = state.quickFilter ? '' : 'none';
         } else { dom.bulkBar.style.display = 'none'; }
     }
-    function updateSelectAllCheckbox() {
+
+    function getPageIndices() {
         const active = getActiveResults();
         const sorted = getSortedResults(active);
         const start = (state.currentPage - 1) * state.pageSize;
         const end = start + state.pageSize;
-        const pageIndices = [];
-        for (let i = start; i < end && i < sorted.length; i++) pageIndices.push(state.results.indexOf(sorted[i]));
+        const indices = [];
+        for (let i = start; i < end && i < sorted.length; i++) {
+            indices.push(state.results.indexOf(sorted[i]));
+        }
+        return indices;
+    }
+
+    function updateSelectAllCheckbox() {
+        const pageIndices = getPageIndices();
         const allChecked = pageIndices.length > 0 && pageIndices.every(idx => state.selectedIds.has(idx));
         if (dom.selectAll) dom.selectAll.checked = allChecked;
     }
     if (dom.selectAll) {
         dom.selectAll.addEventListener('change', () => {
-            const active = getActiveResults();
-            const sorted = getSortedResults(active);
-            const start = (state.currentPage - 1) * state.pageSize;
-            const end = start + state.pageSize;
-            for (let i = start; i < end && i < sorted.length; i++) {
-                const idx = state.results.indexOf(sorted[i]);
+            const pageIndices = getPageIndices();
+            for (const idx of pageIndices) {
                 if (dom.selectAll.checked) state.selectedIds.add(idx); else state.selectedIds.delete(idx);
             }
+            state._lastRenderKey = null;
             renderResults(); updateBulkBar();
         });
     }
-    if (dom.bulkDeselect) dom.bulkDeselect.addEventListener('click', () => { clearSelection(); renderResults(); });
+    if (dom.bulkDeselect) dom.bulkDeselect.addEventListener('click', () => { clearSelection(); state._lastRenderKey = null; renderResults(); });
     if (dom.bulkExportCsv) dom.bulkExportCsv.addEventListener('click', () => exportSelected('csv'));
     if (dom.bulkExportExcel) dom.bulkExportExcel.addEventListener('click', () => exportSelected('excel'));
     if (dom.bulkExportZip) dom.bulkExportZip.addEventListener('click', () => exportSelected('zip'));
 
     async function exportSelected(format) {
         if (state.selectedIds.size === 0) { showToast('No hay registros seleccionados.', 'error'); return; }
-        const selectedResults = [...state.selectedIds].map(idx => state.results[idx]);
+        const selectedResults = [...state.selectedIds].map(idx => state.results[idx]).filter(Boolean);
         try {
             showToast(`Exportando ${format.toUpperCase()}...`, 'info');
             const payload = { results: selectedResults };
@@ -454,7 +500,7 @@
     }
 
     // ================================================================
-    // RENDER
+    // RENDER (with guard against identical re-renders)
     // ================================================================
     function renderResults() {
         const active = getActiveResults();
@@ -463,6 +509,11 @@
         const start = (state.currentPage - 1) * state.pageSize;
         const end = start + state.pageSize;
         const pageResults = sorted.slice(start, end);
+
+        // Render guard: build key from page, sort, filter, viewMode, selection count, result count
+        const renderKey = `${state.currentPage}|${state.sortField}|${state.sortOrder}|${state.quickFilter}|${state.viewMode}|${state.selectedIds.size}|${active.length}|${state.results.length}`;
+        if (state._lastRenderKey === renderKey) return; // skip identical render
+        state._lastRenderKey = renderKey;
 
         // Count display
         if (state.filteredResults !== null) {
@@ -517,7 +568,7 @@
                 <div class="card-subject">${esc(r.Subject)}</div>
                 <div class="result-card-bottom">
                     <span class="card-date">${formatDate(r.Effective_Date)}</span>
-                    ${pdfCell(r)}
+                    ${pdfCellCard(r)}
                 </div>
             </div>`;
         }).join('');
@@ -540,6 +591,12 @@
         return r.PDF_Link
             ? `<a href="${esc(r.PDF_Link)}" target="_blank" rel="noopener" class="pdf-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Ver</a>`
             : '<span style="color:var(--text-muted)">--</span>';
+    }
+
+    function pdfCellCard(r) {
+        return r.PDF_Link
+            ? `<a href="${esc(r.PDF_Link)}" target="_blank" rel="noopener" class="pdf-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Ver</a>`
+            : '<span class="card-no-link">Sin enlace</span>';
     }
 
     function formatSubject(raw, maxLen) {
@@ -576,6 +633,7 @@
             if (state.sortField === field) state.sortOrder = state.sortOrder === 'asc' ? 'desc' : 'asc';
             else { state.sortField = field; state.sortOrder = field === '_relevance' ? 'desc' : 'asc'; }
             state.currentPage = 1;
+            state._lastRenderKey = null;
             renderResults();
         });
     });
@@ -621,13 +679,13 @@
         dom.pagination.querySelectorAll('button[data-page]').forEach(btn => {
             btn.addEventListener('click', () => {
                 const page = parseInt(btn.dataset.page);
-                if (page >= 1 && page <= totalPages) { state.currentPage = page; renderResults(); dom.resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+                if (page >= 1 && page <= totalPages) { state.currentPage = page; state._lastRenderKey = null; renderResults(); dom.resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
             });
         });
     }
 
     // ================================================================
-    // EXPORT (all visible)
+    // EXPORT (all visible / filtered)
     // ================================================================
     dom.btnExportCsv.addEventListener('click', () => exportAll('csv'));
     dom.btnExportExcel.addEventListener('click', () => exportAll('excel'));
@@ -669,7 +727,7 @@
     }
 
     // ================================================================
-    // URL PARAMS — Auto-search on load
+    // URL PARAMS — Auto-search on load (priority over sessionStorage)
     // ================================================================
     function loadFromUrlParams() {
         const params = new URLSearchParams(window.location.search);
@@ -718,6 +776,7 @@
         state.lastResultCount = session.results.length;
         state.lastSearchTerm = session.params.keyword || session.params.make || session.params.model || '';
         fillForm(session.params);
+        state._lastRenderKey = null;
         renderResults();
         dom.resultsSection.style.display = 'block';
         updateTitle('results');
@@ -741,9 +800,8 @@
 
     function saveRecentSearch(params, count) {
         const items = loadRecent();
-        const label = [params.source !== 'all' ? params.source.replace('_',' ') : 'Todas', params.make, params.model, params.keyword].filter(Boolean).join(' · ');
+        const label = [params.source !== 'all' ? params.source.replace('_',' ') : 'Todas', params.make, params.model, params.keyword].filter(Boolean).join(' \u00b7 ');
         const entry = { label, params, count, ts: Date.now() };
-        // Remove duplicate
         const filtered = items.filter(i => i.label !== label);
         filtered.unshift(entry);
         saveRecent(filtered.slice(0, MAX_RECENT));
@@ -806,8 +864,31 @@
     }
 
     // ================================================================
-    // AUTOCOMPLETADO
+    // AUTOCOMPLETADO — Inverted index for performance
     // ================================================================
+
+    // Build inverted index once on load
+    const _acIndex = { make: new Map(), model: new Map() };
+    (function buildAutocompleteIndex() {
+        function addToIndex(map, text, ref) {
+            const lower = text.toLowerCase();
+            for (let len = 2; len <= Math.min(lower.length, 8); len++) {
+                for (let start = 0; start <= lower.length - len; start++) {
+                    const prefix = lower.substring(start, start + len);
+                    if (!map.has(prefix)) map.set(prefix, []);
+                    const arr = map.get(prefix);
+                    if (arr.indexOf(ref) === -1) arr.push(ref);
+                }
+            }
+        }
+        if (typeof AIRCRAFT_DATA === 'undefined') return;
+        for (const [key, entry] of Object.entries(AIRCRAFT_DATA)) {
+            addToIndex(_acIndex.make, key, key);
+            for (const alias of entry.aliases) addToIndex(_acIndex.make, alias, key);
+            for (const model of entry.models) addToIndex(_acIndex.model, model, { make: key, model });
+        }
+    })();
+
     function createAutocomplete(input, getSuggestions, onSelect, minChars = 2) {
         if (!input) return;
         const dropdown = document.createElement('div');
@@ -851,9 +932,8 @@
         return { update, close: () => { dropdown.style.display = 'none'; } };
     }
 
-    const allModelsCache = [];
-    function getAllModels() { if (allModelsCache.length) return allModelsCache; Object.values(AIRCRAFT_DATA).forEach(e => e.models.forEach(m => allModelsCache.push(m))); return allModelsCache; }
     function findManufacturer(query) {
+        if (typeof AIRCRAFT_DATA === 'undefined') return null;
         const q = query.toLowerCase().trim();
         for (const [k,e] of Object.entries(AIRCRAFT_DATA)) { if (k.toLowerCase()===q || e.aliases.some(a=>a.toLowerCase()===q)) return {key:k,entry:e}; }
         for (const [k,e] of Object.entries(AIRCRAFT_DATA)) { if (k.toLowerCase().includes(q)||q.includes(k.toLowerCase())) return {key:k,entry:e}; }
@@ -865,8 +945,17 @@
         else dom.inputModel.placeholder = 'Ej: 737, A320...';
     }
 
+    // Use inverted index for make autocomplete
     const makeAC = createAutocomplete(dom.inputMake, (q) => {
         const ql = q.toLowerCase();
+        const hits = _acIndex.make.get(ql.substring(0, Math.min(ql.length, 8)));
+        if (hits) {
+            // Filter to those that actually contain the full query
+            const unique = [...new Set(hits)].filter(k => k.toLowerCase().includes(ql));
+            return unique.slice(0, 6).map(k => ({label:k, value:k}));
+        }
+        // Fallback
+        if (typeof AIRCRAFT_DATA === 'undefined') return [];
         const m = [];
         for (const [k,e] of Object.entries(AIRCRAFT_DATA)) { if (k.toLowerCase().includes(ql)||e.aliases.some(a=>a.includes(ql))) m.push({label:k,value:k}); }
         return m.slice(0,6);
@@ -885,10 +974,29 @@
         const found=findManufacturer(val);state.activeManufacturerKey=found?found.key:null;state.activeManufacturerModels=found?found.entry.models:null;updateModelPlaceholder();
     });
 
+    // Use inverted index for model autocomplete
     const modelAC = createAutocomplete(dom.inputModel, (q) => {
         const ql = q.toLowerCase();
-        const pool = state.activeManufacturerModels || getAllModels();
-        return pool.filter(m => m.toLowerCase().includes(ql)).slice(0,6).map(m => ({label:m,value:m}));
+        const pool = state.activeManufacturerModels;
+        if (pool) {
+            // Manufacturer-scoped: filter models directly (small array)
+            return pool.filter(m => m.toLowerCase().includes(ql)).slice(0,6).map(m => ({label:m,value:m}));
+        }
+        // Global: use inverted index
+        const hits = _acIndex.model.get(ql.substring(0, Math.min(ql.length, 8)));
+        if (hits) {
+            const unique = [];
+            const seen = new Set();
+            for (const h of hits) {
+                if (h.model.toLowerCase().includes(ql) && !seen.has(h.model)) {
+                    seen.add(h.model);
+                    unique.push(h.model);
+                    if (unique.length >= 6) break;
+                }
+            }
+            return unique.map(m => ({label:m,value:m}));
+        }
+        return [];
     }, (item) => { dom.inputModel.value = item.value; });
 
     // ================================================================
@@ -913,30 +1021,23 @@
         if (e.key === 'Enter' && e.ctrlKey) { dom.searchForm.dispatchEvent(new Event('submit')); return; }
         // Ctrl+Shift+C: copy URL
         if (e.key === 'C' && e.ctrlKey && e.shiftKey) { e.preventDefault(); copySearchUrl(); return; }
-        // Ctrl+A in table context: select all on page
+        // Ctrl+A: select all on page (only filtered/visible)
         if (e.key === 'a' && e.ctrlKey && !e.shiftKey && !isInputFocused()) {
             e.preventDefault();
             if (dom.selectAll) { dom.selectAll.checked = true; dom.selectAll.dispatchEvent(new Event('change')); }
             return;
         }
 
-        if (isInputFocused()) return; // rest only when not in input
+        if (isInputFocused()) return;
 
-        // "/" focus keyword
         if (e.key === '/') { e.preventDefault(); if (dom.inputKeyword) dom.inputKeyword.focus(); return; }
-        // "?" show shortcuts
         if (e.key === '?') { e.preventDefault(); showShortcutsModal(); return; }
-        // Escape
         if (e.key === 'Escape') {
-            // Close shortcuts modal
             if (dom.shortcutsModal && dom.shortcutsModal.style.display !== 'none') { hideShortcutsModal(); return; }
-            // Close sidebar on mobile
             if (dom.sidebar && dom.sidebar.classList.contains('open')) { closeSidebar(); return; }
-            // Close dropdowns
             const openDd = document.querySelector('.autocomplete-dropdown[style*="block"]');
             if (openDd) { closeAllDropdowns(); return; }
-            // Deselect all
-            clearSelection(); renderResults();
+            clearSelection(); state._lastRenderKey = null; renderResults();
         }
     });
 
@@ -993,7 +1094,7 @@
     // ================================================================
     renderRecentSearches();
 
-    // Priority: URL params > session restore
+    // Priority: URL params > session restore (no flash)
     if (!loadFromUrlParams()) {
         restoreSession();
     }

@@ -10,7 +10,7 @@ import sys
 import json
 import zipfile
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Flask, render_template, request, jsonify, send_file, Response
 import pandas as pd
@@ -22,11 +22,13 @@ from scrapers.federal_register import search_ads as fr_search
 from scrapers.easa import search_ads as easa_search, search_main_page as easa_main_page
 from scrapers.transport_canada import search_ads as tc_search
 from scrapers.anac_brazil import search_ads as anac_brazil_search
-from utils import map_product_type, run_with_timeout
+from utils import map_product_type, run_with_timeout, VALID_SOURCES
 
 
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
+
+APP_VERSION = "1.0.0"
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -114,6 +116,19 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
 
 
 # ------------------------------------------------------------------
+# API: Health check
+# ------------------------------------------------------------------
+@app.route("/api/health")
+def api_health():
+    return jsonify({
+        "status": "ok",
+        "version": APP_VERSION,
+        "sources": ["federal_register", "easa", "transport_canada", "anac_brazil"],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+# ------------------------------------------------------------------
 # API: Busqueda de ADs (POST — compatibilidad)
 # ------------------------------------------------------------------
 @app.route("/api/search", methods=["POST"])
@@ -140,7 +155,7 @@ def api_search():
             results, err = run_with_timeout(fn, SCRAPER_TIMEOUT, label)
             if err:
                 errors.append(err)
-            else:
+            if results:
                 all_results.extend(results)
 
         return jsonify({
@@ -165,6 +180,26 @@ def api_search_stream():
     product_type = request.args.get("product_type", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
+
+    # Validación de source
+    if source not in VALID_SOURCES:
+        def error_gen():
+            event = {"source": source, "results": [], "count": 0,
+                     "error": f"Fuente no válida: '{source}'. Opciones: {', '.join(sorted(VALID_SOURCES - {'all'}))}"}
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'event': 'done', 'total': 0})}\n\n"
+        return Response(error_gen(), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # Validación de inputs
+    if not keyword and not make and not model and source != "all":
+        def empty_gen():
+            event = {"source": source, "results": [], "count": 0,
+                     "error": "Se requiere al menos un término de búsqueda (keyword, make o model)."}
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'event': 'done', 'total': 0})}\n\n"
+        return Response(empty_gen(), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     scrapers = _build_scrapers(source, keyword, make, model, product_type, date_from, date_to)
 
@@ -333,6 +368,7 @@ if __name__ == "__main__":
     print("  Fuentes: Federal Register | EASA | Transport Canada | ANAC")
     print("=" * 55)
     print(f"\n  Landing:  http://127.0.0.1:5000/")
-    print(f"  App:      http://127.0.0.1:5000/app\n")
+    print(f"  App:      http://127.0.0.1:5000/app")
+    print(f"  Health:   http://127.0.0.1:5000/api/health\n")
 
     app.run(host="127.0.0.1", port=5000, debug=True)
