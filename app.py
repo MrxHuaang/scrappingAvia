@@ -9,6 +9,7 @@ import io
 import re
 import sys
 import json
+import base64
 import time
 import logging
 import traceback
@@ -262,6 +263,36 @@ def auth_me():
 # ------------------------------------------------------------------
 # Stripe — Billing
 # ------------------------------------------------------------------
+def _jwt_sub_unverified(token):
+    """Extrae 'sub' (user id) del JWT de Supabase sin verificar firma (solo servidor)."""
+    if not token or not isinstance(token, str):
+        return None
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        payload_b64 = parts[1]
+        pad = "=" * ((4 - len(payload_b64) % 4) % 4)
+        raw = base64.urlsafe_b64decode(payload_b64 + pad)
+        payload = json.loads(raw.decode("utf-8"))
+        sub = payload.get("sub")
+        return str(sub).strip() if sub else None
+    except Exception:
+        return None
+
+
+def _user_id_from_flask_session():
+    """
+    user_id para metadata de Stripe: dict session['user'] o claims del access_token.
+    """
+    user = session.get("user") or {}
+    uid = user.get("id") or user.get("sub") or user.get("user_id") or user.get("uid")
+    if uid:
+        s = str(uid).strip()
+        return s if s else None
+    return _jwt_sub_unverified(session.get("access_token"))
+
+
 def _fetch_user_plan(user_id):
     """Consulta el plan del usuario desde la tabla profiles en Supabase."""
     sb = get_supabase_admin()
@@ -328,13 +359,30 @@ def stripe_create_checkout():
     if not stripe.api_key:
         return jsonify({"error": "Stripe no configurado"}), 500
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         plan = data.get("plan", "pro")
+        if plan not in ("pro", "team"):
+            plan = "pro"
+
+        logger.info(f"[CHECKOUT] user en sesión: {session.get('user')}")
+        logger.info(f"[CHECKOUT] plan solicitado: {plan}")
+
+        user = session.get("user") or {}
+        user_id = _user_id_from_flask_session()
+        logger.info(f"[CHECKOUT] user_id extraído: {user_id!r}")
+
+        if not user_id:
+            logger.error("[CHECKOUT] No se pudo obtener user_id de la sesión")
+            return jsonify({"error": "usuario no identificado"}), 401
+
         price_id = STRIPE_PRO_PRICE_ID if plan == "pro" else STRIPE_TEAM_PRICE_ID
         if not price_id:
             return jsonify({"error": f"Price ID no configurado para plan '{plan}'"}), 500
 
-        user = session.get("user", {})
+        meta_user_id = str(user_id)
+        meta_plan = str(plan)
+        logger.info(f"[CHECKOUT] Creando sesión con metadata: user_id={meta_user_id} plan={meta_plan}")
+
         checkout = stripe.checkout.Session.create(
             customer_email=user.get("email"),
             payment_method_types=["card"],
@@ -343,8 +391,8 @@ def stripe_create_checkout():
             success_url=BASE_URL + "/payment/success?session_id={CHECKOUT_SESSION_ID}",
             cancel_url=BASE_URL + "/payment/cancel",
             metadata={
-                "user_id": user.get("id", ""),
-                "plan": plan,
+                "user_id": meta_user_id,
+                "plan": meta_plan,
             },
         )
         return jsonify({"checkout_url": checkout.url})
