@@ -127,7 +127,24 @@ def auth_google():
 
 @app.route("/auth/callback")
 def auth_callback():
-    return render_template("auth_callback.html")
+    sb = get_supabase()
+    if not sb:
+        return redirect("/login?error=auth_not_configured")
+    try:
+        code = request.args.get("code")
+        if code:
+            response = sb.auth.exchange_code_for_session({"auth_code": code})
+            if response.session:
+                session["access_token"] = response.session.access_token
+                session["user"] = {
+                    "id": response.user.id,
+                    "email": response.user.email,
+                    "name": response.user.user_metadata.get("full_name", ""),
+                }
+                return redirect("/app")
+        return redirect("/login?error=callback_failed")
+    except Exception as e:
+        return redirect(f"/login?error={str(e)}")
 
 
 @app.route("/auth/logout", methods=["POST"])
