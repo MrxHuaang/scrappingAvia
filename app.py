@@ -64,6 +64,8 @@ logger = logging.getLogger(__name__)
 
 _supabase = None
 _supabase_admin = None
+# True si get_supabase_admin() construyó el cliente con SUPABASE_SERVICE_KEY (no fallback anon).
+_SUPABASE_ADMIN_USES_SERVICE_ROLE = None
 
 def get_supabase():
     """Cliente con anon key — para auth (sign_in, sign_up, OAuth)."""
@@ -75,13 +77,24 @@ def get_supabase():
 
 def get_supabase_admin():
     """Cliente con service_role key — para operaciones de servidor (profiles, billing)."""
-    global _supabase_admin
+    global _supabase_admin, _SUPABASE_ADMIN_USES_SERVICE_ROLE
     if _supabase_admin is None:
         from supabase import create_client
+        sk = os.environ.get("SUPABASE_SERVICE_KEY", "")
+        logger.info(f"[ADMIN] Creando cliente admin. Service key presente: {bool(sk)}")
+        logger.info(f"[ADMIN] Service key primeros 20 chars: {sk[:20]}")
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             _supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+            _SUPABASE_ADMIN_USES_SERVICE_ROLE = True
+            logger.info("[ADMIN] Cliente creado con SUPABASE_SERVICE_KEY (service_role)")
         elif SUPABASE_URL and SUPABASE_ANON_KEY:
             _supabase_admin = get_supabase()
+            _SUPABASE_ADMIN_USES_SERVICE_ROLE = False
+            logger.warning(
+                "[ADMIN] FALLBACK: cliente admin = anon key — RLS puede bloquear upsert en profiles"
+            )
+        else:
+            _SUPABASE_ADMIN_USES_SERVICE_ROLE = None
     return _supabase_admin
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
@@ -401,11 +414,13 @@ def stripe_create_checkout():
 
 
 def _stripe_debug_endpoint_allowed():
-    """GET /api/debug/stripe solo con Stripe en modo test o ENABLE_STRIPE_DEBUG=1."""
+    """Endpoints /api/debug/* — Stripe test, ENABLE_STRIPE_DEBUG=1 o ENABLE_DEBUG_API=1."""
     key = os.environ.get("STRIPE_SECRET_KEY") or ""
     if key.startswith("sk_test_"):
         return True
-    return os.environ.get("ENABLE_STRIPE_DEBUG") == "1"
+    if os.environ.get("ENABLE_STRIPE_DEBUG") == "1":
+        return True
+    return os.environ.get("ENABLE_DEBUG_API") == "1"
 
 
 @app.route("/api/debug/stripe")
@@ -419,6 +434,45 @@ def debug_stripe():
         "service_key_configured": bool(os.environ.get("SUPABASE_SERVICE_KEY")),
         "is_serverless": IS_SERVERLESS,
     })
+
+
+@app.route("/api/debug/supabase-write")
+def debug_supabase_write():
+    """Upsert de prueba en profiles (solo con debug habilitado)."""
+    if not _stripe_debug_endpoint_allowed():
+        return jsonify({"error": "Not found"}), 404
+    try:
+        admin = get_supabase_admin()
+        if not admin:
+            return jsonify({
+                "error": "no admin client",
+                "service_key_configured": bool(os.environ.get("SUPABASE_SERVICE_KEY")),
+                "supabase_url_set": bool(os.environ.get("SUPABASE_URL")),
+            }), 200
+
+        test_id = "00000000-0000-0000-0000-000000000001"
+        result = admin.table("profiles").upsert({
+            "id": test_id,
+            "plan": "test",
+            "stripe_customer_id": "test_customer",
+            "stripe_subscription_id": "test_sub",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+
+        return jsonify({
+            "ok": True,
+            "result_data": getattr(result, "data", None),
+            "service_key_configured": bool(os.environ.get("SUPABASE_SERVICE_KEY")),
+            "admin_uses_service_role_key": _SUPABASE_ADMIN_USES_SERVICE_ROLE is True,
+            "supabase_url_prefix": (os.environ.get("SUPABASE_URL") or "not set")[:30],
+        })
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "service_key_configured": bool(os.environ.get("SUPABASE_SERVICE_KEY")),
+            "admin_uses_service_role_key": _SUPABASE_ADMIN_USES_SERVICE_ROLE is True,
+        }), 200
 
 
 def _stripe_event_type(event):
