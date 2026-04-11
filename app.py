@@ -547,17 +547,33 @@ def stripe_webhook():
         if event_type == "checkout.session.completed":
             session_data = event["data"]["object"]
             logger.info(f"[WEBHOOK] Session data keys: {_stripe_object_keys(session_data)}")
-            logger.info(f"[WEBHOOK] Metadata: {_stripe_get(session_data, 'metadata', {})}")
             logger.info(f"[WEBHOOK] Customer: {_stripe_get(session_data, 'customer')}")
 
-            meta = _stripe_get(session_data, "metadata") or {}
-            if not isinstance(meta, dict):
+            # La metadata en StripeObject nuevo puede ser un objeto especial
+            # Intentar múltiples formas de accederla
+            metadata = None
+            try:
+                metadata = dict(session_data.metadata) if hasattr(session_data, "metadata") else None
+            except Exception:
+                pass
+            if not metadata:
                 try:
-                    meta = dict(meta) if hasattr(meta, "keys") else {}
+                    metadata = dict(session_data.get("metadata", {}))
                 except Exception:
-                    meta = {}
-            user_id = meta.get("user_id") if isinstance(meta, dict) else None
-            plan = meta.get("plan") if isinstance(meta, dict) else None
+                    pass
+            if not metadata:
+                try:
+                    metadata = session_data["metadata"]
+                    if not isinstance(metadata, dict):
+                        metadata = dict(metadata)
+                except Exception:
+                    metadata = {}
+
+            logger.info(f"[WEBHOOK] metadata extraída: {metadata}")
+            logger.info(f"[WEBHOOK] tipo de metadata: {type(metadata)}")
+
+            user_id = metadata.get("user_id") if metadata else None
+            plan = metadata.get("plan") if metadata else None
             customer_id = _stripe_expand_id(_stripe_get(session_data, "customer"))
             subscription_id = _stripe_expand_id(_stripe_get(session_data, "subscription"))
 
