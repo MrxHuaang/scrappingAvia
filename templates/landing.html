@@ -753,16 +753,28 @@ function _showPricingError(btn,msg){
 async function subscribe(plan){
     var btn=document.getElementById(plan==='team'?'cta-team':'cta-pro');
     try{
+        var meRes=await fetch('/auth/me',{credentials:'same-origin'});
+        var me=await meRes.json().catch(function(){return {};});
+        if(!me.user){
+            window.location.href='/login?next='+encodeURIComponent('/#precios');
+            return;
+        }
         var res=await fetch('/api/stripe/create-checkout-session',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
+            credentials:'same-origin',
             body:JSON.stringify({plan:plan})
         });
+        var ct=(res.headers.get('content-type')||'').toLowerCase();
+        if(!ct.includes('application/json')){
+            window.location.href='/login?next='+encodeURIComponent('/#precios');
+            return;
+        }
         var data=await res.json();
         if(data.checkout_url){
             window.location.href=data.checkout_url;
         }else if(res.status===401){
-            window.location.href='/login?next=/#precios';
+            window.location.href='/login?next='+encodeURIComponent('/#precios');
         }else{
             _showPricingError(btn,data.error||'Error al procesar. Verifica tu conexión e intenta de nuevo.');
         }

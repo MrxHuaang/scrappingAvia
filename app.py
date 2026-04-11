@@ -191,7 +191,10 @@ def auth_login():
             "name": meta.get("full_name", ""),
             "picture": meta.get("avatar_url", ""),
         }
-        session["plan"] = _fetch_user_plan(user_id)
+        real_plan = _fetch_user_plan(user_id)
+        session["plan"] = real_plan
+        session.modified = True
+        logger.info(f"[AUTH] Plan cargado desde Supabase: {real_plan}")
         return jsonify({"ok": True, "user": session["user"]})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -243,7 +246,10 @@ def auth_callback():
                     "name": meta.get("full_name", ""),
                     "picture": meta.get("avatar_url", ""),
                 }
-                session["plan"] = _fetch_user_plan(user_id)
+                real_plan = _fetch_user_plan(user_id)
+                session["plan"] = real_plan
+                session.modified = True
+                logger.info(f"[AUTH] Plan cargado desde Supabase: {real_plan}")
                 next_url = session.pop("auth_next", "/app")
                 return redirect(next_url)
         except Exception as e:
@@ -587,9 +593,19 @@ def payment_success():
     session_id = request.args.get("session_id")
     plan = "pro"  # default
 
+    sk = app.secret_key or ""
+    if not sk or sk == "dev-secret-change-in-production":
+        logger.warning(
+            "[SUCCESS] FLASK_SECRET_KEY ausente o valor por defecto: "
+            "la cookie de sesión puede no persistir bien entre requests (p. ej. en Vercel)."
+        )
+
     if session_id and stripe.api_key:
         try:
+            logger.info(f"[SUCCESS] session_id recibido: {session_id}")
             checkout_session = stripe.checkout.Session.retrieve(session_id)
+            logger.info(f"[SUCCESS] checkout session metadata: {checkout_session.metadata}")
+
             meta = checkout_session.get("metadata") or {}
             if not isinstance(meta, dict):
                 try:
@@ -604,6 +620,9 @@ def payment_success():
                 checkout_session.get("subscription") if hasattr(checkout_session, "get") else None
             )
             user_id = (meta.get("user_id") if isinstance(meta, dict) else None) or _user_id_from_flask_session()
+
+            logger.info(f"[SUCCESS] plan extraído: {plan}")
+            logger.info(f"[SUCCESS] user_id: {user_id}")
 
             session["plan"] = plan
             session.modified = True
