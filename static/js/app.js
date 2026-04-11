@@ -13,6 +13,7 @@
     // STATE
     // ================================================================
     let _requestId = 0;
+    let _isServerless = false;
 
     const state = {
         selectedSource: 'federal_register',
@@ -282,7 +283,8 @@
         const qs = new URLSearchParams(params).toString();
         history.pushState(params, '', '/app?' + qs);
 
-        await streamSearch(params);
+        if (_isServerless) await postSearch(params);
+        else await streamSearch(params);
     });
 
     async function streamSearch(params) {
@@ -314,6 +316,24 @@
         const qs = new URLSearchParams(params).toString();
         const abortCtrl = new AbortController();
         state.streamAbort = abortCtrl;
+
+        const safetyTimeout = setTimeout(() => {
+            if (state.searching && thisRequestId === _requestId) {
+                abortCtrl.abort();
+                state.lastSearchMs = Math.round(performance.now() - t0);
+                state.lastResultCount = state.results.length;
+                state.searching = false;
+                state.streamAbort = null;
+                showButtonLoading(false);
+                if (state.results.length > 0) {
+                    state._lastRenderKey = null;
+                    renderResults();
+                }
+                showToast('Búsqueda completada — puede haber resultados parciales.', 'info');
+                setStatus('ready', 'Listo');
+                updateTitle('results');
+            }
+        }, 60000);
 
         try {
             const response = await fetch(`/api/search/stream?${qs}`, { signal: abortCtrl.signal });
@@ -382,6 +402,80 @@
             saveRecentSearch(params, state.results.length);
             updateSearchSummary();
 
+        } catch (error) {
+            if (error.name === 'AbortError') return;
+            if (thisRequestId !== _requestId) return;
+            showToast(`Error: ${error.message}`, 'error');
+            setStatus('error', 'Error');
+            updateTitle('default');
+        } finally {
+            clearTimeout(safetyTimeout);
+            if (thisRequestId === _requestId) {
+                state.searching = false;
+                state.streamAbort = null;
+                showButtonLoading(false);
+            }
+        }
+    }
+
+    async function postSearch(params) {
+        const thisRequestId = ++_requestId;
+        state.searching = true;
+        state.currentPage = 1;
+        state.sortField = '_relevance';
+        state.sortOrder = 'desc';
+        state.lastErrors = [];
+        state.results = [];
+        state.filteredResults = null;
+        state.sourceCounts = {};
+        state.quickFilter = '';
+        state._lastRenderKey = null;
+        if (dom.quickFilter) dom.quickFilter.value = '';
+        clearSelection();
+        showButtonLoading(true);
+        setStatus('searching', 'Buscando...');
+        updateTitle('searching');
+        if (dom.emptyState) dom.emptyState.style.display = 'none';
+        dom.resultsSection.style.display = 'block';
+        showSkeleton();
+
+        const t0 = performance.now();
+        const abortCtrl = new AbortController();
+        state.streamAbort = abortCtrl;
+
+        try {
+            const response = await fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(params),
+                signal: abortCtrl.signal,
+            });
+            if (!response.ok) throw new Error(`Error del servidor (${response.status})`);
+            if (thisRequestId !== _requestId) return;
+            const data = await response.json();
+
+            state.results = data.results || [];
+            state.lastErrors = data.errors || [];
+            state.lastSearchMs = Math.round(performance.now() - t0);
+            state.lastResultCount = state.results.length;
+
+            if (state.lastErrors.length > 0) {
+                state.lastErrors.forEach(err => showToast(err, 'error'));
+            }
+            if (state.results.length > 0) {
+                showToast(`${state.results.length.toLocaleString('es-ES')} resultados encontrados.`, 'success');
+                state._lastRenderKey = null;
+                renderResults();
+                if (dom.emptyState) dom.emptyState.style.display = 'none';
+            } else {
+                dom.resultsSection.style.display = 'none';
+                showEmptyState();
+            }
+            updateTitle('results');
+            setStatus('ready', 'Listo');
+            saveSession(params, state.results);
+            saveRecentSearch(params, state.results.length);
+            updateSearchSummary();
         } catch (error) {
             if (error.name === 'AbortError') return;
             if (thisRequestId !== _requestId) return;
@@ -663,7 +757,7 @@
             const checked = state.selectedIds.has(adNum) ? 'checked' : '';
             const rel = calcRelevance(r);
             return `<tr class="${checked ? 'row-selected' : ''}">
-                <td class="td-checkbox"><input type="checkbox" class="row-check" data-ad="${esc(adNum)}" ${checked}></td>
+                <td class="td-checkbox"><input type="checkbox" class="row-checkbox" data-ad="${esc(adNum)}" ${checked}></td>
                 <td class="col-rel" style="text-align:center">${relevanceBarsHtml(rel)}</td>
                 <td>${getSourceBadge(r.Source)}</td>
                 <td class="td-ad-number" title="${esc(adNum)}">${esc(adNum)}<button class="copy-ad-btn" data-ad="${esc(adNum)}" title="Copiar AD#">Copiar</button></td>
@@ -675,8 +769,6 @@
                 <td>${pdfCell(r)}</td>
             </tr>`;
         }).join('');
-        bindRowChecks();
-        bindCopyAdBtns();
     }
 
     function renderCards(pageResults) {
@@ -687,7 +779,7 @@
             return `<div class="result-card ${checked ? 'row-selected' : ''}">
                 <div class="result-card-top">
                     <div class="result-card-badge">${getSourceBadge(r.Source)}</div>
-                    <div class="result-card-actions">${relevanceBarsHtml(rel)}<input type="checkbox" class="row-check" data-ad="${esc(adNum)}" ${checked}></div>
+                    <div class="result-card-actions">${relevanceBarsHtml(rel)}<input type="checkbox" class="row-checkbox" data-ad="${esc(adNum)}" ${checked}></div>
                 </div>
                 <div class="card-ad-number">${esc(adNum)}</div>
                 <div class="card-make-model">${esc(r.Make)} ${esc(r.Model)} ${getTypeBadge(r.Product_Type)}</div>
@@ -698,35 +790,38 @@
                 </div>
             </div>`;
         }).join('');
-        bindRowChecks(dom.cardsContainer);
     }
 
-    function bindRowChecks(container) {
-        (container || dom.resultsBody).querySelectorAll('.row-check').forEach(cb => {
-            cb.addEventListener('change', () => {
-                const ad = cb.dataset.ad;
-                if (cb.checked) state.selectedIds.add(ad); else state.selectedIds.delete(ad);
-                const row = cb.closest('tr') || cb.closest('.result-card');
-                if (row) row.classList.toggle('row-selected', cb.checked);
-                updateSelectAllCheckbox(); updateBulkBar();
-            });
-        });
-    }
-
-    // ================================================================
-    // COPY AD# BUTTON (Bloque 3.1)
-    // ================================================================
-    function bindCopyAdBtns() {
-        dom.resultsBody.querySelectorAll('.copy-ad-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const ad = btn.dataset.ad;
-                navigator.clipboard.writeText(ad).then(() => {
-                    showMicroToast(`${ad} copiado`);
-                }).catch(() => showMicroToast('Error al copiar'));
-            });
-        });
-    }
+    // Delegated checkbox handler (table)
+    dom.resultsBody.addEventListener('change', function (e) {
+        if (e.target.matches('.row-checkbox')) {
+            const ad = e.target.dataset.ad;
+            if (e.target.checked) state.selectedIds.add(ad); else state.selectedIds.delete(ad);
+            const row = e.target.closest('tr');
+            if (row) row.classList.toggle('row-selected', e.target.checked);
+            updateSelectAllCheckbox(); updateBulkBar();
+        }
+    });
+    // Delegated checkbox handler (cards)
+    if (dom.cardsContainer) dom.cardsContainer.addEventListener('change', function (e) {
+        if (e.target.matches('.row-checkbox')) {
+            const ad = e.target.dataset.ad;
+            if (e.target.checked) state.selectedIds.add(ad); else state.selectedIds.delete(ad);
+            const card = e.target.closest('.result-card');
+            if (card) card.classList.toggle('row-selected', e.target.checked);
+            updateSelectAllCheckbox(); updateBulkBar();
+        }
+    });
+    // Delegated copy AD# handler
+    dom.resultsBody.addEventListener('click', function (e) {
+        const btn = e.target.closest('.copy-ad-btn');
+        if (!btn) return;
+        e.stopPropagation();
+        const ad = btn.dataset.ad;
+        navigator.clipboard.writeText(ad).then(() => {
+            showMicroToast(`${ad} copiado`);
+        }).catch(() => showMicroToast('Error al copiar'));
+    });
 
     function showMicroToast(msg) {
         const t = document.createElement('div');
@@ -895,7 +990,7 @@
         fillForm(p);
         state.lastParams = p;
         state.lastSearchTerm = p.keyword || p.make || p.model || '';
-        streamSearch(p);
+        if (_isServerless) postSearch(p); else streamSearch(p);
         return true;
     }
 
@@ -904,7 +999,7 @@
             fillForm(e.state);
             state.lastParams = e.state;
             state.lastSearchTerm = e.state.keyword || e.state.make || e.state.model || '';
-            streamSearch(e.state);
+            if (_isServerless) postSearch(e.state); else streamSearch(e.state);
         }
     });
 
@@ -1266,6 +1361,10 @@
     // INIT
     // ================================================================
     renderRecentSearches();
-    if (!loadFromUrlParams()) { restoreSession(); }
+    fetch('/api/env').then(r => r.json()).then(d => {
+        _isServerless = !!d.serverless;
+    }).catch(() => {}).finally(() => {
+        if (!loadFromUrlParams()) { restoreSession(); }
+    });
 
 })();

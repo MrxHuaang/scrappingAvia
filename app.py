@@ -39,6 +39,7 @@ APP_VERSION = "1.1.0"
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-in-production")
+IS_SERVERLESS = bool(os.environ.get("VERCEL"))
 
 _supabase = None
 def get_supabase():
@@ -60,6 +61,19 @@ PDF_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 
 # ------------------------------------------------------------------
+# Auth helpers
+# ------------------------------------------------------------------
+def require_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("access_token"):
+            next_url = request.path
+            return redirect(f"/login?next={next_url}")
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ------------------------------------------------------------------
 # Paginas
 # ------------------------------------------------------------------
 @app.route("/")
@@ -68,6 +82,7 @@ def landing():
 
 
 @app.route("/app")
+@require_auth
 def index():
     return render_template("index.html")
 
@@ -119,6 +134,8 @@ def auth_google():
     if not sb:
         return jsonify({"error": "Auth no configurado.", "configured": False}), 200
     try:
+        next_url = request.args.get("next", "/app")
+        session["auth_next"] = next_url
         res = sb.auth.sign_in_with_oauth({"provider": "google", "options": {"redirect_to": request.url_root.rstrip("/") + "/auth/callback"}})
         return redirect(res.url)
     except Exception as e:
@@ -130,21 +147,22 @@ def auth_callback():
     sb = get_supabase()
     if not sb:
         return redirect("/login?error=auth_not_configured")
-    try:
-        code = request.args.get("code")
-        if code:
-            response = sb.auth.exchange_code_for_session({"auth_code": code})
-            if response.session:
-                session["access_token"] = response.session.access_token
+    code = request.args.get("code")
+    if code:
+        try:
+            res = sb.auth.exchange_code_for_session({"auth_code": code})
+            if res.session:
+                session["access_token"] = res.session.access_token
                 session["user"] = {
-                    "id": response.user.id,
-                    "email": response.user.email,
-                    "name": response.user.user_metadata.get("full_name", ""),
+                    "id": str(res.user.id),
+                    "email": res.user.email,
+                    "name": res.user.user_metadata.get("full_name", ""),
                 }
-                return redirect("/app")
-        return redirect("/login?error=callback_failed")
-    except Exception as e:
-        return redirect(f"/login?error={str(e)}")
+                next_url = session.pop("auth_next", "/app")
+                return redirect(next_url)
+        except Exception as e:
+            return redirect(f"/login?error={str(e)}")
+    return redirect("/login?error=callback_failed")
 
 
 @app.route("/auth/logout", methods=["POST"])
@@ -227,6 +245,14 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
             pass
 
     return scrapers
+
+
+# ------------------------------------------------------------------
+# API: Environment info
+# ------------------------------------------------------------------
+@app.route("/api/env")
+def api_env():
+    return jsonify({"serverless": IS_SERVERLESS})
 
 
 # ------------------------------------------------------------------
@@ -321,30 +347,34 @@ def api_search_stream():
 
     def generate():
         total = 0
+        try:
+            if source in ("transport_canada", "all") and not make and source == "transport_canada":
+                event = {
+                    "source": "transport_canada",
+                    "results": [],
+                    "count": 0,
+                    "error": "Transport Canada requiere un fabricante."
+                }
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-        if source in ("transport_canada", "all") and not make and source == "transport_canada":
-            event = {
-                "source": "transport_canada",
-                "results": [],
-                "count": 0,
-                "error": "Transport Canada requiere un fabricante."
-            }
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            for src_key, label, fn in scrapers:
+                results, err = run_with_timeout(fn, SCRAPER_TIMEOUT, label, max_results=max_results)
+                count = len(results) if results else 0
+                total += count
 
-        for src_key, label, fn in scrapers:
-            results, err = run_with_timeout(fn, SCRAPER_TIMEOUT, label, max_results=max_results)
-            count = len(results) if results else 0
-            total += count
+                event = {
+                    "source": src_key,
+                    "results": results if results else [],
+                    "count": count,
+                    "error": err,
+                }
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-            event = {
-                "source": src_key,
-                "results": results if results else [],
-                "count": count,
-                "error": err,
-            }
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-        yield f"data: {json.dumps({'event': 'done', 'total': total})}\n\n"
+            yield f"data: {json.dumps({'event': 'done', 'total': total})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'event': 'error', 'message': str(e)})}\n\n"
+        finally:
+            yield f"data: {json.dumps({'event': 'done', 'total': total})}\n\n"
 
     return Response(
         generate(),

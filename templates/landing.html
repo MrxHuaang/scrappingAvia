@@ -366,7 +366,7 @@
     </div>
     <div class="nav-right">
         <a href="/login" class="nav-link">Iniciar sesion</a>
-        <a href="/app" class="nav-btn">Acceder &rarr;</a>
+        <a href="/login" class="nav-btn">Acceder &rarr;</a>
     </div>
 </nav>
 
@@ -375,7 +375,7 @@
     <h1>El lugar donde viven todas las ADs de aviacion.</h1>
     <p class="hero-sub">Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestanas.</p>
     <div class="hero-ctas">
-        <a href="/app" class="cta-primary">Comenzar gratis &rarr;</a>
+        <a href="/login" class="cta-primary">Comenzar gratis &rarr;</a>
         <a href="#producto" class="cta-secondary">Ver producto</a>
     </div>
 </section>
@@ -609,7 +609,7 @@
             <div class="footer-links-title">Navegacion</div>
             <a href="#producto">Producto</a>
             <a href="#precios">Precios</a>
-            <a href="/app">Acceder</a>
+            <a href="/login">Acceder</a>
         </div>
         <div class="footer-legal">
             <a href="#">Terminos</a>
@@ -638,6 +638,24 @@
             if(target){e.preventDefault();target.scrollIntoView({behavior:'smooth',block:'start'})}
         });
     });
+
+    // Detect authenticated user and update CTAs
+    fetch('/auth/me')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+            if(data.user){
+                document.querySelectorAll('[href="/login"], [href="/register"]').forEach(function(el){
+                    el.href='/app';
+                    if(el.textContent.indexOf('Comenzar')!==-1||el.textContent.indexOf('Acceder')!==-1){
+                        el.textContent='Ir a la app \u2192';
+                    }
+                    if(el.textContent.indexOf('Iniciar')!==-1){
+                        el.textContent=data.user.name||data.user.email;
+                    }
+                });
+            }
+        })
+        .catch(function(){});
 })();
 </script>
 

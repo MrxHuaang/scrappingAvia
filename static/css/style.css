@@ -96,6 +96,14 @@
 :root.light-mode .source-card.active{background:rgba(0,0,0,0.06);border-left-color:rgba(0,0,0,0.4)}
 :root.light-mode .app-header{background:rgba(244,243,240,.85)}
 :root.light-mode .form-group-label{color:rgba(0,0,0,0.45)}
+:root.light-mode .row-checkbox,
+:root.light-mode #select-all{border-color:rgba(0,0,0,0.25)}
+:root.light-mode .row-checkbox:hover,
+:root.light-mode #select-all:hover{border-color:rgba(0,0,0,0.4)}
+:root.light-mode .row-checkbox:checked,
+:root.light-mode #select-all:checked{background:#1a1a1a;border-color:#1a1a1a}
+:root.light-mode .row-checkbox:checked::after,
+:root.light-mode #select-all:checked::after{border-color:#ffffff}
 
 /* --- Reset --- */
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
@@ -360,7 +368,7 @@ tr:hover .copy-ad-btn{opacity:1}
 .result-card-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.5rem}
 .result-card-badge{display:flex;align-items:center;gap:.4rem}
 .result-card-actions{display:flex;align-items:center;gap:.35rem}
-.result-card-actions input[type="checkbox"]{width:15px;height:15px;accent-color:var(--t50);cursor:pointer}
+.result-card-actions .row-checkbox{width:15px;height:15px;cursor:pointer}
 .result-card .card-ad-number{font-family:var(--mono);font-size:.88rem;font-weight:600;color:var(--t90);margin-bottom:.25rem}
 .result-card .card-make-model{font-size:.78rem;color:var(--t40);margin-bottom:.5rem}
 .result-card .card-subject{font-size:.8rem;color:var(--t60);line-height:1.5;margin-bottom:.6rem;word-wrap:break-word}
@@ -388,7 +396,40 @@ tr:hover .copy-ad-btn{opacity:1}
 
 /* --- Checkbox Column --- */
 .th-checkbox,.td-checkbox{width:36px;min-width:36px;max-width:36px;text-align:center;padding:0 8px !important}
-.th-checkbox input,.td-checkbox input{width:15px;height:15px;cursor:pointer;accent-color:var(--t50);vertical-align:middle}
+
+.row-checkbox, #select-all {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 150ms, background 150ms;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+.row-checkbox:hover, #select-all:hover {
+  border-color: rgba(255,255,255,0.4);
+}
+.row-checkbox:checked, #select-all:checked {
+  background: rgba(255,255,255,0.9);
+  border-color: rgba(255,255,255,0.9);
+}
+.row-checkbox:checked::after, #select-all:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 8px;
+  border: 1.5px solid #0C0C0F;
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+}
 
 /* --- Toast --- */
 .toast-container{position:fixed;bottom:1.5rem;right:1.5rem;z-index:300;display:flex;flex-direction:column;gap:.5rem}

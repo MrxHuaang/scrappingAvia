@@ -441,7 +441,8 @@
                 if (isRegister) {
                     showSuccess(data.message || 'Cuenta creada. Revisa tu email.');
                 } else {
-                    window.location.href = '/app';
+                    var nextUrl = new URLSearchParams(window.location.search).get('next') || '/app';
+                    window.location.href = nextUrl;
                 }
             }
         })
@@ -454,7 +455,10 @@
 
     // Google OAuth
     document.querySelectorAll('.btn-google').forEach(function(btn) {
-        btn.addEventListener('click', function() { window.location.href = '/auth/google'; });
+        btn.addEventListener('click', function() {
+            var next = new URLSearchParams(window.location.search).get('next') || '';
+            window.location.href = '/auth/google' + (next ? '?next=' + encodeURIComponent(next) : '');
+        });
     });
 
     // Check auth config on load and show banner if not configured
