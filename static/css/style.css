@@ -240,7 +240,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--t100);line-height:
 :root.light-mode .sun-icon{display:block !important}
 
 /* Main Content */
-.main-content{flex:1;padding:1.25rem 1.5rem 3rem;position:relative;z-index:1}
+.main-content{flex:1;padding:1.25rem 1.5rem 3rem;position:relative}
 .section-title{font-size:.8rem;font-weight:600;color:var(--t40);text-transform:uppercase;letter-spacing:.06em;margin-bottom:0}
 
 /* --- Status Dot --- */
