@@ -438,41 +438,34 @@ def debug_stripe():
 
 @app.route("/api/debug/supabase-write")
 def debug_supabase_write():
-    """Upsert de prueba en profiles (solo con debug habilitado)."""
-    if not _stripe_debug_endpoint_allowed():
-        return jsonify({"error": "Not found"}), 404
-    try:
-        admin = get_supabase_admin()
-        if not admin:
-            return jsonify({
-                "error": "no admin client",
-                "service_key_configured": bool(os.environ.get("SUPABASE_SERVICE_KEY")),
-                "supabase_url_set": bool(os.environ.get("SUPABASE_URL")),
-            }), 200
+    user = session.get("user", {})
+    user_id = _user_id_from_flask_session()
 
-        test_id = "00000000-0000-0000-0000-000000000001"
+    admin = get_supabase_admin()
+    if not admin:
+        return jsonify({"error": "no admin client"})
+
+    try:
         result = admin.table("profiles").upsert({
-            "id": test_id,
+            "id": user_id,
             "plan": "test",
-            "stripe_customer_id": "test_customer",
-            "stripe_subscription_id": "test_sub",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "stripe_customer_id": "debug_customer",
+            "stripe_subscription_id": "debug_sub",
         }).execute()
 
         return jsonify({
             "ok": True,
-            "result_data": getattr(result, "data", None),
-            "service_key_configured": bool(os.environ.get("SUPABASE_SERVICE_KEY")),
-            "admin_uses_service_role_key": _SUPABASE_ADMIN_USES_SERVICE_ROLE is True,
-            "supabase_url_prefix": (os.environ.get("SUPABASE_URL") or "not set")[:30],
+            "user_id_extracted": user_id,
+            "session_user": user,
+            "upsert_result": result.data,
         })
     except Exception as e:
         return jsonify({
             "error": str(e),
+            "user_id_extracted": user_id,
+            "session_user": user,
             "traceback": traceback.format_exc(),
-            "service_key_configured": bool(os.environ.get("SUPABASE_SERVICE_KEY")),
-            "admin_uses_service_role_key": _SUPABASE_ADMIN_USES_SERVICE_ROLE is True,
-        }), 200
+        })
 
 
 def _stripe_event_type(event):
