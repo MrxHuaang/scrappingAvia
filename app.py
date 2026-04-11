@@ -614,24 +614,30 @@ def payment_success():
     if session_id and stripe.api_key:
         try:
             logger.info(f"[SUCCESS] session_id recibido: {session_id}")
-            checkout_session = stripe.checkout.Session.retrieve(session_id)
-            logger.info(f"[SUCCESS] checkout session metadata: {checkout_session.metadata}")
-
-            meta = checkout_session.get("metadata") or {}
-            if not isinstance(meta, dict):
-                try:
-                    meta = dict(meta) if hasattr(meta, "keys") else {}
-                except Exception:
-                    meta = {}
-            plan = meta.get("plan", "pro") if isinstance(meta, dict) else "pro"
-            customer_id = _stripe_expand_id(
-                checkout_session.get("customer") if hasattr(checkout_session, "get") else None
+            checkout_data = stripe.checkout.Session.retrieve(session_id)
+            # Mismo enfoque que el webhook: dict plano, no StripeObject
+            checkout_dict = (
+                checkout_data.to_dict()
+                if hasattr(checkout_data, "to_dict")
+                else dict(checkout_data)
             )
-            subscription_id = _stripe_expand_id(
-                checkout_session.get("subscription") if hasattr(checkout_session, "get") else None
-            )
-            user_id = (meta.get("user_id") if isinstance(meta, dict) else None) or _user_id_from_flask_session()
+            metadata = checkout_dict.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            _raw_plan = metadata.get("plan")
+            if isinstance(_raw_plan, str):
+                plan = _raw_plan.strip() or "pro"
+            else:
+                plan = _raw_plan or "pro"
+            if plan not in ("pro", "team"):
+                plan = "pro"
+            user_id = metadata.get("user_id") or _user_id_from_flask_session()
+            if isinstance(user_id, str):
+                user_id = user_id.strip() or None
+            customer_id = _stripe_expand_id(checkout_dict.get("customer"))
+            subscription_id = _stripe_expand_id(checkout_dict.get("subscription"))
 
+            logger.info(f"[SUCCESS] metadata (dict): {metadata}")
             logger.info(f"[SUCCESS] plan extraído: {plan}")
             logger.info(f"[SUCCESS] user_id: {user_id}")
 
