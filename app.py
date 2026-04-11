@@ -45,6 +45,7 @@ APP_VERSION = "1.1.0"
 # Supabase Auth (optional — app works without it)
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-in-production")
 IS_SERVERLESS = bool(os.environ.get("VERCEL"))
 
@@ -57,12 +58,26 @@ STRIPE_TEAM_PRICE_ID = os.environ.get("STRIPE_TEAM_PRICE_ID", "")
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
 
 _supabase = None
+_supabase_admin = None
+
 def get_supabase():
+    """Cliente con anon key — para auth (sign_in, sign_up, OAuth)."""
     global _supabase
     if _supabase is None and SUPABASE_URL and SUPABASE_ANON_KEY:
         from supabase import create_client
         _supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
     return _supabase
+
+def get_supabase_admin():
+    """Cliente con service_role key — para operaciones de servidor (profiles, billing)."""
+    global _supabase_admin
+    if _supabase_admin is None:
+        from supabase import create_client
+        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+            _supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        elif SUPABASE_URL and SUPABASE_ANON_KEY:
+            _supabase_admin = get_supabase()
+    return _supabase_admin
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -245,19 +260,21 @@ def auth_me():
 # ------------------------------------------------------------------
 def _fetch_user_plan(user_id):
     """Consulta el plan del usuario desde la tabla profiles en Supabase."""
-    sb = get_supabase()
+    sb = get_supabase_admin()
     if not sb:
         return "free"
     try:
         res = sb.table("profiles").select("plan").eq("id", user_id).maybe_single().execute()
         return res.data["plan"] if res.data and res.data.get("plan") else "free"
-    except Exception:
+    except Exception as e:
+        print(f"[Stripe] Error fetching plan for {user_id}: {e}")
         return "free"
 
 
 def _update_user_plan(user_id, plan, customer_id=None, subscription_id=None):
-    sb = get_supabase()
+    sb = get_supabase_admin()
     if not sb:
+        print(f"[Stripe] No admin client available, cannot update plan for {user_id}")
         return
     try:
         row = {
@@ -270,12 +287,13 @@ def _update_user_plan(user_id, plan, customer_id=None, subscription_id=None):
         if subscription_id:
             row["stripe_subscription_id"] = subscription_id
         sb.table("profiles").upsert(row).execute()
+        print(f"[Stripe] Plan actualizado: user={user_id} plan={plan}")
     except Exception as e:
         print(f"[Stripe] Error updating profile for {user_id}: {e}")
 
 
 def _downgrade_to_free_by_customer(customer_id):
-    sb = get_supabase()
+    sb = get_supabase_admin()
     if not sb:
         return
     try:

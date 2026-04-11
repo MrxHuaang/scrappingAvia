@@ -571,7 +571,7 @@
                 <li><span class="check">&#10003;</span>Descarga de PDFs</li>
                 <li><span class="check">&#10003;</span>Historial 30 días</li>
             </ul>
-            <button class="card-cta card-cta-primary" id="cta-pro" onclick="subscribe('pro')">Comenzar prueba gratis</button>
+            <button class="card-cta card-cta-primary" id="cta-pro" onclick="subscribe('pro')">Comenzar ahora</button>
         </div>
         <!-- Team -->
         <div class="pricing-card" data-plan="team">
@@ -588,7 +588,7 @@
                 <li><span class="check">&#10003;</span>Soporte prioritario</li>
                 <li><span class="check">&#10003;</span>Acceso a API</li>
             </ul>
-            <button class="card-cta card-cta-outline" id="cta-team" onclick="subscribe('team')">Contactar ventas</button>
+            <button class="card-cta card-cta-outline" id="cta-team" onclick="subscribe('team')">Comenzar ahora</button>
         </div>
     </div>
 </section>
@@ -740,7 +740,18 @@
         .catch(function(){});
 })();
 
+function _showPricingError(btn,msg){
+    var existing=btn.parentNode.querySelector('.pricing-error');
+    if(existing) existing.remove();
+    var el=document.createElement('div');
+    el.className='pricing-error';
+    el.style.cssText='color:rgba(239,68,68,0.9);font-size:13px;margin-top:8px;text-align:center';
+    el.textContent=msg;
+    btn.parentNode.appendChild(el);
+    setTimeout(function(){el.remove()},6000);
+}
 async function subscribe(plan){
+    var btn=document.getElementById(plan==='team'?'cta-team':'cta-pro');
     try{
         var res=await fetch('/api/stripe/create-checkout-session',{
             method:'POST',
@@ -753,10 +764,10 @@ async function subscribe(plan){
         }else if(res.status===401){
             window.location.href='/login?next=/#precios';
         }else{
-            alert(data.error||'Error al procesar el pago. Intenta de nuevo.');
+            _showPricingError(btn,data.error||'Error al procesar. Verifica tu conexión e intenta de nuevo.');
         }
     }catch(e){
-        alert('Error de conexión. Intenta de nuevo.');
+        _showPricingError(btn,'Error al procesar. Verifica tu conexión e intenta de nuevo.');
     }
 }
 </script>
