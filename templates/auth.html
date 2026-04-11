@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#0a0a0a">
-    <title>{% if mode == 'register' %}Crear cuenta{% else %}Iniciar sesion{% endif %} — Zephr</title>
+    <title>{% if mode == 'register' %}Crear cuenta{% else %}Iniciar sesión{% endif %} — Zephr</title>
     <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
     <link rel="icon" type="image/png" href="/static/img/logo.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -103,7 +103,7 @@
             align-items:center;justify-content:center;
             padding:48px;
         }
-        .auth-form-wrap{width:100%;max-width:380px}
+        .auth-form-wrap{width:100%;max-width:400px}
         .auth-title{
             font-family:'Space Grotesk',sans-serif;font-size:28px;font-weight:600;
             color:#fff;margin-bottom:6px;
@@ -204,8 +204,9 @@
             .auth-left{display:none}
             .auth-right{
                 width:100%;min-height:100vh;
-                padding:40px 24px;justify-content:center;
+                padding:40px 24px;justify-content:center;align-items:center;
             }
+            .auth-form-wrap{max-width:400px;padding:0}
             .mobile-brand{display:block}
             .page-footer{position:static;text-align:center;margin-top:32px;transform:none}
         }
@@ -257,8 +258,8 @@
 
             <!-- Testimonial -->
             <div class="auth-testimonial">
-                <blockquote>Pase de buscar ADs en 4 sitios a encontrarlos en segundos.</blockquote>
-                <div class="auth-testimonial-author"><strong>Carlos M.</strong> — Tecnico de Mantenimiento, LAN Colombia</div>
+                <blockquote>Pasé de buscar ADs en 4 sitios a encontrarlos en segundos.</blockquote>
+                <div class="auth-testimonial-author"><strong>Carlos M.</strong> — Técnico de Mantenimiento, LAN Colombia</div>
             </div>
         </div>
     </div>
@@ -277,7 +278,7 @@
             {% if mode == 'register' %}
             <!-- ===== REGISTER MODE ===== -->
             <h1 class="auth-title">Crear cuenta</h1>
-            <p class="auth-subtitle">Empieza a buscar ADs de aviacion en segundos.</p>
+            <p class="auth-subtitle">Empieza a buscar ADs de aviación en segundos.</p>
 
             <form class="auth-form">
                 <div class="form-group">
@@ -289,8 +290,8 @@
                     <input type="email" id="email" name="email" placeholder="tu@email.com" autocomplete="email" required>
                 </div>
                 <div class="form-group">
-                    <label for="password">Contrasena</label>
-                    <input type="password" id="password" name="password" placeholder="Minimo 8 caracteres" autocomplete="new-password" required>
+                    <label for="password">Contraseña</label>
+                    <input type="password" id="password" name="password" placeholder="Mínimo 8 caracteres" autocomplete="new-password" required>
                     <div class="strength-wrap">
                         <div class="strength-bars">
                             <div class="strength-bar" id="str-1"></div>
@@ -303,7 +304,7 @@
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" id="terms" name="terms" required>
-                    <label for="terms">Acepto los <a href="#">Terminos de Servicio</a> y la <a href="#">Politica de Privacidad</a></label>
+                    <label for="terms">Acepto los <a href="#">Términos de Servicio</a> y la <a href="#">Política de Privacidad</a></label>
                 </div>
                 <button type="submit" class="btn-submit">Crear cuenta</button>
             </form>
@@ -316,13 +317,13 @@
             </button>
 
             <div class="auth-switch">
-                Ya tienes cuenta? <a href="/login">Iniciar sesion</a>
+                ¿Ya tienes cuenta? <a href="/login">Iniciar sesión</a>
             </div>
 
             {% else %}
             <!-- ===== LOGIN MODE ===== -->
             <h1 class="auth-title">Bienvenido de nuevo.</h1>
-            <p class="auth-subtitle">Inicia sesion para acceder a tu cuenta.</p>
+            <p class="auth-subtitle">Inicia sesión para acceder a tu cuenta.</p>
 
             <form class="auth-form">
                 <div class="form-group">
@@ -330,8 +331,8 @@
                     <input type="email" id="email" name="email" placeholder="tu@email.com" autocomplete="email" required>
                 </div>
                 <div class="form-group">
-                    <label for="password">Contrasena</label>
-                    <input type="password" id="password" name="password" placeholder="Tu contrasena" autocomplete="current-password" required>
+                    <label for="password">Contraseña</label>
+                    <input type="password" id="password" name="password" placeholder="Tu contraseña" autocomplete="current-password" required>
                 </div>
                 <button type="submit" class="btn-submit">Continuar</button>
             </form>
@@ -344,12 +345,12 @@
             </button>
 
             <div class="auth-switch">
-                No tienes cuenta? <a href="/register">Registrarse</a>
+                ¿No tienes cuenta? <a href="/register">Registrarse</a>
             </div>
             {% endif %}
 
             <div class="auth-footer-links">
-                <a href="#">Terminos de Servicio</a> &middot; <a href="#">Politica de Privacidad</a>
+                <a href="#">Términos de Servicio</a> &middot; <a href="#">Política de Privacidad</a>
             </div>
         </div>
 
@@ -371,7 +372,7 @@
     var label = document.getElementById('strength-label');
 
     if (bars[0] && label) {
-        var labels = ['','Debil','Regular','Buena','Fuerte'];
+        var labels = ['','Débil','Regular','Buena','Fuerte'];
         pw.addEventListener('input', function(){
             var v = pw.value;
             var score = 0;
@@ -412,7 +413,7 @@
         var name = form.querySelector('[name="name"]');
 
         if (!email || !email.value.trim()) { showError('Ingresa tu email.'); return; }
-        if (!password || !password.value) { showError('Ingresa tu contrasena.'); return; }
+        if (!password || !password.value) { showError('Ingresa tu contraseña.'); return; }
 
         var isRegister = !!name;
         var url = isRegister ? '/auth/register' : '/auth/login';
@@ -420,7 +421,7 @@
         if (isRegister) body.name = name.value.trim();
 
         submitBtn.disabled = true;
-        submitBtn.textContent = isRegister ? 'Creando cuenta...' : 'Iniciando sesion...';
+        submitBtn.textContent = isRegister ? 'Creando cuenta...' : 'Iniciando sesión...';
 
         fetch(url, {
             method: 'POST',
@@ -446,7 +447,7 @@
                 }
             }
         })
-        .catch(function(err) { showError('Error de conexion: ' + err.message); })
+        .catch(function(err) { showError('Error de conexión: ' + err.message); })
         .finally(function() {
             submitBtn.disabled = false;
             submitBtn.textContent = isRegister ? 'Crear cuenta' : 'Continuar';

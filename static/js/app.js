@@ -10,6 +10,90 @@
     document.title = DEFAULT_TITLE;
 
     // ================================================================
+    // ATA CHAPTERS
+    // ================================================================
+    const ATA_CHAPTERS = [
+        { code: '05', name: 'Límites de tiempo / Verificaciones de mantenimiento' },
+        { code: '06', name: 'Dimensiones y áreas' },
+        { code: '21', name: 'Aire acondicionado y presurización' },
+        { code: '22', name: 'Piloto automático' },
+        { code: '23', name: 'Comunicaciones' },
+        { code: '24', name: 'Energía eléctrica' },
+        { code: '25', name: 'Equipamiento y mobiliario' },
+        { code: '26', name: 'Protección contra incendios' },
+        { code: '27', name: 'Controles de vuelo' },
+        { code: '28', name: 'Combustible' },
+        { code: '29', name: 'Potencia hidráulica' },
+        { code: '30', name: 'Protección contra hielo y lluvia' },
+        { code: '31', name: 'Instrumentos' },
+        { code: '32', name: 'Tren de aterrizaje' },
+        { code: '33', name: 'Luces' },
+        { code: '34', name: 'Navegación' },
+        { code: '35', name: 'Oxígeno' },
+        { code: '36', name: 'Sistema neumático' },
+        { code: '38', name: 'Agua y residuos' },
+        { code: '49', name: 'Unidad de potencia auxiliar (APU)' },
+        { code: '51', name: 'Estructuras estándar' },
+        { code: '52', name: 'Puertas' },
+        { code: '53', name: 'Fuselaje' },
+        { code: '54', name: 'Góndolas y pilones' },
+        { code: '55', name: 'Estabilizadores' },
+        { code: '56', name: 'Ventanas' },
+        { code: '57', name: 'Alas' },
+        { code: '61', name: 'Hélices' },
+        { code: '71', name: 'Planta motriz' },
+        { code: '72', name: 'Motor (turbina/turbohélice)' },
+        { code: '73', name: 'Control de combustible del motor' },
+        { code: '74', name: 'Ignición del motor' },
+        { code: '75', name: 'Purga del motor' },
+        { code: '76', name: 'Controles del motor' },
+        { code: '77', name: 'Indicadores del motor' },
+        { code: '78', name: 'Escape del motor' },
+        { code: '79', name: 'Aceite del motor' },
+        { code: '80', name: 'Arranque del motor' },
+    ];
+
+    const ATA_KEYWORDS = {
+        '05': ['time limit', 'maintenance check', 'inspection interval', 'life limit'],
+        '21': ['air conditioning', 'pressurization', 'cabin pressure', 'pack', 'aire acondicionado'],
+        '22': ['autopilot', 'auto pilot', 'flight director', 'piloto automático'],
+        '23': ['communication', 'radio', 'vhf', 'hf', 'satcom', 'comunicación'],
+        '24': ['electrical', 'generator', 'battery', 'wiring', 'eléctric'],
+        '25': ['equipment', 'furnishing', 'seat', 'cargo', 'equipamiento'],
+        '26': ['fire protection', 'fire extinguish', 'smoke detect', 'incendio'],
+        '27': ['flight control', 'aileron', 'elevator', 'rudder', 'flap', 'slat', 'spoiler', 'control de vuelo'],
+        '28': ['fuel', 'combustible', 'tank', 'tanque', 'fuel pump', 'bomba'],
+        '29': ['hydraulic', 'hidráulic'],
+        '30': ['ice protection', 'rain', 'de-ice', 'anti-ice', 'hielo', 'lluvia'],
+        '31': ['instrument', 'instrumento', 'altimeter', 'airspeed'],
+        '32': ['landing gear', 'gear', 'wheel', 'brake', 'tire', 'strut', 'nose gear', 'main gear', 'tren de aterrizaje'],
+        '33': ['light', 'lamp', 'beacon', 'strobe', 'luces', 'luz'],
+        '34': ['navigation', 'gps', 'vor', 'ils', 'navegación', 'fms'],
+        '35': ['oxygen', 'oxígeno', 'o2'],
+        '36': ['pneumatic', 'bleed', 'neumático'],
+        '38': ['water', 'waste', 'agua', 'residuo', 'lavatory'],
+        '49': ['apu', 'auxiliary power', 'potencia auxiliar'],
+        '51': ['structure', 'estructura', 'fuselage frame', 'skin panel'],
+        '52': ['door', 'puerta', 'hatch', 'escape'],
+        '53': ['fuselage', 'fuselaje', 'belly', 'skin'],
+        '54': ['nacelle', 'pylon', 'góndola', 'pilón'],
+        '55': ['stabilizer', 'estabilizador', 'horizontal stab', 'vertical stab', 'tail'],
+        '56': ['window', 'windshield', 'ventana', 'parabrisas'],
+        '57': ['wing', 'ala', 'spar', 'rib', 'winglet'],
+        '61': ['propeller', 'hélice', 'prop'],
+        '71': ['powerplant', 'planta motriz', 'engine mount', 'cowl'],
+        '72': ['engine', 'motor', 'turbine', 'turbina', 'compressor', 'fan blade'],
+        '73': ['fuel control', 'fuel governor', 'control de combustible'],
+        '74': ['ignition', 'igniter', 'spark plug', 'ignición'],
+        '75': ['engine bleed', 'purga del motor'],
+        '76': ['engine control', 'throttle', 'fadec', 'control del motor'],
+        '77': ['engine indicator', 'egt', 'n1', 'n2', 'indicador del motor'],
+        '78': ['exhaust', 'escape', 'tailpipe'],
+        '79': ['engine oil', 'oil filter', 'aceite del motor'],
+        '80': ['engine start', 'starter', 'arranque'],
+    };
+
+    // ================================================================
     // STATE
     // ================================================================
     let _requestId = 0;
@@ -36,6 +120,8 @@
         streamAbort: null,
         viewMode: localStorage.getItem('viewMode') || 'table',
         quickFilter: '',
+        ataFilter: '',
+        analysisQueue: [],
         _lastRenderKey: null,
     };
 
@@ -91,6 +177,7 @@
         quickFilter: $('quick-filter'),
         btnShareUrl: $('btn-share-url'),
         recentSearches: $('recent-searches'),
+        initialState: $('initial-state'),
         shortcutsModal: $('shortcuts-modal'),
         shortcutsModalClose: $('shortcuts-modal-close'),
         btnShortcutsHelp: $('btn-shortcuts-help'),
@@ -102,6 +189,17 @@
         makeChipContainer: $('make-chip-container'),
         searchSummary: $('search-summary'),
         maxResultsSelect: $('max-results-select'),
+        ataSelect: $('input-ata-chapter'),
+        analysisBadgeBtn: $('analysis-badge-btn'),
+        analysisCountBadge: $('analysis-count-badge'),
+        analysisDrawer: $('analysis-drawer'),
+        analysisOverlay: $('analysis-overlay'),
+        analysisDrawerClose: $('analysis-drawer-close'),
+        analysisDrawerBody: $('analysis-drawer-body'),
+        btnAnalyzeAeris: $('btn-analyze-aeris'),
+        aerisModal: $('aeris-modal'),
+        aerisModalClose: $('aeris-modal-close'),
+        aerisModalOk: $('aeris-modal-ok'),
     };
 
     // Max results preference
@@ -227,15 +325,73 @@
         });
     }
 
+    // Populate ATA select
+    if (dom.ataSelect) {
+        ATA_CHAPTERS.forEach(ch => {
+            const opt = document.createElement('option');
+            opt.value = ch.code;
+            opt.textContent = `ATA ${ch.code} — ${ch.name}`;
+            dom.ataSelect.appendChild(opt);
+        });
+        dom.ataSelect.addEventListener('change', () => {
+            state.ataFilter = dom.ataSelect.value;
+            state.currentPage = 1;
+            applyClientFilters();
+            state._lastRenderKey = null;
+            renderResults();
+            updateAtaIndicator();
+        });
+    }
+
+    function updateAtaIndicator() {
+        const label = document.querySelector('.form-group-label');
+        if (!label) return;
+        const labels = document.querySelectorAll('.form-group-label');
+        for (const l of labels) {
+            if (l.textContent.trim() === 'Filtros') {
+                l.classList.toggle('ata-active', !!state.ataFilter);
+                if (!l.querySelector('.ata-active-dot')) {
+                    const dot = document.createElement('span');
+                    dot.className = 'ata-active-dot';
+                    l.appendChild(dot);
+                }
+                break;
+            }
+        }
+    }
+
+    function matchesAtaFilter(r) {
+        if (!state.ataFilter) return true;
+        const code = state.ataFilter;
+        const keywords = ATA_KEYWORDS[code] || [];
+        const text = `${r.AD_Number || ''} ${r.Subject || ''}`.toLowerCase();
+        if (text.includes(`ata ${code}`) || text.includes(`ata-${code}`)) return true;
+        for (const kw of keywords) {
+            if (text.includes(kw.toLowerCase())) return true;
+        }
+        return false;
+    }
+
+    function applyClientFilters() {
+        const hasQuick = !!state.quickFilter;
+        const hasAta = !!state.ataFilter;
+        if (!hasQuick && !hasAta) { state.filteredResults = null; return; }
+        state.filteredResults = state.results.filter(r => {
+            if (hasQuick) {
+                const q = state.quickFilter;
+                const match = (r.AD_Number || '').toLowerCase().includes(q) ||
+                    (r.Make || '').toLowerCase().includes(q) ||
+                    (r.Model || '').toLowerCase().includes(q) ||
+                    (r.Subject || '').toLowerCase().includes(q);
+                if (!match) return false;
+            }
+            if (hasAta && !matchesAtaFilter(r)) return false;
+            return true;
+        });
+    }
+
     function applyQuickFilter() {
-        if (!state.quickFilter) { state.filteredResults = null; return; }
-        const q = state.quickFilter;
-        state.filteredResults = state.results.filter(r =>
-            (r.AD_Number || '').toLowerCase().includes(q) ||
-            (r.Make || '').toLowerCase().includes(q) ||
-            (r.Model || '').toLowerCase().includes(q) ||
-            (r.Subject || '').toLowerCase().includes(q)
-        );
+        applyClientFilters();
     }
 
     function getActiveResults() {
@@ -271,7 +427,7 @@
 
         const hasInput = params.keyword || params.make || params.model;
         if (!hasInput && params.source !== 'all') {
-            showToast('Ingresa al menos un termino de busqueda.', 'error');
+            showToast('Ingresa al menos un término de búsqueda.', 'error');
             return;
         }
 
@@ -299,8 +455,10 @@
         state.filteredResults = null;
         state.sourceCounts = {};
         state.quickFilter = '';
+        state.ataFilter = '';
         state._lastRenderKey = null;
         if (dom.quickFilter) dom.quickFilter.value = '';
+        if (dom.ataSelect) dom.ataSelect.value = '';
         clearSelection();
 
         showButtonLoading(true);
@@ -308,6 +466,7 @@
         updateTitle('searching');
 
         if (dom.emptyState) dom.emptyState.style.display = 'none';
+        if (dom.initialState) dom.initialState.style.display = 'none';
         dom.resultsSection.style.display = 'block';
         showSkeleton();
         resetSourceCardStates(params.source);
@@ -339,7 +498,7 @@
             const response = await fetch(`/api/search/stream?${qs}`, { signal: abortCtrl.signal });
             if (response.status === 429) {
                 const errData = await response.json().catch(() => null);
-                showToast(errData?.error || 'Limite de busquedas alcanzado — actualiza tu plan para busquedas ilimitadas', 'error');
+                showToast(errData?.error || 'Límite de búsquedas alcanzado — actualiza tu plan para continuar', 'error');
                 setStatus('ready', 'Listo'); updateTitle('default'); return;
             }
             if (!response.ok) throw new Error(`Error del servidor (${response.status})`);
@@ -434,13 +593,16 @@
         state.filteredResults = null;
         state.sourceCounts = {};
         state.quickFilter = '';
+        state.ataFilter = '';
         state._lastRenderKey = null;
         if (dom.quickFilter) dom.quickFilter.value = '';
+        if (dom.ataSelect) dom.ataSelect.value = '';
         clearSelection();
         showButtonLoading(true);
         setStatus('searching', 'Buscando...');
         updateTitle('searching');
         if (dom.emptyState) dom.emptyState.style.display = 'none';
+        if (dom.initialState) dom.initialState.style.display = 'none';
         dom.resultsSection.style.display = 'block';
         showSkeleton();
 
@@ -457,7 +619,7 @@
             });
             if (response.status === 429) {
                 const errData = await response.json().catch(() => null);
-                showToast(errData?.error || 'Limite de busquedas alcanzado — actualiza tu plan para busquedas ilimitadas', 'error');
+                showToast(errData?.error || 'Límite de búsquedas alcanzado — actualiza tu plan para continuar', 'error');
                 setStatus('ready', 'Listo'); updateTitle('default'); return;
             }
             if (!response.ok) throw new Error(`Error del servidor (${response.status})`);
@@ -505,7 +667,7 @@
     // SOURCE CARD STATES
     // ================================================================
     function resetSourceCardStates(source) {
-        const keys = source === 'all' ? ['federal_register','easa','anac_brazil','transport_canada'] : [source];
+        const keys = source === 'all' ? ['federal_register','easa','anac_brazil','transport_canada','dgac_chile'] : [source];
         keys.forEach(key => {
             const el = $(`count-${key}`);
             if (el) { el.innerHTML = '<span class="source-card-spinner"></span>'; el.classList.remove('source-count--error'); el.classList.remove('source-count--loaded'); }
@@ -593,12 +755,14 @@
         state.results = []; state.filteredResults = null; state.currentPage = 1;
         state.activeManufacturerKey = null; state.activeManufacturerModels = null;
         state.lastErrors = []; state.sourceCounts = {}; state.lastParams = null;
-        state.quickFilter = ''; state._lastRenderKey = null; state.searching = false;
+        state.quickFilter = ''; state.ataFilter = ''; state._lastRenderKey = null; state.searching = false;
         if (dom.quickFilter) dom.quickFilter.value = '';
+        if (dom.ataSelect) dom.ataSelect.value = '';
         clearSelection();
         showButtonLoading(false);
         dom.resultsSection.style.display = 'none';
         if (dom.emptyState) dom.emptyState.style.display = 'none';
+        if (dom.initialState) dom.initialState.style.display = '';
         if (dom.inputModel) dom.inputModel.placeholder = 'Ej: 737, A320...';
         updateTitle('default');
         document.querySelectorAll('.source-count').forEach(el => { el.innerHTML = '&mdash;'; el.classList.remove('source-count--error'); el.classList.remove('source-count--loaded'); });
@@ -746,11 +910,19 @@
         state._lastRenderKey = renderKey;
 
         if (state.filteredResults !== null) {
-            dom.resultsCount.textContent = `Mostrando ${active.length.toLocaleString('es-ES')} de ${state.results.length.toLocaleString('es-ES')}`;
+            dom.resultsCount.innerHTML = `Mostrando <strong>${active.length.toLocaleString('es-ES')}</strong> de ${state.results.length.toLocaleString('es-ES')}`;
         } else {
-            dom.resultsCount.textContent = `${active.length.toLocaleString('es-ES')} resultados`;
+            dom.resultsCount.innerHTML = `<strong>${active.length.toLocaleString('es-ES')}</strong> resultados`;
         }
         if (dom.resultsTime) dom.resultsTime.textContent = state.lastSearchMs !== null ? `\u00b7 ${(state.lastSearchMs / 1000).toFixed(1)}s` : '';
+        const existingBadge = dom.resultsSection.querySelector('.badge-serverless');
+        if (_isServerless && !existingBadge) {
+            const badge = document.createElement('span');
+            badge.className = 'badge-serverless';
+            badge.textContent = 'Modo rápido';
+            badge.title = 'Resultados limitados a 200 por fuente en este modo';
+            dom.resultsCount.parentNode.appendChild(badge);
+        }
 
         if (state.viewMode === 'table') renderTable(pageResults);
         else renderCards(pageResults);
@@ -772,11 +944,11 @@
                 <td>${getSourceBadge(r.Source)}</td>
                 <td class="td-ad-number" title="${esc(adNum)}">${esc(adNum)}<button class="copy-ad-btn" data-ad="${esc(adNum)}" title="Copiar AD#">Copiar</button></td>
                 <td class="td-make col-make" title="${esc(r.Make)}">${esc(r.Make)}</td>
-                <td title="${esc(r.Model)}">${esc(r.Model)}</td>
+                <td class="td-model col-model" title="${esc(r.Model)}">${esc(r.Model)}</td>
                 <td class="col-tipo">${getTypeBadge(r.Product_Type)}</td>
                 <td class="td-subject" title="${esc(r.Subject)}">${formatSubject(r.Subject, 75)}</td>
-                <td class="td-date">${formatDate(r.Effective_Date)}</td>
-                <td>${pdfCell(r)}</td>
+                <td class="td-date col-date">${formatDate(r.Effective_Date)}</td>
+                <td class="td-actions">${pdfCell(r)}<button class="btn-add-analysis" data-ad="${esc(adNum)}" title="Agregar al análisis">＋ Análisis</button></td>
             </tr>`;
         }).join('');
     }
@@ -824,13 +996,21 @@
     });
     // Delegated copy AD# handler
     dom.resultsBody.addEventListener('click', function (e) {
-        const btn = e.target.closest('.copy-ad-btn');
-        if (!btn) return;
-        e.stopPropagation();
-        const ad = btn.dataset.ad;
-        navigator.clipboard.writeText(ad).then(() => {
-            showMicroToast(`${ad} copiado`);
-        }).catch(() => showMicroToast('Error al copiar'));
+        const copyBtn = e.target.closest('.copy-ad-btn');
+        if (copyBtn) {
+            e.stopPropagation();
+            const ad = copyBtn.dataset.ad;
+            navigator.clipboard.writeText(ad).then(() => {
+                showMicroToast(`${ad} copiado`);
+            }).catch(() => showMicroToast('Error al copiar'));
+            return;
+        }
+        const analysisBtn = e.target.closest('.btn-add-analysis');
+        if (analysisBtn) {
+            e.stopPropagation();
+            addToAnalysis(analysisBtn.dataset.ad);
+            return;
+        }
     });
 
     function showMicroToast(msg) {
@@ -875,6 +1055,7 @@
         if (source.includes('EASA')) return '<span class="source-badge badge-easa">EASA</span>';
         if (source.includes('Canada') || source.includes('TC')) return '<span class="source-badge badge-tc">TC</span>';
         if (source.includes('ANAC') || source.includes('Brasil')) return '<span class="source-badge badge-anac">ANAC</span>';
+        if (source.includes('DGAC') || source.includes('Chile')) return '<span class="source-badge badge-dgac">DGAC</span>';
         return `<span class="source-badge">${esc(source)}</span>`;
     }
 
@@ -1033,6 +1214,7 @@
         state._lastRenderKey = null;
         renderResults();
         dom.resultsSection.style.display = 'block';
+        if (dom.initialState) dom.initialState.style.display = 'none';
         updateTitle('results');
         setStatus('ready', 'Listo');
         const ago = Math.round((Date.now() - session.timestamp) / 60000);
@@ -1069,7 +1251,7 @@
     function renderRecentSearches() {
         if (!dom.recentSearches) return;
         const items = loadRecent();
-        if (items.length === 0) { dom.recentSearches.innerHTML = '<div class="recent-empty">Sin busquedas recientes</div>'; return; }
+        if (items.length === 0) { dom.recentSearches.innerHTML = '<div class="recent-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Sin búsquedas recientes</div>'; return; }
         dom.recentSearches.innerHTML = items.map((item, i) => {
             const countLabel = item.count != null ? `${item.count} ADs` : '';
             return `<div class="recent-item" data-idx="${i}">
@@ -1322,10 +1504,18 @@
     // ================================================================
     // DYNAMIC TITLE
     // ================================================================
+    const _defaultFavicon = '/static/img/favicon.svg';
+    const _spinnerFavicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cstyle%3Ecircle%7Bfill:none;stroke:%23fff;stroke-width:2.5;stroke-linecap:round;stroke-dasharray:50;stroke-dashoffset:35;animation:s .8s linear infinite%7D@keyframes s%7Bto%7Btransform:rotate(360deg)%7D%7D%3C/style%3E%3Ccircle cx='12' cy='12' r='9' transform-origin='12 12'/%3E%3C/svg%3E";
+
+    function setFavicon(href) {
+        let link = document.querySelector("link[rel='icon'][type='image/svg+xml']");
+        if (link) link.href = href;
+    }
+
     function updateTitle(mode) {
-        if (mode === 'searching') document.title = 'Buscando... \u2014 Zephr';
-        else if (mode === 'results' && state.lastResultCount > 0) document.title = `${state.lastResultCount.toLocaleString('es-ES')} ADs \u2014 Zephr`;
-        else document.title = DEFAULT_TITLE;
+        if (mode === 'searching') { document.title = 'Buscando... \u2014 Zephr'; setFavicon(_spinnerFavicon); }
+        else if (mode === 'results' && state.lastResultCount > 0) { document.title = `${state.lastResultCount.toLocaleString('es-ES')} ADs \u2014 Zephr`; setFavicon(_defaultFavicon); }
+        else { document.title = DEFAULT_TITLE; setFavicon(_defaultFavicon); }
     }
 
     // ================================================================
@@ -1368,6 +1558,81 @@
     const esc = escapeHtml;
 
     // ================================================================
+    // ANALYSIS QUEUE
+    // ================================================================
+    function addToAnalysis(adNum) {
+        if (!adNum) return;
+        if (state.analysisQueue.some(a => a.AD_Number === adNum)) {
+            showToast(`AD ${adNum} ya está en el análisis.`, 'info');
+            return;
+        }
+        const result = state.results.find(r => r.AD_Number === adNum);
+        if (result) {
+            state.analysisQueue.push(result);
+        } else {
+            state.analysisQueue.push({ AD_Number: adNum, Make: '', Model: '', Subject: '' });
+        }
+        showToast(`AD ${adNum} agregado al análisis`, 'success');
+        updateAnalysisBadge();
+    }
+
+    function removeFromAnalysis(adNum) {
+        state.analysisQueue = state.analysisQueue.filter(a => a.AD_Number !== adNum);
+        updateAnalysisBadge();
+        renderAnalysisDrawer();
+    }
+
+    function updateAnalysisBadge() {
+        const count = state.analysisQueue.length;
+        if (dom.analysisBadgeBtn) dom.analysisBadgeBtn.style.display = count > 0 ? '' : 'none';
+        if (dom.analysisCountBadge) dom.analysisCountBadge.textContent = count;
+    }
+
+    function openAnalysisDrawer() {
+        renderAnalysisDrawer();
+        if (dom.analysisDrawer) dom.analysisDrawer.classList.add('open');
+        if (dom.analysisOverlay) dom.analysisOverlay.classList.add('active');
+    }
+
+    function closeAnalysisDrawer() {
+        if (dom.analysisDrawer) dom.analysisDrawer.classList.remove('open');
+        if (dom.analysisOverlay) dom.analysisOverlay.classList.remove('active');
+    }
+
+    function renderAnalysisDrawer() {
+        if (!dom.analysisDrawerBody) return;
+        if (state.analysisQueue.length === 0) {
+            dom.analysisDrawerBody.innerHTML = '<p class="analysis-empty">No hay ADs en la cola de análisis.</p>';
+            return;
+        }
+        dom.analysisDrawerBody.innerHTML = state.analysisQueue.map(a =>
+            `<div class="analysis-item" data-ad="${esc(a.AD_Number)}">
+                <div class="analysis-item-info">
+                    <div class="analysis-item-ad">${esc(a.AD_Number)}</div>
+                    <div class="analysis-item-meta">${esc(a.Make)}${a.Model ? ' ' + esc(a.Model) : ''}</div>
+                </div>
+                <button class="analysis-item-remove" data-ad="${esc(a.AD_Number)}" title="Quitar">&times;</button>
+            </div>`
+        ).join('');
+        dom.analysisDrawerBody.querySelectorAll('.analysis-item-remove').forEach(btn => {
+            btn.addEventListener('click', () => removeFromAnalysis(btn.dataset.ad));
+        });
+    }
+
+    if (dom.analysisBadgeBtn) dom.analysisBadgeBtn.addEventListener('click', openAnalysisDrawer);
+    if (dom.analysisOverlay) dom.analysisOverlay.addEventListener('click', closeAnalysisDrawer);
+    if (dom.analysisDrawerClose) dom.analysisDrawerClose.addEventListener('click', closeAnalysisDrawer);
+    if (dom.btnAnalyzeAeris) dom.btnAnalyzeAeris.addEventListener('click', () => {
+        closeAnalysisDrawer();
+        if (dom.aerisModal) dom.aerisModal.style.display = 'flex';
+    });
+    if (dom.aerisModalClose) dom.aerisModalClose.addEventListener('click', () => { if (dom.aerisModal) dom.aerisModal.style.display = 'none'; });
+    if (dom.aerisModalOk) dom.aerisModalOk.addEventListener('click', () => { if (dom.aerisModal) dom.aerisModal.style.display = 'none'; });
+    if (dom.aerisModal) dom.aerisModal.addEventListener('click', (e) => { if (e.target === dom.aerisModal) dom.aerisModal.style.display = 'none'; });
+
+    updateAnalysisBadge();
+
+    // ================================================================
     // PROFILE & POPOVER
     // ================================================================
     (function initProfile() {
@@ -1376,15 +1641,15 @@
         if (profileMenuBtn && profilePopover) {
             profileMenuBtn.addEventListener('click', function (e) {
                 e.stopPropagation();
-                profilePopover.style.display = profilePopover.style.display === 'none' ? 'block' : 'none';
+                profilePopover.classList.toggle('active');
             });
-            document.addEventListener('click', function () { profilePopover.style.display = 'none'; });
+            document.addEventListener('click', function () { profilePopover.classList.remove('active'); });
             profilePopover.addEventListener('click', function (e) { e.stopPropagation(); });
         }
         var accountBtn = $('profile-account');
         if (accountBtn) accountBtn.addEventListener('click', function () {
-            showToast('Proximamente', 'info');
-            if (profilePopover) profilePopover.style.display = 'none';
+            showToast('Próximamente', 'info');
+            if (profilePopover) profilePopover.classList.remove('active');
         });
         var logoutBtn = $('profile-logout');
         if (logoutBtn) logoutBtn.addEventListener('click', function () {

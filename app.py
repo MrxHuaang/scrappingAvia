@@ -27,6 +27,7 @@ from scrapers.federal_register import search_ads as fr_search
 from scrapers.easa import search_ads as easa_search, search_main_page as easa_main_page
 from scrapers.transport_canada import search_ads as tc_search
 from scrapers.anac_brazil import search_ads as anac_brazil_search
+from scrapers.dgac_chile import search_ads as dgac_chile_search
 from math import ceil
 from utils import map_product_type, run_with_timeout, VALID_SOURCES, MAX_RESULTS_PER_SOURCE
 
@@ -289,6 +290,18 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
         elif source == "transport_canada":
             pass
 
+    if source in ("dgac_chile", "all"):
+        def _dgac():
+            return dgac_chile_search(
+                keyword=keyword or None,
+                make=make or None,
+                model=model or None,
+                date_from=date_from or None,
+                date_to=date_to or None,
+                max_results=min(max_results, 200),
+            )
+        scrapers.append(("dgac_chile", "DGAC Chile", _dgac))
+
     return scrapers
 
 
@@ -308,7 +321,7 @@ def api_health():
     return jsonify({
         "status": "ok",
         "version": APP_VERSION,
-        "sources": ["federal_register", "easa", "transport_canada", "anac_brazil"],
+        "sources": ["federal_register", "easa", "transport_canada", "anac_brazil", "dgac_chile"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -632,6 +645,7 @@ def api_status():
             "easa": {"name": "EASA (Europa)", "status": "online"},
             "transport_canada": {"name": "Transport Canada", "status": "online"},
             "anac_brazil": {"name": "ANAC (Brasil)", "status": "online"},
+            "dgac_chile": {"name": "DGAC (Chile)", "status": "online"},
         }
     })
 
@@ -642,7 +656,7 @@ def api_status():
 if __name__ == "__main__":
     print("\n" + "=" * 55)
     print("  Zephr - Airworthiness Directives")
-    print("  Fuentes: Federal Register | EASA | Transport Canada | ANAC")
+    print("  Fuentes: Federal Register | EASA | Transport Canada | ANAC | DGAC Chile")
     print("=" * 55)
     print(f"\n  Landing:  http://127.0.0.1:5000/")
     print(f"  App:      http://127.0.0.1:5000/app")

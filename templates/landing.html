@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestanas.">
+    <meta name="description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestañas.">
     <meta property="og:title" content="Zephr — Airworthiness Directives">
-    <meta property="og:description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestanas.">
+    <meta property="og:description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestañas.">
     <meta name="theme-color" content="#0a0a0a">
     <title>Zephr — Airworthiness Directives</title>
     <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
@@ -30,6 +30,11 @@
             background:rgba(10,10,10,0.8);
             backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
             border-bottom:1px solid rgba(255,255,255,0.08);
+            transition:backdrop-filter 300ms,background 300ms;
+        }
+        .nav.scrolled{
+            background:rgba(10,10,10,0.95);
+            backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
         }
         .nav-left{display:flex;align-items:center;gap:10px;z-index:1}
         .nav-left .wordmark{font-size:18px}
@@ -326,7 +331,6 @@
             .nav-right .nav-link{display:none}
             .nav-mobile-btn{display:block}
             .hero{padding:120px 24px 0}
-            .hero h1{font-size:42px}
             .hero-sub{font-size:16px}
             .mockup-section{padding:0 24px}
             .mockup-body{height:260px}
@@ -349,6 +353,18 @@
             .footer-grid{grid-template-columns:1fr;gap:24px;text-align:left}
             .footer-legal{text-align:left}
         }
+        @media(max-width:768px){
+            .hero h1{font-size:52px}
+            .mockup-section{display:none}
+        }
+        @media(max-width:480px){
+            .hero h1{font-size:40px}
+            .social-proof-logos{display:grid;grid-template-columns:1fr 1fr;gap:16px;text-align:center}
+            .feature-block{gap:24px}
+            .cta-final h2{font-size:28px}
+            .hero-ctas{flex-direction:column}
+            .hero-ctas a{text-align:center}
+        }
     </style>
 </head>
 <body>
@@ -365,15 +381,15 @@
         <a href="#fuentes">Fuentes</a>
     </div>
     <div class="nav-right">
-        <a href="/login" class="nav-link">Iniciar sesion</a>
+        <a href="/login" class="nav-link">Iniciar sesión</a>
         <a href="/login" class="nav-btn">Acceder &rarr;</a>
     </div>
 </nav>
 
 <!-- Hero -->
 <section class="hero">
-    <h1>El lugar donde viven todas las ADs de aviacion.</h1>
-    <p class="hero-sub">Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestanas.</p>
+    <h1>El lugar donde viven todas las ADs de aviación.</h1>
+    <p class="hero-sub">Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestañas.</p>
     <div class="hero-ctas">
         <a href="/login" class="cta-primary">Comenzar gratis &rarr;</a>
         <a href="#producto" class="cta-secondary">Ver producto</a>
@@ -526,27 +542,27 @@
             <div class="pricing-card-period price-monthly">Gratis para siempre</div>
             <div class="pricing-card-period price-annual">Gratis para siempre</div>
             <ul class="pricing-features">
-                <li><span class="check">&#10003;</span>10 busquedas por dia</li>
+                <li><span class="check">&#10003;</span>10 búsquedas por día</li>
                 <li><span class="check">&#10003;</span>1 fuente a la vez</li>
                 <li><span class="check">&#10003;</span>Exportar CSV</li>
-                <li><span class="check">&#10003;</span>Historial 7 dias</li>
+                <li><span class="check">&#10003;</span>Historial 7 días</li>
             </ul>
             <a href="/register" class="card-cta card-cta-outline">Comenzar gratis</a>
         </div>
         <!-- Professional -->
         <div class="pricing-card featured">
             <div class="pricing-card-name">Professional</div>
-            <div class="pricing-card-desc">Para quienes trabajan con ADs todos los dias.</div>
+            <div class="pricing-card-desc">Para quienes trabajan con ADs todos los días.</div>
             <div class="pricing-card-price price-monthly">$29<span>/mes</span></div>
             <div class="pricing-card-price price-annual">$19<span>/mes</span></div>
             <div class="pricing-card-period price-monthly">Facturado mensualmente</div>
-            <div class="pricing-card-period price-annual">Facturado anualmente ($228/ano)</div>
+            <div class="pricing-card-period price-annual">Facturado anualmente ($228/año)</div>
             <ul class="pricing-features">
-                <li><span class="check">&#10003;</span>Busquedas ilimitadas</li>
+                <li><span class="check">&#10003;</span>Búsquedas ilimitadas</li>
                 <li><span class="check">&#10003;</span>Todas las fuentes</li>
                 <li><span class="check">&#10003;</span>CSV + Excel + ZIP</li>
                 <li><span class="check">&#10003;</span>Descarga de PDFs</li>
-                <li><span class="check">&#10003;</span>Historial 30 dias</li>
+                <li><span class="check">&#10003;</span>Historial 30 días</li>
             </ul>
             <a href="/register" class="card-cta card-cta-primary">Comenzar prueba gratis</a>
         </div>
@@ -557,7 +573,7 @@
             <div class="pricing-card-price price-monthly">$79<span>/mes</span></div>
             <div class="pricing-card-price price-annual">$59<span>/mes</span></div>
             <div class="pricing-card-period price-monthly">Facturado mensualmente</div>
-            <div class="pricing-card-period price-annual">Facturado anualmente ($708/ano)</div>
+            <div class="pricing-card-period price-annual">Facturado anualmente ($708/año)</div>
             <ul class="pricing-features">
                 <li><span class="check">&#10003;</span>Todo en Professional</li>
                 <li><span class="check">&#10003;</span>5 usuarios incluidos</li>
@@ -573,19 +589,19 @@
 <!-- Para Quien -->
 <section class="audience-section">
     <div class="audience-inner">
-        <h2 class="audience-title">Para quienes trabajan con ADs todos los dias.</h2>
+        <h2 class="audience-title">Para quienes trabajan con ADs todos los días.</h2>
         <div class="audience-grid">
             <div>
-                <div class="audience-name">Tecnicos de mantenimiento</div>
-                <p class="audience-desc">Consulta rapida de ADs por modelo y fabricante sin navegar multiples sitios gubernamentales.</p>
+                <div class="audience-name">Técnicos de mantenimiento</div>
+                <p class="audience-desc">Consulta rápida de ADs por modelo y fabricante sin navegar múltiples sitios gubernamentales.</p>
             </div>
             <div>
-                <div class="audience-name">Operadores aereos</div>
+                <div class="audience-name">Operadores aéreos</div>
                 <p class="audience-desc">Monitoreo centralizado de directivas aplicables a toda la flota. Exporta datos estructurados para cumplimiento.</p>
             </div>
             <div>
                 <div class="audience-name">Consultoras</div>
-                <p class="audience-desc">Descarga ADs de multiples fuentes en CSV, Excel y PDFs originales para reportes e informes regulatorios.</p>
+                <p class="audience-desc">Descarga ADs de múltiples fuentes en CSV, Excel y PDFs originales para reportes e informes regulatorios.</p>
             </div>
         </div>
     </div>
@@ -594,7 +610,7 @@
 <!-- CTA Final -->
 <section class="cta-final">
     <h2>Empieza hoy.</h2>
-    <p>Accede gratis. Sin tarjeta de credito.</p>
+    <p>Accede gratis. Sin tarjeta de crédito.</p>
     <a href="/register" class="cta-primary">Crear cuenta gratis &rarr;</a>
 </section>
 
@@ -606,13 +622,13 @@
             <span class="footer-brand-tagline">Airworthiness Directives</span>
         </div>
         <div class="footer-links">
-            <div class="footer-links-title">Navegacion</div>
+            <div class="footer-links-title">Navegación</div>
             <a href="#producto">Producto</a>
             <a href="#precios">Precios</a>
             <a href="/login">Acceder</a>
         </div>
         <div class="footer-legal">
-            <a href="#">Terminos</a>
+            <a href="#">Términos</a>
             <a href="#">Privacidad</a>
             <span class="footer-copyright">&copy; Hyvento 2026</span>
         </div>
@@ -638,6 +654,56 @@
             if(target){e.preventDefault();target.scrollIntoView({behavior:'smooth',block:'start'})}
         });
     });
+
+    // Nav scroll effect
+    var nav=document.querySelector('.nav');
+    if(nav){
+        window.addEventListener('scroll',function(){
+            if(window.scrollY>50) nav.classList.add('scrolled');
+            else nav.classList.remove('scrolled');
+        },{passive:true});
+    }
+
+    // Count-up animation for stats
+    function animateCount(el,target,duration){
+        var start=0,startTime=null;
+        function step(ts){
+            if(!startTime) startTime=ts;
+            var progress=Math.min((ts-startTime)/duration,1);
+            var eased=1-Math.pow(1-progress,3);
+            el.textContent=Math.round(eased*target).toLocaleString('es-ES');
+            if(progress<1) requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step);
+    }
+    var statsObserved=false;
+    var statsSection=document.querySelector('.social-proof-logos');
+    if(statsSection){
+        var observer=new IntersectionObserver(function(entries){
+            entries.forEach(function(entry){
+                if(entry.isIntersecting&&!statsObserved){
+                    statsObserved=true;
+                    var spans=statsSection.querySelectorAll('span[data-count]');
+                    spans.forEach(function(s){
+                        var target=parseInt(s.dataset.count)||0;
+                        animateCount(s,target,1200);
+                    });
+                    observer.disconnect();
+                }
+            });
+        },{threshold:0.3});
+        observer.observe(statsSection);
+    }
+
+    // Mockup parallax
+    var mockup=document.querySelector('.mockup-outer');
+    if(mockup&&window.innerWidth>768){
+        window.addEventListener('scroll',function(){
+            var rect=mockup.getBoundingClientRect();
+            var offset=window.scrollY*0.3;
+            mockup.style.transform='translateY(-'+offset+'px)';
+        },{passive:true});
+    }
 
     // Detect authenticated user and update CTAs
     fetch('/auth/me')

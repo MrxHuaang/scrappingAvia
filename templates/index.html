@@ -54,6 +54,11 @@
                             <div class="source-info"><span class="source-name">ANAC Brasil</span><span class="source-count" id="count-anac_brazil">&mdash;</span></div>
                             <div class="source-status-dot online"></div>
                         </button>
+                        <button class="source-card" data-source="dgac_chile" id="btn-dgac-chile">
+                            <div class="source-icon emoji-icon">🇨🇱</div>
+                            <div class="source-info"><span class="source-name">DGAC Chile</span><span class="source-count" id="count-dgac_chile">&mdash;</span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
                         <button class="source-card" data-source="all" id="btn-all">
                             <div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
                             <div class="source-info"><span class="source-name">Todas</span><span class="source-count" id="count-all">&mdash;</span></div>
@@ -64,13 +69,13 @@
 
                 <!-- Filters Form -->
                 <div class="sidebar-section">
-                    <h2 class="sidebar-section-title">Busqueda</h2>
+                    <h2 class="sidebar-section-title">Búsqueda</h2>
                     <form class="sidebar-form" id="search-form">
                         <div class="form-group">
                             <label for="input-keyword">Palabra clave</label>
                             <div class="keyword-wrap">
                                 <svg class="keyword-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                                <input type="text" id="input-keyword" name="keyword" placeholder="Ej: landing gear..." autocomplete="off">
+                                <input type="text" id="input-keyword" name="keyword" placeholder="Ej: landing gear..." autocomplete="off" aria-label="Búsqueda por palabra clave">
                                 <button type="button" class="keyword-clear" id="keyword-clear" title="Limpiar">&times;</button>
                             </div>
                         </div>
@@ -90,6 +95,12 @@
                         <div class="form-group">
                             <label for="input-product-type">Tipo</label>
                             <select id="input-product-type" name="product_type"><option value="">Todos</option><option value="Aircraft">Aircraft</option><option value="Engine">Engine</option><option value="Propeller">Propeller</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label for="input-ata-chapter">Sistema ATA</label>
+                            <select id="input-ata-chapter" name="ata_chapter">
+                                <option value="">Todos los sistemas ATA</option>
+                            </select>
                         </div>
                         <div class="date-row">
                             <div class="form-group"><label for="input-date-from">Desde</label><input type="text" id="input-date-from" name="date_from" placeholder="dd/mm/aaaa" autocomplete="off" maxlength="10"></div>
@@ -113,7 +124,7 @@
                 <div class="sidebar-section">
                     <h2 class="sidebar-section-title">Recientes</h2>
                     <div class="recent-searches" id="recent-searches">
-                        <div class="recent-empty">Sin busquedas recientes</div>
+                        <div class="recent-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Sin búsquedas recientes</div>
                     </div>
                 </div>
             </div>
@@ -125,10 +136,10 @@
                     <span class="profile-name" id="profile-name">Cargando...</span>
                     <span class="profile-plan" id="profile-plan">—</span>
                 </div>
-                <button class="profile-menu-btn" id="profile-menu-btn" type="button" title="Opciones">
+                <button class="profile-menu-btn" id="profile-menu-btn" type="button" title="Opciones de perfil" aria-label="Opciones de perfil">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
                 </button>
-                <div class="profile-popover" id="profile-popover" style="display:none">
+                <div class="profile-popover" id="profile-popover">
                     <button class="profile-popover-item" id="profile-account">Mi cuenta</button>
                     <button class="profile-popover-item profile-popover-logout" id="profile-logout">Cerrar sesión</button>
                 </div>
@@ -142,17 +153,22 @@
         <div class="main-area">
             <!-- App Header -->
             <header class="app-header" id="app-header">
-                <button class="mobile-menu-btn" id="mobile-menu-btn" title="Filtros">
+                <button class="mobile-menu-btn" id="mobile-menu-btn" title="Abrir menú" aria-label="Abrir menú">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
                 </button>
                 <div class="status-dot" id="status-indicator"></div>
                 <span id="status-text" class="header-status-text">Listo</span>
                 <div class="app-header-spacer"></div>
-                <button id="theme-toggle" class="header-icon-btn" title="Alternar tema">
+                <button id="theme-toggle" class="header-icon-btn" title="Alternar tema" aria-label="Alternar tema">
                     <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;width:18px;height:18px"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
                     <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                 </button>
-                <button id="btn-shortcuts-help" class="header-icon-btn" title="Atajos (?)">
+                <button class="header-icon-btn analysis-badge-btn" id="analysis-badge-btn" title="Cola de análisis" aria-label="Cola de análisis" style="display:none;position:relative">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><circle cx="16" cy="16" r="4" fill="none"/><path d="M15 15l2 2"/></svg>
+                    <span class="analysis-count-badge" id="analysis-count-badge">0</span>
+                </button>
+                <div class="header-divider"></div>
+                <button id="btn-shortcuts-help" class="header-icon-btn" title="Atajos de teclado" aria-label="Atajos de teclado">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                 </button>
             </header>
@@ -166,6 +182,13 @@
                     <button class="restore-banner-link" id="restore-search-again">Buscar de nuevo</button>
                     <button class="restore-banner-close" id="restore-dismiss">&times;</button>
                 </div>
+
+                <!-- Initial State -->
+                <section class="initial-state" id="initial-state">
+                    <div class="initial-state-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg></div>
+                    <h3 class="initial-state-title">Busca Airworthiness Directives</h3>
+                    <p class="initial-state-desc">Selecciona una fuente e ingresa un término de búsqueda</p>
+                </section>
 
                 <!-- Empty State -->
                 <section class="empty-state-section" id="empty-state" style="display:none">
@@ -209,7 +232,7 @@
                                 </button>
                             </div>
                             <!-- Share -->
-                            <button class="btn btn-outline btn-sm" id="btn-share-url" title="Copiar URL de busqueda">
+                            <button class="btn btn-outline btn-sm" id="btn-share-url" title="Copiar URL de búsqueda" aria-label="Copiar URL de búsqueda">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                             </button>
                             <!-- Export -->
@@ -228,10 +251,10 @@
                                     <th class="sortable" data-sort="Source">Fuente</th>
                                     <th class="sortable" data-sort="AD_Number">N&ordm; AD</th>
                                     <th class="sortable col-make" data-sort="Make">Fabricante</th>
-                                    <th class="sortable" data-sort="Model">Modelo</th>
+                                    <th class="sortable th-model" data-sort="Model">Modelo</th>
                                     <th class="sortable col-tipo" data-sort="Product_Type">Tipo</th>
                                     <th class="sortable col-subject" data-sort="Subject">Asunto</th>
-                                    <th class="sortable" data-sort="Effective_Date">Fecha</th>
+                                    <th class="sortable th-date" data-sort="Effective_Date">Fecha</th>
                                     <th>Enlace</th>
                                 </tr>
                             </thead>
@@ -275,11 +298,11 @@
                 <button class="modal-close" id="shortcuts-modal-close">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="shortcut-row"><kbd>/</kbd><span>Enfocar campo de busqueda</span></div>
+                <div class="shortcut-row"><kbd>/</kbd><span>Enfocar campo de búsqueda</span></div>
                 <div class="shortcut-row"><kbd>Esc</kbd><span>Cerrar dropdown / deseleccionar</span></div>
-                <div class="shortcut-row"><kbd>Ctrl+Enter</kbd><span>Ejecutar busqueda</span></div>
-                <div class="shortcut-row"><kbd>Ctrl+Shift+C</kbd><span>Copiar URL de busqueda</span></div>
-                <div class="shortcut-row"><kbd>Ctrl+A</kbd><span>Seleccionar pagina actual (en tabla)</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+Enter</kbd><span>Ejecutar búsqueda</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+Shift+C</kbd><span>Copiar URL de búsqueda</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+A</kbd><span>Seleccionar página actual (en tabla)</span></div>
                 <div class="shortcut-row"><kbd>?</kbd><span>Mostrar esta ayuda</span></div>
             </div>
         </div>
@@ -302,6 +325,38 @@
         </div>
     </div>
 
+    <!-- Analysis Drawer -->
+    <div class="analysis-overlay" id="analysis-overlay"></div>
+    <aside class="analysis-drawer" id="analysis-drawer">
+        <div class="analysis-drawer-header">
+            <h3>Cola de análisis</h3>
+            <button class="modal-close" id="analysis-drawer-close">&times;</button>
+        </div>
+        <div class="analysis-drawer-body" id="analysis-drawer-body">
+            <p class="analysis-empty">No hay ADs en la cola de análisis.</p>
+        </div>
+        <div class="analysis-drawer-footer">
+            <button class="btn btn-primary btn-block" id="btn-analyze-aeris">Analizar en Aeris →</button>
+        </div>
+    </aside>
+
+    <!-- Aeris Modal -->
+    <div class="modal-overlay" id="aeris-modal" style="display:none">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>Análisis con IA — Próximamente</h3>
+                <button class="modal-close" id="aeris-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Esta función conectará con Aeris Portal para analizar el cumplimiento de los ADs seleccionados con la documentación de tu aeronave.</p>
+                <span class="aeris-badge-plan">Plan Premium</span>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-primary" id="aeris-modal-ok">Entendido</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/js/aircraft_data.js"></script>
     <script src="/static/js/app.js"></script>
     <script>
@@ -314,7 +369,7 @@
                         if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
                             const bar = document.createElement('div');
                             bar.className = 'sw-update-bar';
-                            bar.innerHTML = 'Nueva version disponible <button id="sw-update-btn">Actualizar</button>';
+                            bar.innerHTML = 'Nueva versión disponible <button id="sw-update-btn">Actualizar</button>';
                             document.body.appendChild(bar);
                             document.getElementById('sw-update-btn').addEventListener('click', () => {
                                 newSW.postMessage({type:'SKIP_WAITING'});

@@ -17,7 +17,7 @@ IS_SERVERLESS = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNC
 DEFAULT_TIMEOUT = 25 if IS_SERVERLESS else 45
 
 VALID_SOURCES = frozenset([
-    "federal_register", "easa", "transport_canada", "anac_brazil", "all"
+    "federal_register", "easa", "transport_canada", "anac_brazil", "dgac_chile", "all"
 ])
 
 
