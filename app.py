@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests as http_requests
-from flask import Flask, render_template, request, jsonify, send_file, Response
+from functools import wraps
+from flask import Flask, render_template, request, jsonify, send_file, Response, redirect, session
 import pandas as pd
 
 # Agregar el directorio raiz al path para importar scrapers
@@ -32,6 +33,19 @@ app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
 
 APP_VERSION = "1.1.0"
+
+# Supabase Auth (optional — app works without it)
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-in-production")
+
+_supabase = None
+def get_supabase():
+    global _supabase
+    if _supabase is None and SUPABASE_URL and SUPABASE_ANON_KEY:
+        from supabase import create_client
+        _supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+    return _supabase
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -65,6 +79,68 @@ def login_page():
 @app.route("/register")
 def register_page():
     return render_template("auth.html", mode="register")
+
+
+# ------------------------------------------------------------------
+# Auth API
+# ------------------------------------------------------------------
+@app.route("/auth/login", methods=["POST"])
+def auth_login():
+    sb = get_supabase()
+    if not sb:
+        return jsonify({"error": "Auth no configurado. Configura SUPABASE_URL y SUPABASE_ANON_KEY.", "configured": False}), 200
+    try:
+        data = request.get_json()
+        res = sb.auth.sign_in_with_password({"email": data.get("email", ""), "password": data.get("password", "")})
+        session["access_token"] = res.session.access_token
+        session["user"] = {"id": res.user.id, "email": res.user.email}
+        return jsonify({"ok": True, "user": {"id": res.user.id, "email": res.user.email}})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/auth/register", methods=["POST"])
+def auth_register():
+    sb = get_supabase()
+    if not sb:
+        return jsonify({"error": "Auth no configurado. Configura SUPABASE_URL y SUPABASE_ANON_KEY.", "configured": False}), 200
+    try:
+        data = request.get_json()
+        res = sb.auth.sign_up({"email": data.get("email", ""), "password": data.get("password", ""), "options": {"data": {"full_name": data.get("name", "")}}})
+        return jsonify({"ok": True, "message": "Revisa tu email para confirmar tu cuenta."})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/auth/google")
+def auth_google():
+    sb = get_supabase()
+    if not sb:
+        return jsonify({"error": "Auth no configurado.", "configured": False}), 200
+    try:
+        res = sb.auth.sign_in_with_oauth({"provider": "google", "options": {"redirect_to": request.url_root.rstrip("/") + "/auth/callback"}})
+        return redirect(res.url)
+    except Exception as e:
+        return redirect(f"/login?error={str(e)}")
+
+
+@app.route("/auth/callback")
+def auth_callback():
+    return render_template("auth_callback.html")
+
+
+@app.route("/auth/logout", methods=["POST"])
+def auth_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/auth/me")
+def auth_me():
+    user = session.get("user")
+    if not user:
+        return jsonify({"error": "No autenticado"}), 401
+    return jsonify({"user": user, "configured": bool(get_supabase())})
 
 
 # ------------------------------------------------------------------

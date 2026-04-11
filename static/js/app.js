@@ -97,6 +97,9 @@
         confirmModalText: $('confirm-modal-text'),
         confirmModalOk: $('confirm-modal-ok'),
         confirmModalCancel: $('confirm-modal-cancel'),
+        keywordClear: $('keyword-clear'),
+        makeChipContainer: $('make-chip-container'),
+        searchSummary: $('search-summary'),
     };
 
     // ================================================================
@@ -115,6 +118,14 @@
     function closeSidebar() { dom.sidebar.classList.remove('open'); dom.sidebarOverlay.classList.remove('active'); }
     if (dom.mobileMenuBtn) dom.mobileMenuBtn.addEventListener('click', openSidebar);
     if (dom.sidebarOverlay) dom.sidebarOverlay.addEventListener('click', closeSidebar);
+
+    // Keyword clear button
+    if (dom.keywordClear && dom.inputKeyword) {
+        dom.keywordClear.addEventListener('click', () => {
+            dom.inputKeyword.value = '';
+            dom.inputKeyword.focus();
+        });
+    }
 
     // ================================================================
     // SOURCE SELECTION
@@ -353,6 +364,7 @@
             setStatus('ready', 'Listo');
             saveSession(params, state.results);
             saveRecentSearch(params, state.results.length);
+            updateSearchSummary();
 
         } catch (error) {
             if (error.name === 'AbortError') return;
@@ -471,6 +483,8 @@
         updateTitle('default');
         document.querySelectorAll('.source-count').forEach(el => { el.innerHTML = '&mdash;'; el.classList.remove('source-count--error'); });
         dismissRestoreBanner();
+        updateMakeChip();
+        if (dom.searchSummary) { dom.searchSummary.classList.remove('visible'); dom.searchSummary.textContent = ''; }
         history.replaceState(null, '', '/app');
     });
 
@@ -634,10 +648,10 @@
             const rel = calcRelevance(r);
             return `<tr class="${checked ? 'row-selected' : ''}">
                 <td class="td-checkbox"><input type="checkbox" class="row-check" data-idx="${idx}" ${checked}></td>
-                <td style="text-align:center">${relevanceBarsHtml(rel)}</td>
+                <td class="col-rel" style="text-align:center">${relevanceBarsHtml(rel)}</td>
                 <td>${getSourceBadge(r.Source)}</td>
                 <td class="td-ad-number" title="${esc(r.AD_Number)}">${esc(r.AD_Number)}<button class="copy-ad-btn" data-ad="${esc(r.AD_Number)}" title="Copiar AD#">Copiar</button></td>
-                <td title="${esc(r.Make)}">${esc(r.Make)}</td>
+                <td class="td-make col-make" title="${esc(r.Make)}">${esc(r.Make)}</td>
                 <td title="${esc(r.Model)}">${esc(r.Model)}</td>
                 <td class="col-tipo">${getTypeBadge(r.Product_Type)}</td>
                 <td class="td-subject" title="${esc(r.Subject)}">${formatSubject(r.Subject, 75)}</td>
@@ -709,7 +723,7 @@
     function pdfCell(r) {
         return r.PDF_Link
             ? `<a href="${esc(r.PDF_Link)}" target="_blank" rel="noopener" class="pdf-link">Ver</a>`
-            : '<span style="color:var(--t25)">—</span>';
+            : '<span style="color:var(--t20)">—</span>';
     }
 
     function pdfCellCard(r) {
@@ -985,6 +999,23 @@
         }
     }
 
+    function updateSearchSummary() {
+        if (!dom.searchSummary) return;
+        if (!state.lastParams || !state.lastResultCount) {
+            dom.searchSummary.classList.remove('visible');
+            return;
+        }
+        const p = state.lastParams;
+        const parts = [];
+        const sourceNames = {federal_register:'Federal Register',easa:'EASA',transport_canada:'Transport Canada',anac_brazil:'ANAC Brasil',all:'Todas'};
+        parts.push(sourceNames[p.source] || p.source);
+        if (p.keyword) parts.push(p.keyword);
+        if (p.make) parts.push(p.make);
+        if (p.model) parts.push(p.model);
+        dom.searchSummary.textContent = parts.join(' \u00b7 ');
+        dom.searchSummary.classList.add('visible');
+    }
+
     // ================================================================
     // AUTOCOMPLETE — Inverted index
     // ================================================================
@@ -1065,6 +1096,22 @@
         else dom.inputModel.placeholder = 'Ej: 737, A320...';
     }
 
+    function updateMakeChip() {
+        if (!dom.makeChipContainer) return;
+        if (state.activeManufacturerKey) {
+            dom.makeChipContainer.innerHTML = `<div class="manufacturer-chip"><span>${esc(state.activeManufacturerKey)}</span><button type="button" class="chip-remove" title="Quitar">&times;</button></div>`;
+            dom.makeChipContainer.querySelector('.chip-remove').addEventListener('click', () => {
+                state.activeManufacturerKey = null;
+                state.activeManufacturerModels = null;
+                dom.inputMake.value = '';
+                updateModelPlaceholder();
+                updateMakeChip();
+            });
+        } else {
+            dom.makeChipContainer.innerHTML = '';
+        }
+    }
+
     const makeAC = createAutocomplete(dom.inputMake, (q) => {
         const ql = q.toLowerCase();
         const hits = _acIndex.make.get(ql.substring(0, Math.min(ql.length, 8)));
@@ -1083,12 +1130,13 @@
         state.activeManufacturerModels = found ? found.entry.models : null;
         if (dom.inputModel) dom.inputModel.value = '';
         updateModelPlaceholder();
+        updateMakeChip();
     });
 
     if (dom.inputMake) dom.inputMake.addEventListener('input', () => {
         const val = dom.inputMake.value.trim();
-        if (!val) { state.activeManufacturerKey=null;state.activeManufacturerModels=null;updateModelPlaceholder();return; }
-        const found=findManufacturer(val);state.activeManufacturerKey=found?found.key:null;state.activeManufacturerModels=found?found.entry.models:null;updateModelPlaceholder();
+        if (!val) { state.activeManufacturerKey=null;state.activeManufacturerModels=null;updateModelPlaceholder();updateMakeChip();return; }
+        const found=findManufacturer(val);state.activeManufacturerKey=found?found.key:null;state.activeManufacturerModels=found?found.entry.models:null;updateModelPlaceholder();updateMakeChip();
     });
 
     const modelAC = createAutocomplete(dom.inputModel, (q) => {
@@ -1185,7 +1233,7 @@
     // UTILITIES
     // ================================================================
     function formatDate(str) {
-        if (!str) return '\u2014';
+        if (!str) return '<span style="color:var(--t20)">\u2014</span>';
         const M = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
         const m = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
         if (m) { const d = new Date(+m[1],+m[2]-1,+m[3]); if (!isNaN(d)) return `${d.getDate()} ${M[d.getMonth()]} ${d.getFullYear()}`; }

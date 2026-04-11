@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Autenticando... — Zephr</title>
+<style>body{background:#0a0a0a;color:#fff;font-family:Inter,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}p{font-size:14px;color:rgba(255,255,255,0.5)}</style>
+</head>
+<body>
+<p>Autenticando...</p>
+<script>
+// Supabase OAuth redirects with tokens in the URL hash
+var hash = window.location.hash;
+if (hash && hash.includes('access_token')) {
+    var params = new URLSearchParams(hash.substring(1));
+    var token = params.get('access_token');
+    if (token) {
+        fetch('/auth/me', { headers: { 'Authorization': 'Bearer ' + token } })
+            .then(function() { window.location.href = '/app'; })
+            .catch(function() { window.location.href = '/login'; });
+    } else { window.location.href = '/login'; }
+} else { window.location.href = '/login'; }
+</script>
+</body>
+</html>

@@ -8,6 +8,7 @@
     <meta property="og:description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC Brasil. Sin abrir cuatro pestanas.">
     <meta name="theme-color" content="#0a0a0a">
     <title>Zephr — Airworthiness Directives</title>
+    <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
     <link rel="icon" type="image/png" href="/static/img/logo.png">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,11 +31,16 @@
             backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
             border-bottom:1px solid rgba(255,255,255,0.08);
         }
+        .nav-left{display:flex;align-items:center;gap:10px;z-index:1}
         .nav-left .wordmark{font-size:18px}
-        .nav-center{display:flex;align-items:center;gap:32px}
+        .nav-left .nav-iso{width:22px;height:22px;flex-shrink:0;object-fit:contain;border-radius:3px}
+        .nav-center{
+            position:absolute;left:50%;transform:translateX(-50%);
+            display:flex;align-items:center;gap:32px;
+        }
         .nav-center a{color:rgba(255,255,255,0.55);font-size:14px;transition:color 200ms}
         .nav-center a:hover{color:#fff}
-        .nav-right{display:flex;align-items:center;gap:16px}
+        .nav-right{display:flex;align-items:center;gap:16px;z-index:1}
         .nav-right .nav-link{color:rgba(255,255,255,0.55);font-size:14px;transition:color 200ms}
         .nav-right .nav-link:hover{color:#fff}
         .nav-btn{
@@ -349,7 +355,10 @@
 
 <!-- Nav -->
 <nav class="nav">
-    <a href="/" class="nav-left"><span class="wordmark">Zephr</span></a>
+    <a href="/" class="nav-left">
+        <img src="/static/img/logo.png" class="nav-iso" alt="">
+        <span class="wordmark">Zephr</span>
+    </a>
     <div class="nav-center">
         <a href="#producto">Producto</a>
         <a href="#precios">Precios</a>

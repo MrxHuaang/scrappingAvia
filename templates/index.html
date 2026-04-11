@@ -8,6 +8,7 @@
     <meta property="og:description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC en un solo lugar.">
     <meta name="theme-color" content="#000000">
     <title>Zephr · Airworthiness Directives</title>
+    <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
     <link rel="icon" type="image/png" href="/static/img/logo.png">
     <link rel="manifest" href="/static/manifest.json">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -22,6 +23,7 @@
             <div class="sidebar-inner">
                 <!-- Logo -->
                 <a href="/" class="sidebar-logo">
+                    <img src="/static/img/logo.png" class="sidebar-logo-img" alt="">
                     <div class="logo-text">
                         <h1><span class="wordmark">Zephr</span></h1>
                         <span class="logo-subtitle">Airworthiness Directives</span>
@@ -62,24 +64,47 @@
 
                 <!-- Filters Form -->
                 <div class="sidebar-section">
-                    <h2 class="sidebar-section-title">Filtros</h2>
+                    <h2 class="sidebar-section-title">Busqueda</h2>
                     <form class="sidebar-form" id="search-form">
-                        <div class="form-group"><label for="input-keyword">Palabra clave</label><input type="text" id="input-keyword" name="keyword" placeholder="Ej: landing gear..." autocomplete="off"></div>
-                        <div class="form-group"><label for="input-make">Fabricante</label><input type="text" id="input-make" name="make" placeholder="Ej: Boeing..." autocomplete="off"></div>
-                        <div class="form-group"><label for="input-model">Modelo</label><input type="text" id="input-model" name="model" placeholder="Ej: 737, A320..." autocomplete="off"></div>
-                        <div class="form-group"><label for="input-product-type">Tipo</label>
+                        <div class="form-group">
+                            <label for="input-keyword">Palabra clave</label>
+                            <div class="keyword-wrap">
+                                <svg class="keyword-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                                <input type="text" id="input-keyword" name="keyword" placeholder="Ej: landing gear..." autocomplete="off">
+                                <button type="button" class="keyword-clear" id="keyword-clear" title="Limpiar">&times;</button>
+                            </div>
+                        </div>
+
+                        <div class="form-group-label">Aeronave</div>
+                        <div class="form-group">
+                            <label for="input-make">Fabricante</label>
+                            <input type="text" id="input-make" name="make" placeholder="Ej: Boeing..." autocomplete="off">
+                            <div id="make-chip-container"></div>
+                        </div>
+                        <div class="form-group">
+                            <label for="input-model">Modelo</label>
+                            <input type="text" id="input-model" name="model" placeholder="Ej: 737, A320..." autocomplete="off">
+                        </div>
+
+                        <div class="form-group-label">Filtros</div>
+                        <div class="form-group">
+                            <label for="input-product-type">Tipo</label>
                             <select id="input-product-type" name="product_type"><option value="">Todos</option><option value="Aircraft">Aircraft</option><option value="Engine">Engine</option><option value="Propeller">Propeller</option></select>
                         </div>
-                        <div class="form-group"><label for="input-date-from">Desde</label><input type="text" id="input-date-from" name="date_from" placeholder="dd/mm/aaaa" autocomplete="off" maxlength="10"></div>
-                        <div class="form-group"><label for="input-date-to">Hasta</label><input type="text" id="input-date-to" name="date_to" placeholder="dd/mm/aaaa" autocomplete="off" maxlength="10"></div>
+                        <div class="date-row">
+                            <div class="form-group"><label for="input-date-from">Desde</label><input type="text" id="input-date-from" name="date_from" placeholder="dd/mm/aaaa" autocomplete="off" maxlength="10"></div>
+                            <span class="date-sep">&rarr;</span>
+                            <div class="form-group"><label for="input-date-to">Hasta</label><input type="text" id="input-date-to" name="date_to" placeholder="dd/mm/aaaa" autocomplete="off" maxlength="10"></div>
+                        </div>
 
                         <div class="sidebar-actions">
-                            <button type="submit" class="btn btn-primary btn-block" id="btn-search">
+                            <button type="submit" class="btn btn-primary btn-block btn-search-big" id="btn-search">
                                 <svg class="btn-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
                                 <span class="btn-search-text">Buscar</span>
                                 <span class="btn-search-spinner" style="display:none;"></span>
                             </button>
                             <button type="button" class="btn btn-secondary btn-block" id="btn-clear">Limpiar</button>
+                            <div class="search-summary" id="search-summary"></div>
                         </div>
                     </form>
                 </div>
@@ -175,10 +200,10 @@
                             <thead>
                                 <tr>
                                     <th class="th-checkbox"><input type="checkbox" id="select-all" title="Seleccionar todo"></th>
-                                    <th class="sortable th-rel" data-sort="_relevance" title="Relevancia">Rel.</th>
+                                    <th class="sortable th-rel col-rel" data-sort="_relevance" title="Relevancia">Rel.</th>
                                     <th class="sortable" data-sort="Source">Fuente</th>
                                     <th class="sortable" data-sort="AD_Number">N&ordm; AD</th>
-                                    <th class="sortable" data-sort="Make">Fabricante</th>
+                                    <th class="sortable col-make" data-sort="Make">Fabricante</th>
                                     <th class="sortable" data-sort="Model">Modelo</th>
                                     <th class="sortable col-tipo" data-sort="Product_Type">Tipo</th>
                                     <th class="sortable col-subject" data-sort="Subject">Asunto</th>
