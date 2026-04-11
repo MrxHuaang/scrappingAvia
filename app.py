@@ -522,67 +522,61 @@ def _stripe_get(obj, key, default=None):
 @app.route("/api/stripe/webhook", methods=["POST"])
 def stripe_webhook():
     try:
-        # Cuerpo en bytes crudo (necesario para verificar HMAC en Vercel / proxies)
         payload = request.get_data(as_text=False)
         sig_header = request.headers.get("Stripe-Signature")
 
-        logger.info(f"[WEBHOOK] Recibido. Sig presente: {bool(sig_header)}")
-        logger.info(f"[WEBHOOK] payload bytes: {len(payload) if payload else 0}")
-        secret = (STRIPE_WEBHOOK_SECRET or "").strip()
-        logger.info(f"[WEBHOOK] STRIPE_WEBHOOK_SECRET configurado: {bool(secret)}")
+        # Parsear el JSON crudo para extraer metadata directamente
+        # Esto evita problemas con el StripeObject del SDK
+        try:
+            raw_event = json.loads(payload.decode("utf-8"))
+            raw_metadata = (
+                raw_event.get("data", {})
+                .get("object", {})
+                .get("metadata", {})
+            )
+            raw_user_id = raw_metadata.get("user_id")
+            raw_plan = raw_metadata.get("plan")
+            raw_customer = (
+                raw_event.get("data", {}).get("object", {}).get("customer")
+            )
+            raw_subscription = (
+                raw_event.get("data", {}).get("object", {}).get("subscription")
+            )
+            raw_event_type = raw_event.get("type")
+            logger.info(
+                f"[WEBHOOK] Raw JSON - type={raw_event_type} user_id={raw_user_id} plan={raw_plan}"
+            )
+        except Exception as e:
+            logger.error(f"[WEBHOOK] Error parseando JSON crudo: {e}")
+            raw_user_id = None
+            raw_plan = None
+            raw_customer = None
+            raw_subscription = None
+            raw_event_type = None
 
+        secret = (STRIPE_WEBHOOK_SECRET or "").strip()
         if not secret:
-            logger.error("[WEBHOOK] STRIPE_WEBHOOK_SECRET vacío o no definido")
             return jsonify({"error": "webhook secret not configured"}), 400
 
         try:
             event = stripe.Webhook.construct_event(payload, sig_header, secret)
-            logger.info(f"[WEBHOOK] Evento válido: {_stripe_event_type(event)}")
+            event_type = raw_event_type or _stripe_event_type(event)
+            logger.info(f"[WEBHOOK] Evento válido: {event_type}")
         except Exception as e:
             logger.error(f"[WEBHOOK] Error validando firma: {e}")
             return jsonify({"error": str(e)}), 400
 
-        event_type = _stripe_event_type(event)
-
         if event_type == "checkout.session.completed":
-            session_data = event["data"]["object"]
-            logger.info(f"[WEBHOOK] Session data keys: {_stripe_object_keys(session_data)}")
-            logger.info(f"[WEBHOOK] Customer: {_stripe_get(session_data, 'customer')}")
-
-            # La metadata en StripeObject nuevo puede ser un objeto especial
-            # Intentar múltiples formas de accederla
-            metadata = None
-            try:
-                metadata = dict(session_data.metadata) if hasattr(session_data, "metadata") else None
-            except Exception:
-                pass
-            if not metadata:
-                try:
-                    metadata = dict(session_data.get("metadata", {}))
-                except Exception:
-                    pass
-            if not metadata:
-                try:
-                    metadata = session_data["metadata"]
-                    if not isinstance(metadata, dict):
-                        metadata = dict(metadata)
-                except Exception:
-                    metadata = {}
-
-            logger.info(f"[WEBHOOK] metadata extraída: {metadata}")
-            logger.info(f"[WEBHOOK] tipo de metadata: {type(metadata)}")
-
-            user_id = metadata.get("user_id") if metadata else None
-            plan = metadata.get("plan") if metadata else None
-            customer_id = _stripe_expand_id(_stripe_get(session_data, "customer"))
-            subscription_id = _stripe_expand_id(_stripe_get(session_data, "subscription"))
+            user_id = raw_user_id
+            plan = raw_plan
+            customer_id = raw_customer
+            subscription_id = raw_subscription
 
             logger.info(f"[WEBHOOK] user_id={user_id} plan={plan} customer={customer_id}")
 
             if not user_id:
                 logger.error("[WEBHOOK] ERROR: user_id no está en metadata")
                 return jsonify({"error": "no user_id in metadata"}), 200
-
             if not plan:
                 logger.error("[WEBHOOK] ERROR: plan no está en metadata")
                 return jsonify({"error": "no plan in metadata"}), 200
@@ -592,8 +586,9 @@ def stripe_webhook():
             logger.info("[WEBHOOK] _update_user_plan completado")
 
         elif event_type == "customer.subscription.deleted":
-            obj = event["data"]["object"]
-            customer_id = _stripe_expand_id(_stripe_get(obj, "customer"))
+            customer_id = raw_customer or _stripe_expand_id(
+                _stripe_get(event["data"]["object"], "customer")
+            )
             logger.info(f"[WEBHOOK] subscription.deleted customer={customer_id}")
             if customer_id:
                 _downgrade_to_free_by_customer(customer_id)
