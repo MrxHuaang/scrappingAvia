@@ -583,19 +583,45 @@ def stripe_webhook():
 
 
 @app.route("/payment/success")
-@require_auth
 def payment_success():
     session_id = request.args.get("session_id")
-    plan_name = "Professional"
+    plan = "pro"  # default
+
     if session_id and stripe.api_key:
         try:
-            cs = stripe.checkout.Session.retrieve(session_id)
-            plan = cs.metadata.get("plan", "pro")
-            plan_name = "Team" if plan == "team" else "Professional"
+            checkout_session = stripe.checkout.Session.retrieve(session_id)
+            meta = checkout_session.get("metadata") or {}
+            if not isinstance(meta, dict):
+                try:
+                    meta = dict(meta) if hasattr(meta, "keys") else {}
+                except Exception:
+                    meta = {}
+            plan = meta.get("plan", "pro") if isinstance(meta, dict) else "pro"
+            customer_id = _stripe_expand_id(
+                checkout_session.get("customer") if hasattr(checkout_session, "get") else None
+            )
+            subscription_id = _stripe_expand_id(
+                checkout_session.get("subscription") if hasattr(checkout_session, "get") else None
+            )
+            user_id = (meta.get("user_id") if isinstance(meta, dict) else None) or _user_id_from_flask_session()
+
             session["plan"] = plan
-        except Exception:
-            pass
-    return render_template("payment_success.html", plan_name=plan_name)
+            session.modified = True
+            logger.info(f"[SUCCESS] Plan actualizado en sesión: {plan}")
+
+            if user_id:
+                _update_user_plan(user_id, plan, customer_id, subscription_id)
+
+        except Exception as e:
+            logger.error(f"[SUCCESS] Error retrieving session: {e}")
+
+    plan_names = {"pro": "Professional", "team": "Team"}
+    plan_name = plan_names.get(plan, "Professional")
+    return render_template(
+        "payment_success.html",
+        plan=plan,
+        plan_name=plan_name,
+    )
 
 
 @app.route("/payment/cancel")
