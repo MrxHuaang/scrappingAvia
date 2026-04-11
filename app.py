@@ -10,6 +10,8 @@ import re
 import sys
 import json
 import time
+import logging
+import traceback
 import zipfile
 import threading
 from datetime import datetime, timezone
@@ -56,6 +58,8 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_PRO_PRICE_ID = os.environ.get("STRIPE_PRO_PRICE_ID", "")
 STRIPE_TEAM_PRICE_ID = os.environ.get("STRIPE_TEAM_PRICE_ID", "")
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
+
+logger = logging.getLogger(__name__)
 
 _supabase = None
 _supabase_admin = None
@@ -272,24 +276,27 @@ def _fetch_user_plan(user_id):
 
 
 def _update_user_plan(user_id, plan, customer_id=None, subscription_id=None):
-    sb = get_supabase_admin()
-    if not sb:
-        print(f"[Stripe] No admin client available, cannot update plan for {user_id}")
+    logger.info(f"[UPDATE_PLAN] Iniciando: user={user_id} plan={plan}")
+
+    admin = get_supabase_admin()
+    if not admin:
+        logger.error("[UPDATE_PLAN] ERROR: No hay cliente admin de Supabase")
         return
+
+    logger.info("[UPDATE_PLAN] Cliente admin obtenido, haciendo upsert...")
+
     try:
-        row = {
+        result = admin.table("profiles").upsert({
             "id": user_id,
             "plan": plan,
+            "stripe_customer_id": customer_id,
+            "stripe_subscription_id": subscription_id,
             "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        if customer_id:
-            row["stripe_customer_id"] = customer_id
-        if subscription_id:
-            row["stripe_subscription_id"] = subscription_id
-        sb.table("profiles").upsert(row).execute()
-        print(f"[Stripe] Plan actualizado: user={user_id} plan={plan}")
+        }).execute()
+        logger.info(f"[UPDATE_PLAN] Resultado: {result}")
     except Exception as e:
-        print(f"[Stripe] Error updating profile for {user_id}: {e}")
+        logger.error(f"[UPDATE_PLAN] ERROR en upsert: {type(e).__name__}: {e}")
+        logger.error(f"[UPDATE_PLAN] Traceback: {traceback.format_exc()}")
 
 
 def _downgrade_to_free_by_customer(customer_id):
@@ -345,32 +352,139 @@ def stripe_create_checkout():
         return jsonify({"error": str(e)}), 500
 
 
+def _stripe_debug_endpoint_allowed():
+    """GET /api/debug/stripe solo con Stripe en modo test o ENABLE_STRIPE_DEBUG=1."""
+    key = os.environ.get("STRIPE_SECRET_KEY") or ""
+    if key.startswith("sk_test_"):
+        return True
+    return os.environ.get("ENABLE_STRIPE_DEBUG") == "1"
+
+
+@app.route("/api/debug/stripe")
+def debug_stripe():
+    if not _stripe_debug_endpoint_allowed():
+        return jsonify({"error": "Not found"}), 404
+    return jsonify({
+        "stripe_configured": bool(stripe.api_key),
+        "webhook_secret_configured": bool(STRIPE_WEBHOOK_SECRET and STRIPE_WEBHOOK_SECRET.strip()),
+        "supabase_configured": bool(os.environ.get("SUPABASE_URL")),
+        "service_key_configured": bool(os.environ.get("SUPABASE_SERVICE_KEY")),
+        "is_serverless": IS_SERVERLESS,
+    })
+
+
+def _stripe_event_type(event):
+    """Stripe devuelve dict o StripeObject según versión."""
+    try:
+        return event["type"]
+    except Exception:
+        return getattr(event, "type", None)
+
+
+def _stripe_object_keys(obj):
+    """Evita crash al loguear (StripeObject no siempre se comporta como dict)."""
+    try:
+        if isinstance(obj, dict):
+            return list(obj.keys())
+        if hasattr(obj, "keys"):
+            return list(obj.keys())
+    except Exception:
+        pass
+    return f"<{type(obj).__name__}>"
+
+
+def _stripe_expand_id(value):
+    """customer/subscription pueden ser id str o objeto expandido."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict) and value.get("id"):
+        return value["id"]
+    try:
+        return getattr(value, "id", None) or str(value)
+    except Exception:
+        return str(value)
+
+
+def _stripe_get(obj, key, default=None):
+    if obj is None:
+        return default
+    try:
+        if hasattr(obj, "get"):
+            return obj.get(key, default)
+        return obj[key]
+    except Exception:
+        return default
+
+
 @app.route("/api/stripe/webhook", methods=["POST"])
 def stripe_webhook():
-    payload = request.get_data()
-    sig_header = request.headers.get("Stripe-Signature", "")
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
-    except Exception:
-        return jsonify({"error": "Invalid signature"}), 400
+        # Cuerpo en bytes crudo (necesario para verificar HMAC en Vercel / proxies)
+        payload = request.get_data(as_text=False)
+        sig_header = request.headers.get("Stripe-Signature")
 
-    event_type = event.get("type", "")
-    obj = event.get("data", {}).get("object", {})
+        logger.info(f"[WEBHOOK] Recibido. Sig presente: {bool(sig_header)}")
+        logger.info(f"[WEBHOOK] payload bytes: {len(payload) if payload else 0}")
+        secret = (STRIPE_WEBHOOK_SECRET or "").strip()
+        logger.info(f"[WEBHOOK] STRIPE_WEBHOOK_SECRET configurado: {bool(secret)}")
 
-    if event_type == "checkout.session.completed":
-        user_id = obj.get("metadata", {}).get("user_id")
-        plan = obj.get("metadata", {}).get("plan", "pro")
-        customer_id = obj.get("customer")
-        subscription_id = obj.get("subscription")
-        if user_id:
+        if not secret:
+            logger.error("[WEBHOOK] STRIPE_WEBHOOK_SECRET vacío o no definido")
+            return jsonify({"error": "webhook secret not configured"}), 400
+
+        try:
+            event = stripe.Webhook.construct_event(payload, sig_header, secret)
+            logger.info(f"[WEBHOOK] Evento válido: {_stripe_event_type(event)}")
+        except Exception as e:
+            logger.error(f"[WEBHOOK] Error validando firma: {e}")
+            return jsonify({"error": str(e)}), 400
+
+        event_type = _stripe_event_type(event)
+
+        if event_type == "checkout.session.completed":
+            session_data = event["data"]["object"]
+            logger.info(f"[WEBHOOK] Session data keys: {_stripe_object_keys(session_data)}")
+            logger.info(f"[WEBHOOK] Metadata: {_stripe_get(session_data, 'metadata', {})}")
+            logger.info(f"[WEBHOOK] Customer: {_stripe_get(session_data, 'customer')}")
+
+            meta = _stripe_get(session_data, "metadata") or {}
+            if not isinstance(meta, dict):
+                try:
+                    meta = dict(meta) if hasattr(meta, "keys") else {}
+                except Exception:
+                    meta = {}
+            user_id = meta.get("user_id") if isinstance(meta, dict) else None
+            plan = meta.get("plan") if isinstance(meta, dict) else None
+            customer_id = _stripe_expand_id(_stripe_get(session_data, "customer"))
+            subscription_id = _stripe_expand_id(_stripe_get(session_data, "subscription"))
+
+            logger.info(f"[WEBHOOK] user_id={user_id} plan={plan} customer={customer_id}")
+
+            if not user_id:
+                logger.error("[WEBHOOK] ERROR: user_id no está en metadata")
+                return jsonify({"error": "no user_id in metadata"}), 200
+
+            if not plan:
+                logger.error("[WEBHOOK] ERROR: plan no está en metadata")
+                return jsonify({"error": "no plan in metadata"}), 200
+
+            logger.info("[WEBHOOK] Llamando _update_user_plan...")
             _update_user_plan(user_id, plan, customer_id, subscription_id)
+            logger.info("[WEBHOOK] _update_user_plan completado")
 
-    elif event_type == "customer.subscription.deleted":
-        customer_id = obj.get("customer")
-        if customer_id:
-            _downgrade_to_free_by_customer(customer_id)
+        elif event_type == "customer.subscription.deleted":
+            obj = event["data"]["object"]
+            customer_id = _stripe_expand_id(_stripe_get(obj, "customer"))
+            logger.info(f"[WEBHOOK] subscription.deleted customer={customer_id}")
+            if customer_id:
+                _downgrade_to_free_by_customer(customer_id)
 
-    return jsonify({"ok": True})
+        return jsonify({"ok": True})
+    except Exception as e:
+        logger.error(f"[WEBHOOK] CRASH: {traceback.format_exc()}")
+        return jsonify({"error": "internal error", "detail": str(e)}), 500
 
 
 @app.route("/payment/success")
@@ -758,7 +872,6 @@ def api_export(fmt):
             return jsonify({"error": f"Formato no soportado: {fmt}"}), 400
 
     except Exception as e:
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
