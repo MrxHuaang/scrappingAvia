@@ -100,7 +100,22 @@
         keywordClear: $('keyword-clear'),
         makeChipContainer: $('make-chip-container'),
         searchSummary: $('search-summary'),
+        maxResultsSelect: $('max-results-select'),
     };
+
+    // Max results preference
+    const storedMax = localStorage.getItem('maxResults');
+    if (storedMax && dom.maxResultsSelect) {
+        dom.maxResultsSelect.value = storedMax;
+    }
+    if (dom.maxResultsSelect) {
+        dom.maxResultsSelect.addEventListener('change', () => {
+            localStorage.setItem('maxResults', dom.maxResultsSelect.value);
+        });
+    }
+    function getMaxResults() {
+        return dom.maxResultsSelect ? parseInt(dom.maxResultsSelect.value) || 2000 : 2000;
+    }
 
     // ================================================================
     // THEME
@@ -250,6 +265,7 @@
             product_type: ($('input-product-type') ? $('input-product-type').value : ''),
             date_from: parseDateInput(dfVal),
             date_to: parseDateInput(dtVal),
+            max_results: String(getMaxResults()),
         };
 
         const hasInput = params.keyword || params.make || params.model;
@@ -388,14 +404,14 @@
         const keys = source === 'all' ? ['federal_register','easa','anac_brazil','transport_canada'] : [source];
         keys.forEach(key => {
             const el = $(`count-${key}`);
-            if (el) { el.innerHTML = '<span class="source-card-spinner"></span>'; el.classList.remove('source-count--error'); }
+            if (el) { el.innerHTML = '<span class="source-card-spinner"></span>'; el.classList.remove('source-count--error'); el.classList.remove('source-count--loaded'); }
         });
     }
     function updateSourceCard(srcKey, count, error) {
         const el = $(`count-${srcKey}`);
         if (!el) return;
-        if (error) { el.textContent = 'Error'; el.classList.add('source-count--error'); }
-        else { el.textContent = `${count.toLocaleString('es-ES')} ADs`; el.classList.remove('source-count--error'); }
+        if (error) { el.textContent = 'Error'; el.classList.add('source-count--error'); el.classList.remove('source-count--loaded'); }
+        else { el.textContent = `${count.toLocaleString('es-ES')} ADs`; el.classList.remove('source-count--error'); if (count > 0) el.classList.add('source-count--loaded'); }
     }
 
     // ================================================================
@@ -481,7 +497,7 @@
         if (dom.emptyState) dom.emptyState.style.display = 'none';
         if (dom.inputModel) dom.inputModel.placeholder = 'Ej: 737, A320...';
         updateTitle('default');
-        document.querySelectorAll('.source-count').forEach(el => { el.innerHTML = '&mdash;'; el.classList.remove('source-count--error'); });
+        document.querySelectorAll('.source-count').forEach(el => { el.innerHTML = '&mdash;'; el.classList.remove('source-count--error'); el.classList.remove('source-count--loaded'); });
         dismissRestoreBanner();
         updateMakeChip();
         if (dom.searchSummary) { dom.searchSummary.classList.remove('visible'); dom.searchSummary.textContent = ''; }
@@ -501,28 +517,28 @@
         } else { dom.bulkBar.style.display = 'none'; }
     }
 
-    function getPageIndices() {
+    function getPageAdNumbers() {
         const active = getActiveResults();
         const sorted = getSortedResults(active);
         const start = (state.currentPage - 1) * state.pageSize;
         const end = start + state.pageSize;
-        const indices = [];
+        const ads = [];
         for (let i = start; i < end && i < sorted.length; i++) {
-            indices.push(state.results.indexOf(sorted[i]));
+            if (sorted[i].AD_Number) ads.push(sorted[i].AD_Number);
         }
-        return indices;
+        return ads;
     }
 
     function updateSelectAllCheckbox() {
-        const pageIndices = getPageIndices();
-        const allChecked = pageIndices.length > 0 && pageIndices.every(idx => state.selectedIds.has(idx));
+        const pageAds = getPageAdNumbers();
+        const allChecked = pageAds.length > 0 && pageAds.every(ad => state.selectedIds.has(ad));
         if (dom.selectAll) dom.selectAll.checked = allChecked;
     }
     if (dom.selectAll) {
         dom.selectAll.addEventListener('change', () => {
-            const pageIndices = getPageIndices();
-            for (const idx of pageIndices) {
-                if (dom.selectAll.checked) state.selectedIds.add(idx); else state.selectedIds.delete(idx);
+            const pageAds = getPageAdNumbers();
+            for (const ad of pageAds) {
+                if (dom.selectAll.checked) state.selectedIds.add(ad); else state.selectedIds.delete(ad);
             }
             state._lastRenderKey = null;
             renderResults(); updateBulkBar();
@@ -550,7 +566,7 @@
 
     async function handleZipExport() {
         if (state.selectedIds.size === 0) { showToast('No hay registros seleccionados.', 'error'); return; }
-        const selectedResults = [...state.selectedIds].map(idx => state.results[idx]).filter(Boolean);
+        const selectedResults = state.results.filter(r => state.selectedIds.has(r.AD_Number));
         const pdfCount = selectedResults.filter(r => r.PDF_Link).length;
 
         if (pdfCount > 20) {
@@ -599,7 +615,7 @@
 
     async function exportSelected(format) {
         if (state.selectedIds.size === 0) { showToast('No hay registros seleccionados.', 'error'); return; }
-        const selectedResults = [...state.selectedIds].map(idx => state.results[idx]).filter(Boolean);
+        const selectedResults = state.results.filter(r => state.selectedIds.has(r.AD_Number));
         try {
             showToast(`Exportando ${format.toUpperCase()}...`, 'info');
             const payload = { results: selectedResults };
@@ -643,14 +659,14 @@
 
     function renderTable(pageResults) {
         dom.resultsBody.innerHTML = pageResults.map(r => {
-            const idx = state.results.indexOf(r);
-            const checked = state.selectedIds.has(idx) ? 'checked' : '';
+            const adNum = r.AD_Number || '';
+            const checked = state.selectedIds.has(adNum) ? 'checked' : '';
             const rel = calcRelevance(r);
             return `<tr class="${checked ? 'row-selected' : ''}">
-                <td class="td-checkbox"><input type="checkbox" class="row-check" data-idx="${idx}" ${checked}></td>
+                <td class="td-checkbox"><input type="checkbox" class="row-check" data-ad="${esc(adNum)}" ${checked}></td>
                 <td class="col-rel" style="text-align:center">${relevanceBarsHtml(rel)}</td>
                 <td>${getSourceBadge(r.Source)}</td>
-                <td class="td-ad-number" title="${esc(r.AD_Number)}">${esc(r.AD_Number)}<button class="copy-ad-btn" data-ad="${esc(r.AD_Number)}" title="Copiar AD#">Copiar</button></td>
+                <td class="td-ad-number" title="${esc(adNum)}">${esc(adNum)}<button class="copy-ad-btn" data-ad="${esc(adNum)}" title="Copiar AD#">Copiar</button></td>
                 <td class="td-make col-make" title="${esc(r.Make)}">${esc(r.Make)}</td>
                 <td title="${esc(r.Model)}">${esc(r.Model)}</td>
                 <td class="col-tipo">${getTypeBadge(r.Product_Type)}</td>
@@ -665,15 +681,15 @@
 
     function renderCards(pageResults) {
         dom.cardsContainer.innerHTML = pageResults.map(r => {
-            const idx = state.results.indexOf(r);
-            const checked = state.selectedIds.has(idx) ? 'checked' : '';
+            const adNum = r.AD_Number || '';
+            const checked = state.selectedIds.has(adNum) ? 'checked' : '';
             const rel = calcRelevance(r);
             return `<div class="result-card ${checked ? 'row-selected' : ''}">
                 <div class="result-card-top">
                     <div class="result-card-badge">${getSourceBadge(r.Source)}</div>
-                    <div class="result-card-actions">${relevanceBarsHtml(rel)}<input type="checkbox" class="row-check" data-idx="${idx}" ${checked}></div>
+                    <div class="result-card-actions">${relevanceBarsHtml(rel)}<input type="checkbox" class="row-check" data-ad="${esc(adNum)}" ${checked}></div>
                 </div>
-                <div class="card-ad-number">${esc(r.AD_Number)}</div>
+                <div class="card-ad-number">${esc(adNum)}</div>
                 <div class="card-make-model">${esc(r.Make)} ${esc(r.Model)} ${getTypeBadge(r.Product_Type)}</div>
                 <div class="card-subject">${esc(r.Subject)}</div>
                 <div class="result-card-bottom">
@@ -688,8 +704,8 @@
     function bindRowChecks(container) {
         (container || dom.resultsBody).querySelectorAll('.row-check').forEach(cb => {
             cb.addEventListener('change', () => {
-                const idx = parseInt(cb.dataset.idx);
-                if (cb.checked) state.selectedIds.add(idx); else state.selectedIds.delete(idx);
+                const ad = cb.dataset.ad;
+                if (cb.checked) state.selectedIds.add(ad); else state.selectedIds.delete(ad);
                 const row = cb.closest('tr') || cb.closest('.result-card');
                 if (row) row.classList.toggle('row-selected', cb.checked);
                 updateSelectAllCheckbox(); updateBulkBar();
@@ -872,8 +888,10 @@
             product_type: params.get('product_type') || '',
             date_from: params.get('date_from') || '',
             date_to: params.get('date_to') || '',
+            max_results: params.get('max_results') || String(getMaxResults()),
         };
 
+        if (p.max_results && dom.maxResultsSelect) dom.maxResultsSelect.value = p.max_results;
         fillForm(p);
         state.lastParams = p;
         state.lastSearchTerm = p.keyword || p.make || p.model || '';

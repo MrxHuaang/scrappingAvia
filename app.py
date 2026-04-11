@@ -26,7 +26,8 @@ from scrapers.federal_register import search_ads as fr_search
 from scrapers.easa import search_ads as easa_search, search_main_page as easa_main_page
 from scrapers.transport_canada import search_ads as tc_search
 from scrapers.anac_brazil import search_ads as anac_brazil_search
-from utils import map_product_type, run_with_timeout, VALID_SOURCES
+from math import ceil
+from utils import map_product_type, run_with_timeout, VALID_SOURCES, MAX_RESULTS_PER_SOURCE
 
 
 app = Flask(__name__)
@@ -155,9 +156,10 @@ def page_not_found(e):
 # Helpers para construir las funciones de cada scraper
 # ------------------------------------------------------------------
 
-def _build_scrapers(source, keyword, make, model, product_type, date_from, date_to):
+def _build_scrapers(source, keyword, make, model, product_type, date_from, date_to, max_results=2000):
     """Devuelve lista de (source_key, label, fn) a ejecutar."""
     scrapers = []
+    fr_max_pages = ceil(max_results / 100)
 
     if source in ("federal_register", "all"):
         def _fr():
@@ -168,20 +170,22 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
                 product_type=product_type or None,
                 date_from=date_from or None,
                 date_to=date_to or None,
-                max_pages=5,
+                max_pages=fr_max_pages,
             )
         scrapers.append(("federal_register", "Federal Register", _fr))
 
     if source in ("easa", "all"):
+        _easa_pages = max(2, ceil(max_results / 100))
         def _easa():
             search_term = keyword or make or model
             if search_term:
-                return easa_search(model_keyword=search_term, max_pages=5)
+                return easa_search(model_keyword=search_term, max_pages=_easa_pages)
             else:
                 return easa_main_page(max_pages=2)
         scrapers.append(("easa", "EASA", _easa))
 
     if source in ("anac_brazil", "all"):
+        _anac_limit = min(max_results, 2000)
         def _anac():
             return anac_brazil_search(
                 keyword=keyword or None,
@@ -189,7 +193,7 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
                 model=model or None,
                 date_from=date_from or None,
                 date_to=date_to or None,
-                max_results=200,
+                max_results=_anac_limit,
             )
         scrapers.append(("anac_brazil", "ANAC Brasil", _anac))
 
@@ -235,17 +239,18 @@ def api_search():
         product_type = data.get("product_type", "").strip()
         date_from = data.get("date_from", "").strip()
         date_to = data.get("date_to", "").strip()
+        max_results = min(int(data.get("max_results", MAX_RESULTS_PER_SOURCE)), 5000)
 
         all_results = []
         errors = []
 
-        scrapers = _build_scrapers(source, keyword, make, model, product_type, date_from, date_to)
+        scrapers = _build_scrapers(source, keyword, make, model, product_type, date_from, date_to, max_results=max_results)
 
         if source == "transport_canada" and not make:
             errors.append("Transport Canada requiere un fabricante.")
 
         for _src_key, label, fn in scrapers:
-            results, err = run_with_timeout(fn, SCRAPER_TIMEOUT, label)
+            results, err = run_with_timeout(fn, SCRAPER_TIMEOUT, label, max_results=max_results)
             if err:
                 errors.append(err)
             if results:
@@ -273,6 +278,7 @@ def api_search_stream():
     product_type = request.args.get("product_type", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
+    max_results = min(int(request.args.get("max_results", MAX_RESULTS_PER_SOURCE)), 5000)
 
     # Validación de source
     if source not in VALID_SOURCES:
@@ -294,7 +300,7 @@ def api_search_stream():
         return Response(empty_gen(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    scrapers = _build_scrapers(source, keyword, make, model, product_type, date_from, date_to)
+    scrapers = _build_scrapers(source, keyword, make, model, product_type, date_from, date_to, max_results=max_results)
 
     def generate():
         total = 0
@@ -309,7 +315,7 @@ def api_search_stream():
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
         for src_key, label, fn in scrapers:
-            results, err = run_with_timeout(fn, SCRAPER_TIMEOUT, label)
+            results, err = run_with_timeout(fn, SCRAPER_TIMEOUT, label, max_results=max_results)
             count = len(results) if results else 0
             total += count
 
