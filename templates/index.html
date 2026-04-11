@@ -46,10 +46,11 @@
                             <div class="source-info"><span class="source-name">Transport Canada</span><span class="source-count" id="count-transport_canada"></span></div>
                             <div class="source-status-dot online"></div>
                         </button>
-                        <button class="source-card" data-source="aerocivil_colombia" id="btn-aerocivil">
+                        <button type="button" class="source-card source-card--coming-soon" data-source="aerocivil_colombia" id="btn-aerocivil" aria-label="AEROCIVIL Colombia — próximamente">
                             <div class="source-icon emoji-icon">🇨🇴</div>
                             <div class="source-info"><span class="source-name">AEROCIVIL</span><span class="source-count" id="count-aerocivil_colombia"></span></div>
-                            <div class="source-status-dot online"></div>
+                            <span class="source-coming-badge">Próx.</span>
+                            <span class="source-coming-tooltip" role="tooltip">Integración en desarrollo</span>
                         </button>
                         <button class="source-card" data-source="anac_brazil" id="btn-anac-brazil">
                             <div class="source-icon emoji-icon">🇧🇷</div>
@@ -75,15 +76,17 @@
                         </button>
                         <!-- Pacífico / Medio Oriente -->
                         <div class="source-group-label">Pacífico / Medio Oriente</div>
-                        <button class="source-card" data-source="casa_australia" id="btn-casa">
+                        <button type="button" class="source-card source-card--coming-soon" data-source="casa_australia" id="btn-casa" aria-label="CASA Australia — próximamente">
                             <div class="source-icon emoji-icon">🇦🇺</div>
                             <div class="source-info"><span class="source-name">CASA</span><span class="source-count" id="count-casa_australia"></span></div>
-                            <div class="source-status-dot online"></div>
+                            <span class="source-coming-badge">Próx.</span>
+                            <span class="source-coming-tooltip" role="tooltip">Integración en desarrollo</span>
                         </button>
-                        <button class="source-card" data-source="gcaa_uae" id="btn-gcaa">
+                        <button type="button" class="source-card source-card--coming-soon" data-source="gcaa_uae" id="btn-gcaa" aria-label="GCAA UAE — próximamente">
                             <div class="source-icon emoji-icon">🇦🇪</div>
                             <div class="source-info"><span class="source-name">GCAA</span><span class="source-count" id="count-gcaa_uae"></span></div>
-                            <div class="source-status-dot online"></div>
+                            <span class="source-coming-badge">Próx.</span>
+                            <span class="source-coming-tooltip" role="tooltip">Integración en desarrollo</span>
                         </button>
                         <!-- Todas -->
                         <div class="source-group-sep"></div>
@@ -103,7 +106,7 @@
                             <label for="input-keyword">Palabra clave</label>
                             <div class="keyword-wrap">
                                 <svg class="keyword-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                                <input type="text" id="input-keyword" name="keyword" placeholder="Ej: landing gear..." autocomplete="off" aria-label="Búsqueda por palabra clave">
+                                <input type="text" id="input-keyword" name="keyword" placeholder="Ej: landing gear, fuel system..." autocomplete="off" aria-label="Búsqueda por palabra clave">
                                 <button type="button" class="keyword-clear" id="keyword-clear" title="Limpiar">&times;</button>
                             </div>
                         </div>

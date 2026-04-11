@@ -1,9 +1,9 @@
 """
 Scraper para AEROCIVIL Colombia — Directivas de Aeronavegabilidad.
-URL base: https://www.aerocivil.gov.co/normatividad/16-directiva
+URL base: https://www.aerocivil.gov.co
 
 El sitio de AEROCIVIL bloquea scraping automatizado (403 Forbidden / timeouts).
-Este scraper intenta conectar y parsear el HTML; si falla, devuelve lista vacía.
+Este scraper usa Session con headers de navegador e intenta múltiples URLs.
 """
 
 import re
@@ -12,27 +12,37 @@ from bs4 import BeautifulSoup
 
 AEROCIVIL_URLS = [
     "https://www.aerocivil.gov.co/autoridad/autoridad-tecnica/aeronavegabilidad/directivas-de-aeronavegabilidad",
+    "https://www.aerocivil.gov.co/normatividad/normas-de-aeronavegabilidad",
     "https://www.aerocivil.gov.co/normatividad/16-directiva",
     "https://www.aerocivil.gov.co/documentos/377/directivas/",
 ]
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "es-CO,es;q=0.9,en-US;q=0.8,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 
 def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None, max_results=200):
     """
     Busca Directivas de Aeronavegabilidad en AEROCIVIL Colombia.
-    El sitio suele bloquear acceso automatizado — devuelve [] con log si falla.
+    Usa Session con headers de navegador para evitar bloqueos.
     """
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
     for url in AEROCIVIL_URLS:
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=20, allow_redirects=True)
+            resp = session.get(url, timeout=15, allow_redirects=True)
             if resp.status_code == 403:
                 print(f"[AEROCIVIL Colombia] 403 Forbidden en {url}")
+                continue
+            if resp.status_code >= 400:
+                print(f"[AEROCIVIL Colombia] HTTP {resp.status_code} en {url}")
                 continue
             resp.raise_for_status()
             results = _parse_page(resp.text, keyword, make, model)

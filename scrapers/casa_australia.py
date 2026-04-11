@@ -3,8 +3,7 @@ Scraper para CASA Australia — Airworthiness Directives.
 URL: https://www.casa.gov.au/aircraft/airworthiness/airworthiness-directives
 
 CASA bloquea scraping automatizado (403 Forbidden en todas las URLs).
-Tienen data files CSV disponibles, pero también protegidos.
-Este scraper intenta múltiples endpoints y devuelve [] si falla.
+Este scraper intenta múltiples endpoints con Session y headers de navegador real.
 """
 
 import re
@@ -12,28 +11,40 @@ import requests
 from bs4 import BeautifulSoup
 
 CASA_URLS = [
+    "https://ad.casa.gov.au/",
+    "https://www.casa.gov.au/aircraft/airworthiness-directives/airworthiness-directives-search",
     "https://services.casa.gov.au/airworth/airwd/",
-    "https://www.casa.gov.au/airworthiness-directives",
+    "https://www.casa.gov.au/search?q=airworthiness+directive",
     "https://www.casa.gov.au/aircraft/airworthiness/airworthiness-directives",
+    "https://www.casa.gov.au/airworthiness-directives",
 ]
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-AU,en;q=0.9",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 
 def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None, max_results=200):
     """
     Busca Airworthiness Directives en CASA Australia.
-    CASA bloquea acceso automatizado — devuelve [] si no se puede conectar.
+    Usa requests.Session con headers de navegador para evitar bloqueos.
     """
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
     for url in CASA_URLS:
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=12, allow_redirects=True)
+            resp = session.get(url, timeout=12, allow_redirects=True)
             if resp.status_code == 403:
                 print(f"[CASA Australia] 403 Forbidden en {url}")
+                continue
+            if resp.status_code >= 400:
+                print(f"[CASA Australia] HTTP {resp.status_code} en {url}")
                 continue
             resp.raise_for_status()
 
@@ -42,6 +53,8 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
                 results = results[:max_results]
                 print(f"[CASA Australia] {len(results)} ADs obtenidas de {url}")
                 return results
+            else:
+                print(f"[CASA Australia] Página accesible pero sin ADs parseables en {url}")
 
         except requests.Timeout:
             print(f"[CASA Australia] Timeout en {url}")

@@ -15,6 +15,7 @@ const AIRCRAFT_DATA = {
 
     'Airbus': {
         aliases: ['airbus', 'a320', 'a330', 'a340', 'a350', 'a380', 'a220', 'a300', 'a310', 'neo', 'ceo'],
+        commercial_names: ['A320 Family', 'A320neo', 'A321neo', 'A330neo', 'A350 XWB', 'A380'],
         models: [
             'A220-100', 'A220-300',
             'A300 B2', 'A300 B4', 'A300-600', 'A300-600R',
@@ -30,6 +31,7 @@ const AIRCRAFT_DATA = {
 
     'Boeing': {
         aliases: ['boeing', '737', '747', '757', '767', '777', '787', '717', '727', '707', 'max', 'dreamliner', 'mcdonnell douglas'],
+        commercial_names: ['737 MAX', '737 Classic', '737 NG', '747 Jumbo', '777 Triple Seven', '787 Dreamliner', '767', '757'],
         models: [
             '707-100', '707-200', '707-300', '707-400',
             '717-200',
@@ -67,6 +69,7 @@ const AIRCRAFT_DATA = {
             'dash 8', 'q400', 'q300', 'q200', 'q100', 'dhc', 'learjet', 'challenger',
             'global', 'global express', 'global 5000', 'global 6000', 'cl-600',
         ],
+        commercial_names: ['CRJ', 'Dash 8', 'Q Series', 'Global', 'Challenger', 'Learjet'],
         models: [
             // CRJ Series
             'CRJ-100', 'CRJ-200', 'CRJ-440', 'CRJ-700', 'CRJ-705', 'CRJ-900', 'CRJ-1000',
@@ -84,6 +87,7 @@ const AIRCRAFT_DATA = {
 
     'Embraer': {
         aliases: ['embraer', 'erj', 'emb', 'erj-145', 'erj-135', 'erj-140', 'e-jet', 'e175', 'e190', 'e195', 'phenom', 'legacy', 'praetor', 'lineage'],
+        commercial_names: ['E-Jet', 'E170', 'E175', 'E190', 'E195', 'ERJ', 'Phenom', 'Legacy'],
         models: [
             'EMB-120', 'EMB-120ER', 'EMB-120RT',
             'ERJ-135BJ', 'ERJ-135ER', 'ERJ-135LR',
@@ -133,6 +137,7 @@ const AIRCRAFT_DATA = {
 
     'Cessna': {
         aliases: ['cessna', 'cessna aircraft', '172', '182', '206', '208', 'skyhawk', 'skylane', 'caravan', 'citation', 'stationair', 'textron cessna'],
+        commercial_names: ['Caravan', 'Citation', 'Skyhawk', 'Skylane', 'Stationair'],
         models: [
             '150', '152',
             '172', '172N', '172P', '172R', '172S', '172SP',

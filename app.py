@@ -306,7 +306,7 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
             )
         scrapers.append(("dgac_chile", "DGAC Chile", _dgac))
 
-    if source in ("aerocivil_colombia", "all"):
+    if source == "aerocivil_colombia":
         def _aerocivil():
             return aerocivil_search(
                 keyword=keyword or None,
@@ -330,7 +330,7 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
             )
         scrapers.append(("anac_argentina", "ANAC Argentina", _anac_ar))
 
-    if source in ("casa_australia", "all"):
+    if source == "casa_australia":
         def _casa():
             return casa_search(
                 keyword=keyword or None,
@@ -342,7 +342,7 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
             )
         scrapers.append(("casa_australia", "CASA Australia", _casa))
 
-    if source in ("gcaa_uae", "all"):
+    if source == "gcaa_uae":
         def _gcaa():
             return gcaa_search(
                 keyword=keyword or None,
@@ -397,6 +397,11 @@ def api_search():
         date_to = data.get("date_to", "").strip()
         max_results = min(int(data.get("max_results", MAX_RESULTS_PER_SOURCE)), 5000)
 
+        if source not in VALID_SOURCES:
+            return jsonify({"error": f"Fuente no válida: '{source}'."}), 400
+        if source == "all" and not keyword and not make and not model:
+            return jsonify({"error": "Ingresa al menos un término para buscar en todas las fuentes"}), 400
+
         all_results = []
         errors = []
 
@@ -449,11 +454,11 @@ def api_search_stream():
         return Response(error_gen(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    # Validación de inputs
-    if not keyword and not make and not model and source != "all":
+    # Validación de inputs: "all" sin términos no está permitido; fuentes específicas sí pueden ir sin filtro
+    if not keyword and not make and not model and source == "all":
         def empty_gen():
             event = {"source": source, "results": [], "count": 0,
-                     "error": "Se requiere al menos un término de búsqueda (keyword, make o model)."}
+                     "error": "Ingresa al menos un término para buscar en todas las fuentes"}
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'event': 'done', 'total': 0})}\n\n"
         return Response(empty_gen(), mimetype="text/event-stream",
@@ -671,7 +676,7 @@ def _export_zip(results, df, timestamp, filters=None):
             f"  PDFs/             - {pdfs_ok} PDFs descargados",
             "  README.txt        - Este archivo",
             "",
-            "Fuentes: FAA | EASA | TC | ANAC BR | DGAC CL | AEROCIVIL CO | ANAC AR | CASA AU | GCAA UAE",
+            "Fuentes activas (búsqueda múltiple): FAA | EASA | TC | ANAC BR | DGAC CL | ANAC AR",
         ]
         zf.writestr("README.txt", "\n".join(readme_lines))
 
@@ -687,23 +692,47 @@ def _export_zip(results, df, timestamp, filters=None):
 
 
 # ------------------------------------------------------------------
-# API: Estado de las fuentes
+# API: Estado de las fuentes (ping real)
 # ------------------------------------------------------------------
+_SOURCE_PING_URLS = {
+    "federal_register": ("Federal Register (USA)", "https://www.federalregister.gov"),
+    "easa":             ("EASA (Europa)",          "https://ad.easa.europa.eu"),
+    "transport_canada": ("Transport Canada",       "https://tc.canada.ca"),
+    "anac_brazil":      ("ANAC (Brasil)",          "https://sistemas.anac.gov.br"),
+    "dgac_chile":       ("DGAC (Chile)",           "https://www.dgac.gob.cl"),
+    "anac_argentina":   ("ANAC (Argentina)",       "https://www.argentina.gob.ar"),
+}
+
+def _ping_source(key):
+    name, url = _SOURCE_PING_URLS[key]
+    try:
+        resp = http_requests.head(
+            url, timeout=3, allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 Zephr-HealthCheck/1.0"},
+        )
+        status = "online" if resp.status_code < 400 else "error"
+    except Exception:
+        status = "error"
+    return key, name, status
+
 @app.route("/api/status")
 def api_status():
-    return jsonify({
-        "sources": {
-            "federal_register": {"name": "Federal Register (USA)", "status": "online"},
-            "easa": {"name": "EASA (Europa)", "status": "online"},
-            "transport_canada": {"name": "Transport Canada", "status": "online"},
-            "anac_brazil": {"name": "ANAC (Brasil)", "status": "online"},
-            "dgac_chile": {"name": "DGAC (Chile)", "status": "online"},
-            "aerocivil_colombia": {"name": "AEROCIVIL (Colombia)", "status": "online"},
-            "anac_argentina": {"name": "ANAC (Argentina)", "status": "online"},
-            "casa_australia": {"name": "CASA (Australia)", "status": "online"},
-            "gcaa_uae": {"name": "GCAA (UAE)", "status": "online"},
-        }
-    })
+    results = {}
+    with ThreadPoolExecutor(max_workers=len(_SOURCE_PING_URLS)) as executor:
+        futures = [executor.submit(_ping_source, k) for k in _SOURCE_PING_URLS]
+        for future in as_completed(futures):
+            try:
+                key, name, status = future.result(timeout=5)
+                results[key] = {"name": name, "status": status}
+            except Exception:
+                pass
+
+    for key in _SOURCE_PING_URLS:
+        if key not in results:
+            name = _SOURCE_PING_URLS[key][0]
+            results[key] = {"name": name, "status": "unknown"}
+
+    return jsonify({"sources": results})
 
 
 # ------------------------------------------------------------------
@@ -712,7 +741,7 @@ def api_status():
 if __name__ == "__main__":
     print("\n" + "=" * 55)
     print("  Zephr - Airworthiness Directives")
-    print("  Fuentes: FAA | EASA | TC | ANAC BR | DGAC CL | AEROCIVIL | ANAC AR | CASA | GCAA")
+    print("  Fuentes activas: FAA | EASA | TC | ANAC BR | DGAC CL | ANAC AR")
     print("=" * 55)
     print(f"\n  Landing:  http://127.0.0.1:5000/")
     print(f"  App:      http://127.0.0.1:5000/app")

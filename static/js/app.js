@@ -244,11 +244,40 @@
     // ================================================================
     // SOURCE SELECTION
     // ================================================================
+    const KEYWORD_PLACEHOLDER_DEFAULT = 'Ej: landing gear, fuel system...';
+    const KEYWORD_PLACEHOLDER_ALL = 'Requerido al buscar en todas las fuentes';
+
+    const COMING_SOON_SOURCES = new Set(['aerocivil_colombia', 'casa_australia', 'gcaa_uae']);
+    const COMING_SOON_TOAST = {
+        aerocivil_colombia: 'AEROCIVIL Colombia — próximamente disponible',
+        casa_australia: 'CASA Australia — próximamente disponible',
+        gcaa_uae: 'GCAA UAE — próximamente disponible',
+    };
+
+    function normalizeSourceIfComingSoon(p) {
+        if (!p || !p.source || !COMING_SOON_SOURCES.has(p.source)) return;
+        p.source = 'federal_register';
+    }
+
+    function updateKeywordPlaceholder() {
+        if (!dom.inputKeyword) return;
+        dom.inputKeyword.placeholder = state.selectedSource === 'all'
+            ? KEYWORD_PLACEHOLDER_ALL
+            : KEYWORD_PLACEHOLDER_DEFAULT;
+    }
+
     document.querySelectorAll('.source-card').forEach(card => {
-        card.addEventListener('click', () => {
+        card.addEventListener('click', (e) => {
+            if (card.classList.contains('source-card--coming-soon')) {
+                e.preventDefault();
+                const key = card.dataset.source;
+                showToast(COMING_SOON_TOAST[key] || 'Próximamente disponible', 'info');
+                return;
+            }
             document.querySelectorAll('.source-card').forEach(c => c.classList.remove('active'));
             card.classList.add('active');
             state.selectedSource = card.dataset.source;
+            updateKeywordPlaceholder();
         });
     });
 
@@ -426,9 +455,13 @@
         };
 
         const hasInput = params.keyword || params.make || params.model;
-        if (!hasInput && params.source !== 'all') {
-            showToast('Ingresa al menos un término de búsqueda.', 'error');
+        if (params.source === 'all' && !hasInput) {
+            showToast('Ingresa al menos un término para buscar en todas las fuentes.', 'error');
             return;
+        }
+        if (params.source === 'federal_register' && !hasInput) {
+            showToast('Trayendo los ADs más recientes del Federal Register', 'info');
+            params.max_results = '200';
         }
 
         state.lastSearchTerm = params.keyword || params.make || params.model || '';
@@ -622,7 +655,10 @@
                 showToast(errData?.error || 'Límite de búsquedas alcanzado — actualiza tu plan para continuar', 'error');
                 setStatus('ready', 'Listo'); updateTitle('default'); return;
             }
-            if (!response.ok) throw new Error(`Error del servidor (${response.status})`);
+            if (!response.ok) {
+                const errData = await response.json().catch(() => null);
+                throw new Error(errData?.error || `Error del servidor (${response.status})`);
+            }
             if (thisRequestId !== _requestId) return;
             const data = await response.json();
 
@@ -666,7 +702,7 @@
     // ================================================================
     // SOURCE CARD STATES
     // ================================================================
-    const ALL_SOURCE_KEYS = ['federal_register','easa','anac_brazil','transport_canada','dgac_chile','aerocivil_colombia','anac_argentina','casa_australia','gcaa_uae'];
+    const ALL_SOURCE_KEYS = ['federal_register','easa','anac_brazil','transport_canada','dgac_chile','anac_argentina'];
     function resetSourceCardStates(source) {
         const keys = source === 'all' ? ALL_SOURCE_KEYS : [source];
         keys.forEach(key => {
@@ -1196,7 +1232,16 @@
             max_results: params.get('max_results') || String(getMaxResults()),
         };
 
-        if (p.max_results && dom.maxResultsSelect) dom.maxResultsSelect.value = p.max_results;
+        const hasUrlInput = p.keyword || p.make || p.model;
+        if (p.source === 'all' && !hasUrlInput) {
+            showToast('Ingresa al menos un término para buscar en todas las fuentes.', 'error');
+            history.replaceState(null, '', '/app');
+            return false;
+        }
+        if (p.source === 'federal_register' && !hasUrlInput) {
+            p.max_results = '200';
+        }
+
         fillForm(p);
         state.lastParams = p;
         state.lastSearchTerm = p.keyword || p.make || p.model || '';
@@ -1206,10 +1251,19 @@
 
     window.addEventListener('popstate', (e) => {
         if (e.state && e.state.source) {
-            fillForm(e.state);
-            state.lastParams = e.state;
-            state.lastSearchTerm = e.state.keyword || e.state.make || e.state.model || '';
-            if (_isServerless) postSearch(e.state); else streamSearch(e.state);
+            const st = { ...e.state };
+            const hasPop = st.keyword || st.make || st.model;
+            if (st.source === 'all' && !hasPop) {
+                showToast('Ingresa al menos un término para buscar en todas las fuentes.', 'error');
+                return;
+            }
+            if (st.source === 'federal_register' && !hasPop) {
+                st.max_results = '200';
+            }
+            fillForm(st);
+            state.lastParams = st;
+            state.lastSearchTerm = st.keyword || st.make || st.model || '';
+            if (_isServerless) postSearch(st); else streamSearch(st);
         }
     });
 
@@ -1318,9 +1372,14 @@
         if (dom.inputDateFrom) dom.inputDateFrom.value = formatDateForInput(p.date_from);
         if (dom.inputDateTo) dom.inputDateTo.value = formatDateForInput(p.date_to);
         if (p.source) {
+            normalizeSourceIfComingSoon(p);
             document.querySelectorAll('.source-card').forEach(c => c.classList.toggle('active', c.dataset.source === p.source));
             state.selectedSource = p.source;
         }
+        if (dom.maxResultsSelect && p.max_results != null && String(p.max_results).length) {
+            dom.maxResultsSelect.value = String(p.max_results);
+        }
+        updateKeywordPlaceholder();
     }
 
     function updateSearchSummary() {
@@ -1343,7 +1402,8 @@
     // ================================================================
     // AUTOCOMPLETE — Inverted index
     // ================================================================
-    const _acIndex = { make: new Map(), model: new Map() };
+    const _acIndex = { make: new Map(), model: new Map(), commercial: new Map() };
+    const _commercialToModel = {};
     (function buildAutocompleteIndex() {
         function addToIndex(map, text, ref) {
             const lower = text.toLowerCase();
@@ -1361,6 +1421,13 @@
             addToIndex(_acIndex.make, key, key);
             for (const alias of entry.aliases) addToIndex(_acIndex.make, alias, key);
             for (const model of entry.models) addToIndex(_acIndex.model, model, { make: key, model });
+            if (entry.commercial_names) {
+                for (const cn of entry.commercial_names) {
+                    addToIndex(_acIndex.commercial, cn, { make: key, name: cn });
+                    const numMatch = cn.match(/\d{3}/);
+                    if (numMatch) _commercialToModel[cn.toLowerCase()] = numMatch[0];
+                }
+            }
         }
     })();
 
@@ -1465,22 +1532,44 @@
 
     const modelAC = createAutocomplete(dom.inputModel, (q) => {
         const ql = q.toLowerCase();
+        const suggestions = [];
+        const seen = new Set();
+
+        if (state.activeManufacturerKey && typeof AIRCRAFT_DATA !== 'undefined') {
+            const entry = AIRCRAFT_DATA[state.activeManufacturerKey];
+            if (entry && entry.commercial_names) {
+                for (const cn of entry.commercial_names) {
+                    if (cn.toLowerCase().includes(ql) && !seen.has(cn)) {
+                        seen.add(cn);
+                        const mapped = _commercialToModel[cn.toLowerCase()];
+                        suggestions.push({ label: cn + (mapped ? ` → ${mapped}` : ''), value: mapped || cn, _commercial: true });
+                    }
+                }
+            }
+        }
+
         const pool = state.activeManufacturerModels;
         if (pool) {
-            return pool.filter(m => m.toLowerCase().includes(ql)).slice(0,6).map(m => ({label:m,value:m}));
+            for (const m of pool) {
+                if (m.toLowerCase().includes(ql) && !seen.has(m)) {
+                    seen.add(m);
+                    suggestions.push({ label: m, value: m });
+                    if (suggestions.length >= 8) break;
+                }
+            }
+            return suggestions.slice(0, 8);
         }
         const hits = _acIndex.model.get(ql.substring(0, Math.min(ql.length, 8)));
         if (hits) {
-            const unique = []; const seen = new Set();
             for (const h of hits) {
                 if (h.model.toLowerCase().includes(ql) && !seen.has(h.model)) {
-                    seen.add(h.model); unique.push(h.model);
-                    if (unique.length >= 6) break;
+                    seen.add(h.model);
+                    suggestions.push({ label: h.model, value: h.model });
+                    if (suggestions.length >= 8) break;
                 }
             }
-            return unique.map(m => ({label:m,value:m}));
         }
-        return [];
+        return suggestions.slice(0, 8);
     }, (item) => { dom.inputModel.value = item.value; });
 
     // ================================================================
@@ -1703,10 +1792,36 @@
     }
 
     // ================================================================
+    // SOURCE STATUS PING
+    // ================================================================
+    function loadSourceStatus() {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        fetch('/api/status', { signal: controller.signal })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.sources) return;
+                for (const [key, info] of Object.entries(data.sources)) {
+                    const card = document.querySelector(`.source-card[data-source="${key}"]`);
+                    if (!card) continue;
+                    const dot = card.querySelector('.source-status-dot');
+                    if (!dot) continue;
+                    dot.classList.remove('online', 'warning');
+                    if (info.status === 'online') dot.classList.add('online');
+                    else if (info.status === 'error') dot.classList.add('warning');
+                }
+            })
+            .catch(() => {})
+            .finally(() => clearTimeout(timeout));
+    }
+
+    // ================================================================
     // INIT
     // ================================================================
     renderRecentSearches();
+    updateKeywordPlaceholder();
     loadUserProfile();
+    loadSourceStatus();
     fetch('/api/env').then(r => r.json()).then(d => {
         _isServerless = !!d.serverless;
     }).catch(() => {}).finally(() => {

@@ -4,7 +4,7 @@ URL: https://www.gcaa.gov.ae/en/epublication/pages/airworthinessdirectives.aspx
 
 GCAA usa un formulario ASP.NET con ViewState / EventValidation.
 El sitio bloquea acceso automatizado (403 Forbidden).
-Este scraper intenta conectar y parsear; devuelve [] si falla.
+Este scraper usa Session con headers de navegador real.
 """
 
 import re
@@ -13,26 +13,36 @@ from bs4 import BeautifulSoup
 
 GCAA_URLS = [
     "https://www.gcaa.gov.ae/en/epublication/pages/airworthinessdirectives.aspx",
+    "https://www.gcaa.gov.ae/en/eServices/Pages/eServices.aspx",
     "https://www.gcaa.gov.ae/en/epublication/airworthiness-directives",
 ]
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9,ar;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 
 def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None, max_results=200):
     """
     Busca Airworthiness Directives en GCAA (Emiratos Árabes Unidos).
-    GCAA bloquea acceso automatizado — devuelve [] si no se puede conectar.
+    Usa Session con headers de navegador para evitar bloqueos.
     """
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
     for url in GCAA_URLS:
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=20, allow_redirects=True)
+            resp = session.get(url, timeout=15, allow_redirects=True)
             if resp.status_code == 403:
                 print(f"[GCAA UAE] 403 Forbidden en {url}")
+                continue
+            if resp.status_code >= 400:
+                print(f"[GCAA UAE] HTTP {resp.status_code} en {url}")
                 continue
             resp.raise_for_status()
 
@@ -41,6 +51,8 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
                 results = results[:max_results]
                 print(f"[GCAA UAE] {len(results)} ADs obtenidas de {url}")
                 return results
+            else:
+                print(f"[GCAA UAE] Página accesible pero sin ADs parseables en {url}")
 
         except requests.Timeout:
             print(f"[GCAA UAE] Timeout en {url}")
