@@ -28,6 +28,10 @@ from scrapers.easa import search_ads as easa_search, search_main_page as easa_ma
 from scrapers.transport_canada import search_ads as tc_search
 from scrapers.anac_brazil import search_ads as anac_brazil_search
 from scrapers.dgac_chile import search_ads as dgac_chile_search
+from scrapers.aerocivil_colombia import search_ads as aerocivil_search
+from scrapers.anac_argentina import search_ads as anac_argentina_search
+from scrapers.casa_australia import search_ads as casa_search
+from scrapers.gcaa_uae import search_ads as gcaa_search
 from math import ceil
 from utils import map_product_type, run_with_timeout, VALID_SOURCES, MAX_RESULTS_PER_SOURCE
 
@@ -302,6 +306,54 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
             )
         scrapers.append(("dgac_chile", "DGAC Chile", _dgac))
 
+    if source in ("aerocivil_colombia", "all"):
+        def _aerocivil():
+            return aerocivil_search(
+                keyword=keyword or None,
+                make=make or None,
+                model=model or None,
+                date_from=date_from or None,
+                date_to=date_to or None,
+                max_results=min(max_results, 200),
+            )
+        scrapers.append(("aerocivil_colombia", "AEROCIVIL Colombia", _aerocivil))
+
+    if source in ("anac_argentina", "all"):
+        def _anac_ar():
+            return anac_argentina_search(
+                keyword=keyword or None,
+                make=make or None,
+                model=model or None,
+                date_from=date_from or None,
+                date_to=date_to or None,
+                max_results=min(max_results, 200),
+            )
+        scrapers.append(("anac_argentina", "ANAC Argentina", _anac_ar))
+
+    if source in ("casa_australia", "all"):
+        def _casa():
+            return casa_search(
+                keyword=keyword or None,
+                make=make or None,
+                model=model or None,
+                date_from=date_from or None,
+                date_to=date_to or None,
+                max_results=min(max_results, 200),
+            )
+        scrapers.append(("casa_australia", "CASA Australia", _casa))
+
+    if source in ("gcaa_uae", "all"):
+        def _gcaa():
+            return gcaa_search(
+                keyword=keyword or None,
+                make=make or None,
+                model=model or None,
+                date_from=date_from or None,
+                date_to=date_to or None,
+                max_results=min(max_results, 200),
+            )
+        scrapers.append(("gcaa_uae", "GCAA UAE", _gcaa))
+
     return scrapers
 
 
@@ -321,7 +373,7 @@ def api_health():
     return jsonify({
         "status": "ok",
         "version": APP_VERSION,
-        "sources": ["federal_register", "easa", "transport_canada", "anac_brazil", "dgac_chile"],
+        "sources": ["federal_register", "easa", "transport_canada", "anac_brazil", "dgac_chile", "aerocivil_colombia", "anac_argentina", "casa_australia", "gcaa_uae"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -619,7 +671,7 @@ def _export_zip(results, df, timestamp, filters=None):
             f"  PDFs/             - {pdfs_ok} PDFs descargados",
             "  README.txt        - Este archivo",
             "",
-            "Fuentes: FAA Federal Register | EASA | Transport Canada | ANAC Brasil",
+            "Fuentes: FAA | EASA | TC | ANAC BR | DGAC CL | AEROCIVIL CO | ANAC AR | CASA AU | GCAA UAE",
         ]
         zf.writestr("README.txt", "\n".join(readme_lines))
 
@@ -646,6 +698,10 @@ def api_status():
             "transport_canada": {"name": "Transport Canada", "status": "online"},
             "anac_brazil": {"name": "ANAC (Brasil)", "status": "online"},
             "dgac_chile": {"name": "DGAC (Chile)", "status": "online"},
+            "aerocivil_colombia": {"name": "AEROCIVIL (Colombia)", "status": "online"},
+            "anac_argentina": {"name": "ANAC (Argentina)", "status": "online"},
+            "casa_australia": {"name": "CASA (Australia)", "status": "online"},
+            "gcaa_uae": {"name": "GCAA (UAE)", "status": "online"},
         }
     })
 
@@ -656,7 +712,7 @@ def api_status():
 if __name__ == "__main__":
     print("\n" + "=" * 55)
     print("  Zephr - Airworthiness Directives")
-    print("  Fuentes: Federal Register | EASA | Transport Canada | ANAC | DGAC Chile")
+    print("  Fuentes: FAA | EASA | TC | ANAC BR | DGAC CL | AEROCIVIL | ANAC AR | CASA | GCAA")
     print("=" * 55)
     print(f"\n  Landing:  http://127.0.0.1:5000/")
     print(f"  App:      http://127.0.0.1:5000/app")

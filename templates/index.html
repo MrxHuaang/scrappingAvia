@@ -6,7 +6,7 @@
     <meta name="description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC en un solo lugar.">
     <meta property="og:title" content="Zephr — Airworthiness Directives">
     <meta property="og:description" content="Busca Airworthiness Directives de FAA, EASA, Transport Canada y ANAC en un solo lugar.">
-    <meta name="theme-color" content="#0C0C0F">
+    <meta name="theme-color" content="#191919">
     <title>Zephr · Airworthiness Directives</title>
     <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
     <link rel="icon" type="image/png" href="/static/img/logo.png">
@@ -34,34 +34,62 @@
                 <div class="sidebar-section">
                     <h2 class="sidebar-section-title">Fuentes</h2>
                     <div class="sidebar-sources">
+                        <!-- Américas -->
+                        <div class="source-group-label">Américas</div>
                         <button class="source-card active" data-source="federal_register" id="btn-federal-register">
                             <div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 3v18"/></svg></div>
-                            <div class="source-info"><span class="source-name">Federal Register</span><span class="source-count" id="count-federal_register">&mdash;</span></div>
-                            <div class="source-status-dot online"></div>
-                        </button>
-                        <button class="source-card" data-source="easa" id="btn-easa">
-                            <div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M3 12h18"/></svg></div>
-                            <div class="source-info"><span class="source-name">EASA</span><span class="source-count" id="count-easa">&mdash;</span></div>
+                            <div class="source-info"><span class="source-name">Federal Register</span><span class="source-count" id="count-federal_register"></span></div>
                             <div class="source-status-dot online"></div>
                         </button>
                         <button class="source-card" data-source="transport_canada" id="btn-tc">
-                            <div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
-                            <div class="source-info"><span class="source-name">Transport Canada</span><span class="source-count" id="count-transport_canada">&mdash;</span></div>
+                            <div class="source-icon emoji-icon">🇨🇦</div>
+                            <div class="source-info"><span class="source-name">Transport Canada</span><span class="source-count" id="count-transport_canada"></span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
+                        <button class="source-card" data-source="aerocivil_colombia" id="btn-aerocivil">
+                            <div class="source-icon emoji-icon">🇨🇴</div>
+                            <div class="source-info"><span class="source-name">AEROCIVIL</span><span class="source-count" id="count-aerocivil_colombia"></span></div>
                             <div class="source-status-dot online"></div>
                         </button>
                         <button class="source-card" data-source="anac_brazil" id="btn-anac-brazil">
                             <div class="source-icon emoji-icon">🇧🇷</div>
-                            <div class="source-info"><span class="source-name">ANAC Brasil</span><span class="source-count" id="count-anac_brazil">&mdash;</span></div>
+                            <div class="source-info"><span class="source-name">ANAC Brasil</span><span class="source-count" id="count-anac_brazil"></span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
+                        <button class="source-card" data-source="anac_argentina" id="btn-anac-argentina">
+                            <div class="source-icon emoji-icon">🇦🇷</div>
+                            <div class="source-info"><span class="source-name">ANAC Argentina</span><span class="source-count" id="count-anac_argentina"></span></div>
                             <div class="source-status-dot online"></div>
                         </button>
                         <button class="source-card" data-source="dgac_chile" id="btn-dgac-chile">
                             <div class="source-icon emoji-icon">🇨🇱</div>
-                            <div class="source-info"><span class="source-name">DGAC Chile</span><span class="source-count" id="count-dgac_chile">&mdash;</span></div>
+                            <div class="source-info"><span class="source-name">DGAC Chile</span><span class="source-count" id="count-dgac_chile"></span></div>
                             <div class="source-status-dot online"></div>
                         </button>
+                        <!-- Europa -->
+                        <div class="source-group-label">Europa</div>
+                        <button class="source-card" data-source="easa" id="btn-easa">
+                            <div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/><path d="M3 12h18"/></svg></div>
+                            <div class="source-info"><span class="source-name">EASA</span><span class="source-count" id="count-easa"></span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
+                        <!-- Pacífico / Medio Oriente -->
+                        <div class="source-group-label">Pacífico / Medio Oriente</div>
+                        <button class="source-card" data-source="casa_australia" id="btn-casa">
+                            <div class="source-icon emoji-icon">🇦🇺</div>
+                            <div class="source-info"><span class="source-name">CASA</span><span class="source-count" id="count-casa_australia"></span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
+                        <button class="source-card" data-source="gcaa_uae" id="btn-gcaa">
+                            <div class="source-icon emoji-icon">🇦🇪</div>
+                            <div class="source-info"><span class="source-name">GCAA</span><span class="source-count" id="count-gcaa_uae"></span></div>
+                            <div class="source-status-dot online"></div>
+                        </button>
+                        <!-- Todas -->
+                        <div class="source-group-sep"></div>
                         <button class="source-card" data-source="all" id="btn-all">
                             <div class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-                            <div class="source-info"><span class="source-name">Todas</span><span class="source-count" id="count-all">&mdash;</span></div>
+                            <div class="source-info"><span class="source-name">Todas las fuentes</span><span class="source-count" id="count-all"></span></div>
                             <div class="source-status-dot online"></div>
                         </button>
                     </div>
@@ -269,23 +297,6 @@
                     <div class="pagination" id="pagination"></div>
                 </section>
 
-                <!-- Bulk Bar -->
-                <div class="bulk-bar" id="bulk-bar" style="display:none">
-                    <span class="bulk-bar-text" id="bulk-bar-text">0 seleccionados</span>
-                    <span class="bulk-bar-filter-badge" id="bulk-filter-badge" style="display:none">Filtro activo</span>
-                    <div class="bulk-bar-actions">
-                        <button class="btn btn-outline bulk-bar-btn" id="bulk-export-csv">CSV</button>
-                        <button class="btn btn-outline bulk-bar-btn" id="bulk-export-excel">Excel</button>
-                        <button class="btn btn-outline bulk-bar-btn" id="bulk-export-zip" title="Descarga los PDFs originales en un archivo comprimido">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
-                            Descargar PDFs
-                        </button>
-                        <button class="btn btn-secondary bulk-bar-close" id="bulk-deselect">&times;</button>
-                    </div>
-                </div>
-
-                <!-- Toast -->
-                <div class="toast-container" id="toast-container"></div>
             </main>
         </div>
     </div>
@@ -324,6 +335,24 @@
             </div>
         </div>
     </div>
+
+    <!-- Bulk Bar -->
+    <div class="bulk-bar" id="bulk-bar" style="display:none">
+        <span class="bulk-bar-text" id="bulk-bar-text">0 seleccionados</span>
+        <span class="bulk-bar-filter-badge" id="bulk-filter-badge" style="display:none">Filtro activo</span>
+        <div class="bulk-bar-actions">
+            <button class="btn btn-outline bulk-bar-btn" id="bulk-export-csv">CSV</button>
+            <button class="btn btn-outline bulk-bar-btn" id="bulk-export-excel">Excel</button>
+            <button class="btn btn-outline bulk-bar-btn" id="bulk-export-zip" title="Descarga los PDFs originales en un archivo comprimido">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>
+                Descargar PDFs
+            </button>
+            <button class="btn btn-secondary bulk-bar-close" id="bulk-deselect">&times;</button>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast-container" id="toast-container"></div>
 
     <!-- Analysis Drawer -->
     <div class="analysis-overlay" id="analysis-overlay"></div>

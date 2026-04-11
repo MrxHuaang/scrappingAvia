@@ -666,8 +666,9 @@
     // ================================================================
     // SOURCE CARD STATES
     // ================================================================
+    const ALL_SOURCE_KEYS = ['federal_register','easa','anac_brazil','transport_canada','dgac_chile','aerocivil_colombia','anac_argentina','casa_australia','gcaa_uae'];
     function resetSourceCardStates(source) {
-        const keys = source === 'all' ? ['federal_register','easa','anac_brazil','transport_canada','dgac_chile'] : [source];
+        const keys = source === 'all' ? ALL_SOURCE_KEYS : [source];
         keys.forEach(key => {
             const el = $(`count-${key}`);
             if (el) { el.innerHTML = '<span class="source-card-spinner"></span>'; el.classList.remove('source-count--error'); el.classList.remove('source-count--loaded'); }
@@ -676,8 +677,21 @@
     function updateSourceCard(srcKey, count, error) {
         const el = $(`count-${srcKey}`);
         if (!el) return;
-        if (error) { el.textContent = 'Error'; el.classList.add('source-count--error'); el.classList.remove('source-count--loaded'); }
-        else { el.textContent = `${count.toLocaleString('es-ES')} ADs`; el.classList.remove('source-count--error'); if (count > 0) el.classList.add('source-count--loaded'); }
+        if (error && count === 0) {
+            el.textContent = 'Error';
+            el.classList.add('source-count--error');
+            el.classList.remove('source-count--loaded');
+            const card = el.closest('.source-card');
+            if (card) {
+                const dot = card.querySelector('.source-status-dot');
+                if (dot) { dot.classList.remove('online'); dot.classList.add('warning'); }
+            }
+        } else {
+            el.textContent = count > 0 ? `${count.toLocaleString('es-ES')} ADs` : '';
+            el.classList.remove('source-count--error');
+            if (count > 0) el.classList.add('source-count--loaded');
+            if (error) { state.lastErrors.push(error); }
+        }
     }
 
     // ================================================================
@@ -765,7 +779,8 @@
         if (dom.initialState) dom.initialState.style.display = '';
         if (dom.inputModel) dom.inputModel.placeholder = 'Ej: 737, A320...';
         updateTitle('default');
-        document.querySelectorAll('.source-count').forEach(el => { el.innerHTML = '&mdash;'; el.classList.remove('source-count--error'); el.classList.remove('source-count--loaded'); });
+        document.querySelectorAll('.source-count').forEach(el => { el.textContent = ''; el.classList.remove('source-count--error'); el.classList.remove('source-count--loaded'); });
+        document.querySelectorAll('.source-status-dot').forEach(d => { d.classList.add('online'); d.classList.remove('warning'); });
         dismissRestoreBanner();
         updateMakeChip();
         if (dom.searchSummary) { dom.searchSummary.classList.remove('visible'); dom.searchSummary.textContent = ''; }
@@ -1054,8 +1069,12 @@
         if (source.includes('Federal') || source.includes('FAA')) return '<span class="source-badge badge-fr">FAA</span>';
         if (source.includes('EASA')) return '<span class="source-badge badge-easa">EASA</span>';
         if (source.includes('Canada') || source.includes('TC')) return '<span class="source-badge badge-tc">TC</span>';
-        if (source.includes('ANAC') || source.includes('Brasil')) return '<span class="source-badge badge-anac">ANAC</span>';
+        if (source.includes('ANAC') && source.includes('Brasil')) return '<span class="source-badge badge-anac">ANAC</span>';
+        if (source.includes('ANAC') && source.includes('Argentin')) return '<span class="source-badge badge-arg">ARG</span>';
         if (source.includes('DGAC') || source.includes('Chile')) return '<span class="source-badge badge-dgac">DGAC</span>';
+        if (source.includes('AEROCIVIL') || source.includes('Colombia')) return '<span class="source-badge badge-col">COL</span>';
+        if (source.includes('CASA') && source.includes('Austral')) return '<span class="source-badge badge-casa">CASA</span>';
+        if (source.includes('GCAA') || source.includes('UAE')) return '<span class="source-badge badge-uae">UAE</span>';
         return `<span class="source-badge">${esc(source)}</span>`;
     }
 
@@ -1312,7 +1331,7 @@
         }
         const p = state.lastParams;
         const parts = [];
-        const sourceNames = {federal_register:'Federal Register',easa:'EASA',transport_canada:'Transport Canada',anac_brazil:'ANAC Brasil',all:'Todas'};
+        const sourceNames = {federal_register:'Federal Register',easa:'EASA',transport_canada:'Transport Canada',anac_brazil:'ANAC Brasil',dgac_chile:'DGAC Chile',aerocivil_colombia:'AEROCIVIL',anac_argentina:'ANAC Argentina',casa_australia:'CASA',gcaa_uae:'GCAA',all:'Todas'};
         parts.push(sourceNames[p.source] || p.source);
         if (p.keyword) parts.push(p.keyword);
         if (p.make) parts.push(p.make);
