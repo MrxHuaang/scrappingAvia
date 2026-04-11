@@ -93,6 +93,81 @@ Si no configuras `SUPABASE_URL` y `SUPABASE_ANON_KEY`, la app muestra un banner 
 | `/auth/logout` | POST | Cierra sesion |
 | `/auth/me` | GET | Devuelve usuario actual |
 
+## Setup de base de datos
+
+Ejecuta este SQL en **Supabase > SQL Editor > New query**:
+
+```sql
+CREATE TABLE IF NOT EXISTS profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id),
+  plan TEXT DEFAULT 'free',
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can read own profile"
+  ON profiles FOR SELECT
+  USING (auth.uid() = id);
+
+CREATE POLICY "Service role can manage profiles"
+  ON profiles FOR ALL
+  USING (true);
+```
+
+> La tabla `profiles` almacena el plan del usuario y los IDs de Stripe. La app la consulta en cada login para determinar el plan activo.
+
+---
+
+## Configurar Stripe (pagos)
+
+1. Crea una cuenta en [stripe.com](https://stripe.com).
+2. Ve a **Developers > API Keys** y copia la **Secret key** (`sk_test_...`) y la **Publishable key** (`pk_test_...`).
+3. Crea los productos en el **Stripe Dashboard**:
+   - **Products > Add product** > "Zephr Professional" > $29/mes > recurring.
+   - Copia el **Price ID** (empieza con `price_`).
+   - Repite para "Zephr Team" > $99/mes.
+4. Configura el webhook:
+   - **Developers > Webhooks > Add endpoint**.
+   - URL: `https://scrapping-avia.vercel.app/api/stripe/webhook`
+   - Eventos a escuchar: `checkout.session.completed`, `customer.subscription.deleted`
+   - Copia el **Webhook signing secret** (`whsec_...`).
+5. Agrega las variables de entorno en Vercel (o `.env` local):
+
+```
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_PUBLISHABLE_KEY=pk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PRO_PRICE_ID=price_...
+STRIPE_TEAM_PRICE_ID=price_...
+BASE_URL=https://scrapping-avia.vercel.app
+```
+
+6. Redeploy en Vercel.
+7. Ejecuta el SQL de `profiles` en Supabase (ver sección anterior).
+
+### Rutas de Stripe
+
+| Ruta | Método | Descripción |
+|------|--------|-------------|
+| `/api/stripe/config` | GET | Devuelve publishable key y planes |
+| `/api/stripe/create-checkout-session` | POST | Crea sesión de checkout (requiere auth) |
+| `/api/stripe/webhook` | POST | Webhook de Stripe (sin auth) |
+| `/payment/success` | GET | Página de pago exitoso |
+| `/payment/cancel` | GET | Página de pago cancelado |
+
+### Probar pagos en modo test
+
+Stripe proporciona tarjetas de prueba:
+- **Pago exitoso**: `4242 4242 4242 4242` (cualquier fecha futura, cualquier CVC)
+- **Pago rechazado**: `4000 0000 0000 0002`
+- **Requiere autenticación**: `4000 0025 0000 3155`
+
+---
+
 ## Solucion de problemas
 
 - **"Auth no configurado"**: Verifica que `SUPABASE_URL` y `SUPABASE_ANON_KEY` estan definidas como variables de entorno.

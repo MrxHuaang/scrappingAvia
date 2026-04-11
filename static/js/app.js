@@ -1771,11 +1771,21 @@
         fetch('/auth/me').then(function (r) { return r.json(); }).then(function (data) {
             if (!data.user) return;
             var user = data.user;
+            var plan = data.plan || 'free';
             var nameEl = $('profile-name');
             var planEl = $('profile-plan');
             var avatarEl = $('profile-avatar');
+            var upgradeEl = $('profile-upgrade');
             if (nameEl) nameEl.textContent = user.name || user.email || '';
-            if (planEl) planEl.textContent = data.plan || 'free';
+            if (planEl) {
+                planEl.textContent = plan === 'team' ? 'Team' : plan === 'pro' ? 'Pro' : 'Free';
+                planEl.classList.remove('plan-pro', 'plan-team');
+                if (plan === 'pro') planEl.classList.add('plan-pro');
+                else if (plan === 'team') planEl.classList.add('plan-team');
+            }
+            if (upgradeEl) {
+                upgradeEl.style.display = plan === 'free' ? '' : 'none';
+            }
             if (avatarEl) {
                 if (user.picture) {
                     avatarEl.innerHTML = '<img src="' + esc(user.picture) + '" alt="">';

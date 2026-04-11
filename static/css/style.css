@@ -645,7 +645,19 @@ tr:hover .copy-ad-btn{opacity:1}
 .profile-avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%}
 .profile-info{display:flex;flex-direction:column;min-width:0;flex:1}
 .profile-name{font-size:13px;font-weight:500;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.profile-plan{font-size:11px;color:var(--text-secondary);text-transform:capitalize;font-weight:500}
+.profile-plan{font-size:11px;color:rgba(255,255,255,0.4);text-transform:capitalize;font-weight:500}
+.profile-plan.plan-pro{
+  display:inline-flex;align-items:center;
+  background:rgba(79,127,255,0.2);color:#8ab0ff;
+  border:1px solid rgba(79,127,255,0.4);border-radius:4px;
+  padding:1px 7px;font-size:10px;font-weight:600;letter-spacing:0.02em;
+}
+.profile-plan.plan-team{
+  display:inline-flex;align-items:center;
+  background:rgba(134,239,172,0.15);color:#6ddb96;
+  border:1px solid rgba(134,239,172,0.3);border-radius:4px;
+  padding:1px 7px;font-size:10px;font-weight:600;letter-spacing:0.02em;
+}
 .profile-menu-btn{
   background:none;border:none;color:var(--text-placeholder);cursor:pointer;
   padding:4px;border-radius:4px;flex-shrink:0;
@@ -672,6 +684,8 @@ tr:hover .copy-ad-btn{opacity:1}
   cursor:pointer;transition:background var(--fast) var(--ease);
 }
 .profile-popover-item:hover{background:var(--bg-active)}
+.profile-popover-upgrade{color:#8ab0ff;text-decoration:none}
+.profile-popover-upgrade:hover{background:rgba(79,127,255,0.08);color:#a0c0ff}
 .profile-popover-logout{color:rgba(239,68,68,0.9)}
 .profile-popover-logout:hover{color:rgba(239,68,68,1);background:rgba(239,68,68,0.08)}
 :root.light-mode .sidebar-profile{background:var(--bg-sidebar);border-top-color:var(--border-subtle)}
@@ -682,6 +696,8 @@ tr:hover .copy-ad-btn{opacity:1}
 :root.light-mode .profile-popover-logout{color:rgba(220,38,38,0.9)}
 :root.light-mode .profile-popover-logout:hover{color:rgba(220,38,38,1)}
 :root.light-mode .profile-plan{color:var(--text-tertiary)}
+:root.light-mode .profile-plan.plan-pro{background:rgba(59,100,220,0.1);color:#3b64dc;border-color:rgba(59,100,220,0.3)}
+:root.light-mode .profile-plan.plan-team{background:rgba(22,163,74,0.1);color:#16a34a;border-color:rgba(22,163,74,0.3)}
 
 /* --- ATA Select active indicator --- */
 .ata-active-dot{display:none;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:4px;flex-shrink:0}

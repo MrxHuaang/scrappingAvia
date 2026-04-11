@@ -15,6 +15,7 @@ import threading
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import stripe
 import requests as http_requests
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, send_file, Response, redirect, session
@@ -46,6 +47,14 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-in-production")
 IS_SERVERLESS = bool(os.environ.get("VERCEL"))
+
+# Stripe (optional — works without it)
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRO_PRICE_ID = os.environ.get("STRIPE_PRO_PRICE_ID", "")
+STRIPE_TEAM_PRICE_ID = os.environ.get("STRIPE_TEAM_PRICE_ID", "")
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:5000")
 
 _supabase = None
 def get_supabase():
@@ -84,7 +93,7 @@ _rate_limits_lock = threading.Lock()
 
 def check_rate_limit():
     plan = session.get("plan")
-    if plan == "pro":
+    if plan in ("pro", "team"):
         return None
     ip = request.remote_addr or "unknown"
     now = time.time()
@@ -142,13 +151,14 @@ def auth_login():
         res = sb.auth.sign_in_with_password({"email": data.get("email", ""), "password": data.get("password", "")})
         session["access_token"] = res.session.access_token
         meta = res.user.user_metadata or {}
+        user_id = str(res.user.id)
         session["user"] = {
-            "id": res.user.id,
+            "id": user_id,
             "email": res.user.email,
             "name": meta.get("full_name", ""),
             "picture": meta.get("avatar_url", ""),
         }
-        session["plan"] = meta.get("plan", "free")
+        session["plan"] = _fetch_user_plan(user_id)
         return jsonify({"ok": True, "user": session["user"]})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -193,13 +203,14 @@ def auth_callback():
             if res.session:
                 session["access_token"] = res.session.access_token
                 meta = res.user.user_metadata or {}
+                user_id = str(res.user.id)
                 session["user"] = {
-                    "id": str(res.user.id),
+                    "id": user_id,
                     "email": res.user.email,
                     "name": meta.get("full_name", ""),
                     "picture": meta.get("avatar_url", ""),
                 }
-                session["plan"] = "pro"  # TODO: consultar plan real en DB cuando haya Stripe
+                session["plan"] = _fetch_user_plan(user_id)
                 next_url = session.pop("auth_next", "/app")
                 return redirect(next_url)
         except Exception as e:
@@ -227,6 +238,142 @@ def auth_me():
     if not user:
         return jsonify({"error": "No autenticado"}), 401
     return jsonify({"user": user, "plan": session.get("plan", "free"), "configured": bool(get_supabase())})
+
+
+# ------------------------------------------------------------------
+# Stripe — Billing
+# ------------------------------------------------------------------
+def _fetch_user_plan(user_id):
+    """Consulta el plan del usuario desde la tabla profiles en Supabase."""
+    sb = get_supabase()
+    if not sb:
+        return "free"
+    try:
+        res = sb.table("profiles").select("plan").eq("id", user_id).maybe_single().execute()
+        return res.data["plan"] if res.data and res.data.get("plan") else "free"
+    except Exception:
+        return "free"
+
+
+def _update_user_plan(user_id, plan, customer_id=None, subscription_id=None):
+    sb = get_supabase()
+    if not sb:
+        return
+    try:
+        row = {
+            "id": user_id,
+            "plan": plan,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if customer_id:
+            row["stripe_customer_id"] = customer_id
+        if subscription_id:
+            row["stripe_subscription_id"] = subscription_id
+        sb.table("profiles").upsert(row).execute()
+    except Exception as e:
+        print(f"[Stripe] Error updating profile for {user_id}: {e}")
+
+
+def _downgrade_to_free_by_customer(customer_id):
+    sb = get_supabase()
+    if not sb:
+        return
+    try:
+        res = sb.table("profiles").select("id").eq("stripe_customer_id", customer_id).maybe_single().execute()
+        if res.data:
+            _update_user_plan(res.data["id"], "free")
+    except Exception as e:
+        print(f"[Stripe] Error downgrading customer {customer_id}: {e}")
+
+
+@app.route("/api/stripe/config")
+def stripe_config():
+    return jsonify({
+        "publishable_key": STRIPE_PUBLISHABLE_KEY,
+        "plans": {
+            "pro": {"price_id": STRIPE_PRO_PRICE_ID, "amount": 2900, "name": "Professional"},
+            "team": {"price_id": STRIPE_TEAM_PRICE_ID, "amount": 9900, "name": "Team"},
+        },
+    })
+
+
+@app.route("/api/stripe/create-checkout-session", methods=["POST"])
+@require_auth
+def stripe_create_checkout():
+    if not stripe.api_key:
+        return jsonify({"error": "Stripe no configurado"}), 500
+    try:
+        data = request.get_json()
+        plan = data.get("plan", "pro")
+        price_id = STRIPE_PRO_PRICE_ID if plan == "pro" else STRIPE_TEAM_PRICE_ID
+        if not price_id:
+            return jsonify({"error": f"Price ID no configurado para plan '{plan}'"}), 500
+
+        user = session.get("user", {})
+        checkout = stripe.checkout.Session.create(
+            customer_email=user.get("email"),
+            payment_method_types=["card"],
+            line_items=[{"price": price_id, "quantity": 1}],
+            mode="subscription",
+            success_url=BASE_URL + "/payment/success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=BASE_URL + "/payment/cancel",
+            metadata={
+                "user_id": user.get("id", ""),
+                "plan": plan,
+            },
+        )
+        return jsonify({"checkout_url": checkout.url})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/stripe/webhook", methods=["POST"])
+def stripe_webhook():
+    payload = request.get_data()
+    sig_header = request.headers.get("Stripe-Signature", "")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except Exception:
+        return jsonify({"error": "Invalid signature"}), 400
+
+    event_type = event.get("type", "")
+    obj = event.get("data", {}).get("object", {})
+
+    if event_type == "checkout.session.completed":
+        user_id = obj.get("metadata", {}).get("user_id")
+        plan = obj.get("metadata", {}).get("plan", "pro")
+        customer_id = obj.get("customer")
+        subscription_id = obj.get("subscription")
+        if user_id:
+            _update_user_plan(user_id, plan, customer_id, subscription_id)
+
+    elif event_type == "customer.subscription.deleted":
+        customer_id = obj.get("customer")
+        if customer_id:
+            _downgrade_to_free_by_customer(customer_id)
+
+    return jsonify({"ok": True})
+
+
+@app.route("/payment/success")
+@require_auth
+def payment_success():
+    session_id = request.args.get("session_id")
+    plan_name = "Professional"
+    if session_id and stripe.api_key:
+        try:
+            cs = stripe.checkout.Session.retrieve(session_id)
+            plan = cs.metadata.get("plan", "pro")
+            plan_name = "Team" if plan == "team" else "Professional"
+            session["plan"] = plan
+        except Exception:
+            pass
+    return render_template("payment_success.html", plan_name=plan_name)
+
+
+@app.route("/payment/cancel")
+def payment_cancel():
+    return render_template("payment_cancel.html")
 
 
 # ------------------------------------------------------------------

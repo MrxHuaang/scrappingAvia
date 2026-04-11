@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pago cancelado — Zephr</title>
+    <link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Inter',sans-serif;background:#0d0d0d;color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center}
+        .card{text-align:center;max-width:420px;padding:48px 40px}
+        .icon{width:72px;height:72px;border-radius:50%;background:rgba(239,68,68,0.1);display:flex;align-items:center;justify-content:center;margin:0 auto 28px}
+        .icon svg{width:36px;height:36px;color:rgba(239,68,68,0.7)}
+        h1{font-family:'Space Grotesk',sans-serif;font-size:32px;font-weight:700;margin-bottom:12px}
+        p{color:rgba(255,255,255,0.5);font-size:16px;line-height:1.6;margin-bottom:36px}
+        .actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+        .btn{display:inline-flex;align-items:center;gap:8px;padding:14px 24px;border-radius:8px;border:none;font-family:inherit;font-size:15px;font-weight:600;cursor:pointer;transition:all 200ms;text-decoration:none}
+        .btn-primary{background:#fff;color:#0a0a0a}
+        .btn-primary:hover{background:rgba(255,255,255,0.9)}
+        .btn-outline{background:transparent;color:rgba(255,255,255,0.6);border:1px solid rgba(255,255,255,0.15)}
+        .btn-outline:hover{color:#fff;border-color:rgba(255,255,255,0.3)}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+        <h1>Pago cancelado</h1>
+        <p>No se realizó ningún cargo. Puedes intentar de nuevo cuando quieras.</p>
+        <div class="actions">
+            <a href="/#precios" class="btn btn-primary">Intentar de nuevo</a>
+            <a href="/app" class="btn btn-outline">Volver a Zephr</a>
+        </div>
+    </div>
+</body>
+</html>

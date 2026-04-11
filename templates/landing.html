@@ -557,7 +557,7 @@
             <a href="/register" class="card-cta card-cta-outline">Comenzar gratis</a>
         </div>
         <!-- Professional -->
-        <div class="pricing-card featured">
+        <div class="pricing-card featured" data-plan="pro">
             <div class="pricing-card-name">Professional</div>
             <div class="pricing-card-desc">Para quienes trabajan con ADs todos los días.</div>
             <div class="pricing-card-price price-monthly">$29<span>/mes</span></div>
@@ -571,10 +571,10 @@
                 <li><span class="check">&#10003;</span>Descarga de PDFs</li>
                 <li><span class="check">&#10003;</span>Historial 30 días</li>
             </ul>
-            <a href="/register" class="card-cta card-cta-primary">Comenzar prueba gratis</a>
+            <button class="card-cta card-cta-primary" id="cta-pro" onclick="subscribe('pro')">Comenzar prueba gratis</button>
         </div>
         <!-- Team -->
-        <div class="pricing-card">
+        <div class="pricing-card" data-plan="team">
             <div class="pricing-card-name">Team</div>
             <div class="pricing-card-desc">Para equipos y organizaciones.</div>
             <div class="pricing-card-price price-monthly">$79<span>/mes</span></div>
@@ -588,7 +588,7 @@
                 <li><span class="check">&#10003;</span>Soporte prioritario</li>
                 <li><span class="check">&#10003;</span>Acceso a API</li>
             </ul>
-            <a href="/register" class="card-cta card-cta-outline">Contactar ventas</a>
+            <button class="card-cta card-cta-outline" id="cta-team" onclick="subscribe('team')">Contactar ventas</button>
         </div>
     </div>
 </section>
@@ -726,10 +726,39 @@
                         el.textContent=data.user.name||data.user.email;
                     }
                 });
+                var userPlan=data.plan||'free';
+                var proCta=document.getElementById('cta-pro');
+                var teamCta=document.getElementById('cta-team');
+                if(userPlan==='pro'||userPlan==='team'){
+                    if(proCta){proCta.textContent='Plan actual \u2713';proCta.disabled=true;proCta.style.opacity='0.5';proCta.style.cursor='default';}
+                }
+                if(userPlan==='team'){
+                    if(teamCta){teamCta.textContent='Plan actual \u2713';teamCta.disabled=true;teamCta.style.opacity='0.5';teamCta.style.cursor='default';}
+                }
             }
         })
         .catch(function(){});
 })();
+
+async function subscribe(plan){
+    try{
+        var res=await fetch('/api/stripe/create-checkout-session',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({plan:plan})
+        });
+        var data=await res.json();
+        if(data.checkout_url){
+            window.location.href=data.checkout_url;
+        }else if(res.status===401){
+            window.location.href='/login?next=/#precios';
+        }else{
+            alert(data.error||'Error al procesar el pago. Intenta de nuevo.');
+        }
+    }catch(e){
+        alert('Error de conexión. Intenta de nuevo.');
+    }
+}
 </script>
 
 </body>
