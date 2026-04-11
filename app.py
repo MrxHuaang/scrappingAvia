@@ -9,6 +9,7 @@ import io
 import re
 import sys
 import json
+import time
 import zipfile
 import threading
 from datetime import datetime, timezone
@@ -73,6 +74,32 @@ def require_auth(f):
     return decorated
 
 
+_rate_limits = {}
+_rate_limits_lock = threading.Lock()
+
+def check_rate_limit():
+    plan = session.get("plan")
+    if plan == "pro":
+        return None
+    ip = request.remote_addr or "unknown"
+    now = time.time()
+    with _rate_limits_lock:
+        if ip not in _rate_limits:
+            _rate_limits[ip] = []
+        if plan == "free":
+            cutoff = now - 86400
+            _rate_limits[ip] = [t for t in _rate_limits[ip] if t > cutoff]
+            if len(_rate_limits[ip]) >= 20:
+                return jsonify({"error": "Limite de busquedas alcanzado (20/dia). Actualiza tu plan para busquedas ilimitadas."}), 429
+        else:
+            cutoff = now - 3600
+            _rate_limits[ip] = [t for t in _rate_limits[ip] if t > cutoff]
+            if len(_rate_limits[ip]) >= 3:
+                return jsonify({"error": "Limite de busquedas alcanzado (3/hora). Inicia sesion para mas busquedas."}), 429
+        _rate_limits[ip].append(now)
+    return None
+
+
 # ------------------------------------------------------------------
 # Paginas
 # ------------------------------------------------------------------
@@ -109,8 +136,15 @@ def auth_login():
         data = request.get_json()
         res = sb.auth.sign_in_with_password({"email": data.get("email", ""), "password": data.get("password", "")})
         session["access_token"] = res.session.access_token
-        session["user"] = {"id": res.user.id, "email": res.user.email}
-        return jsonify({"ok": True, "user": {"id": res.user.id, "email": res.user.email}})
+        meta = res.user.user_metadata or {}
+        session["user"] = {
+            "id": res.user.id,
+            "email": res.user.email,
+            "name": meta.get("full_name", ""),
+            "picture": meta.get("avatar_url", ""),
+        }
+        session["plan"] = meta.get("plan", "free")
+        return jsonify({"ok": True, "user": session["user"]})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
@@ -153,11 +187,14 @@ def auth_callback():
             res = sb.auth.exchange_code_for_session({"auth_code": code})
             if res.session:
                 session["access_token"] = res.session.access_token
+                meta = res.user.user_metadata or {}
                 session["user"] = {
                     "id": str(res.user.id),
                     "email": res.user.email,
-                    "name": res.user.user_metadata.get("full_name", ""),
+                    "name": meta.get("full_name", ""),
+                    "picture": meta.get("avatar_url", ""),
                 }
+                session["plan"] = "pro"  # TODO: consultar plan real en DB cuando haya Stripe
                 next_url = session.pop("auth_next", "/app")
                 return redirect(next_url)
         except Exception as e:
@@ -167,7 +204,15 @@ def auth_callback():
 
 @app.route("/auth/logout", methods=["POST"])
 def auth_logout():
+    token = session.get("access_token")
     session.clear()
+    if token:
+        sb = get_supabase()
+        if sb:
+            try:
+                sb.auth.sign_out()
+            except Exception:
+                pass
     return jsonify({"ok": True})
 
 
@@ -176,7 +221,7 @@ def auth_me():
     user = session.get("user")
     if not user:
         return jsonify({"error": "No autenticado"}), 401
-    return jsonify({"user": user, "configured": bool(get_supabase())})
+    return jsonify({"user": user, "plan": session.get("plan", "free"), "configured": bool(get_supabase())})
 
 
 # ------------------------------------------------------------------
@@ -252,7 +297,7 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
 # ------------------------------------------------------------------
 @app.route("/api/env")
 def api_env():
-    return jsonify({"serverless": IS_SERVERLESS})
+    return jsonify({"serverless": IS_SERVERLESS, "plan": session.get("plan", "anonymous")})
 
 
 # ------------------------------------------------------------------
@@ -273,6 +318,9 @@ def api_health():
 # ------------------------------------------------------------------
 @app.route("/api/search", methods=["POST"])
 def api_search():
+    rl = check_rate_limit()
+    if rl:
+        return rl
     try:
         data = request.get_json()
         source = data.get("source", "federal_register")
@@ -314,6 +362,9 @@ def api_search():
 # ------------------------------------------------------------------
 @app.route("/api/search/stream")
 def api_search_stream():
+    rl = check_rate_limit()
+    if rl:
+        return rl
     source = request.args.get("source", "federal_register")
     keyword = request.args.get("keyword", "").strip()
     make = request.args.get("make", "").strip()
@@ -433,6 +484,9 @@ def _download_pdf(url, timeout=PDF_DOWNLOAD_TIMEOUT):
 
 @app.route("/api/export/<fmt>", methods=["POST"])
 def api_export(fmt):
+    rl = check_rate_limit()
+    if rl:
+        return rl
     try:
         data = request.get_json()
         results = data.get("results", [])

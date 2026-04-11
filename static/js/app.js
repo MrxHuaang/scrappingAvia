@@ -337,6 +337,11 @@
 
         try {
             const response = await fetch(`/api/search/stream?${qs}`, { signal: abortCtrl.signal });
+            if (response.status === 429) {
+                const errData = await response.json().catch(() => null);
+                showToast(errData?.error || 'Limite de busquedas alcanzado — actualiza tu plan para busquedas ilimitadas', 'error');
+                setStatus('ready', 'Listo'); updateTitle('default'); return;
+            }
             if (!response.ok) throw new Error(`Error del servidor (${response.status})`);
             if (thisRequestId !== _requestId) return;
 
@@ -450,6 +455,11 @@
                 body: JSON.stringify(params),
                 signal: abortCtrl.signal,
             });
+            if (response.status === 429) {
+                const errData = await response.json().catch(() => null);
+                showToast(errData?.error || 'Limite de busquedas alcanzado — actualiza tu plan para busquedas ilimitadas', 'error');
+                setStatus('ready', 'Listo'); updateTitle('default'); return;
+            }
             if (!response.ok) throw new Error(`Error del servidor (${response.status})`);
             if (thisRequestId !== _requestId) return;
             const data = await response.json();
@@ -1358,9 +1368,61 @@
     const esc = escapeHtml;
 
     // ================================================================
+    // PROFILE & POPOVER
+    // ================================================================
+    (function initProfile() {
+        const profileMenuBtn = $('profile-menu-btn');
+        const profilePopover = $('profile-popover');
+        if (profileMenuBtn && profilePopover) {
+            profileMenuBtn.addEventListener('click', function (e) {
+                e.stopPropagation();
+                profilePopover.style.display = profilePopover.style.display === 'none' ? 'block' : 'none';
+            });
+            document.addEventListener('click', function () { profilePopover.style.display = 'none'; });
+            profilePopover.addEventListener('click', function (e) { e.stopPropagation(); });
+        }
+        var accountBtn = $('profile-account');
+        if (accountBtn) accountBtn.addEventListener('click', function () {
+            showToast('Proximamente', 'info');
+            if (profilePopover) profilePopover.style.display = 'none';
+        });
+        var logoutBtn = $('profile-logout');
+        if (logoutBtn) logoutBtn.addEventListener('click', function () {
+            fetch('/auth/logout', { method: 'POST' }).then(function () {
+                window.location.href = '/';
+            }).catch(function () { window.location.href = '/'; });
+        });
+    })();
+
+    function loadUserProfile() {
+        fetch('/auth/me').then(function (r) { return r.json(); }).then(function (data) {
+            if (!data.user) return;
+            var user = data.user;
+            var nameEl = $('profile-name');
+            var planEl = $('profile-plan');
+            var avatarEl = $('profile-avatar');
+            if (nameEl) nameEl.textContent = user.name || user.email || '';
+            if (planEl) planEl.textContent = data.plan || 'free';
+            if (avatarEl) {
+                if (user.picture) {
+                    avatarEl.innerHTML = '<img src="' + esc(user.picture) + '" alt="">';
+                } else {
+                    var raw = user.name || user.email || '';
+                    var parts = raw.split(/[\s@]+/).filter(Boolean);
+                    var initials = parts.length >= 2
+                        ? (parts[0][0] + parts[1][0]).toUpperCase()
+                        : raw.slice(0, 2).toUpperCase();
+                    avatarEl.textContent = initials;
+                }
+            }
+        }).catch(function () {});
+    }
+
+    // ================================================================
     // INIT
     // ================================================================
     renderRecentSearches();
+    loadUserProfile();
     fetch('/api/env').then(r => r.json()).then(d => {
         _isServerless = !!d.serverless;
     }).catch(() => {}).finally(() => {
