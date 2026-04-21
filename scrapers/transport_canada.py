@@ -248,11 +248,15 @@ def _parse_tc_results(soup, make_name, model_name):
     """Parsea los resultados de busqueda de Transport Canada."""
     results = []
 
-    table = soup.find("table", {"id": re.compile(r"gridDirective", re.I)})
+    # FIXED: La tabla real del DOM tiene IDs específicos según el tipo de búsqueda.
+    # "gridDirectiveModel" → búsqueda por modelo (columnas: New, Model, Ctry, AD Number, EN, FR, Subject, SB Ref, Repeat)
+    # "gridADNumberRecent" → ADs recientes (columnas: New, Entry Date, Manufacturer, Applicability, Ctry, AD Number, EN, FR, Subject, Issue Date)
+    table = soup.find("table", id=re.compile(r"gridDirectiveModel|gridADNumberRecent", re.I))
     if not table:
+        # Fallback: buscar tabla por encabezado (comportamiento original)
         tables = soup.find_all("table")
         for t in tables:
-            if t.find("th", string=re.compile(r"AD.*Number|Directive", re.I)):
+            if t.find(["th", "td"], string=re.compile(r"AD.*Number|Directive|Applicability", re.I)):
                 table = t
                 break
 
@@ -268,15 +272,25 @@ def _parse_tc_results(soup, make_name, model_name):
     col_map = {}
     if header_row:
         headers = [th.get_text(strip=True).lower() for th in header_row.find_all(["th", "td"])]
+        print(f"[TC] DEBUG headers encontrados: {headers}")
         for i, h in enumerate(headers):
-            if "ad" in h and "number" in h or "directive" in h:
+            # FIXED: mapeo ampliado con headers reales del DOM
+            if ("ad" in h and "number" in h) or h in ("ad number",):
                 col_map["ad_number"] = i
-            elif "subject" in h or "description" in h:
+            elif "subject" in h or "ad subject" in h:
                 col_map["subject"] = i
-            elif "effective" in h or "date" in h:
+            elif "issue date" in h or "entry date" in h or ("effective" in h and "date" in h):
                 col_map["effective_date"] = i
             elif "status" in h:
                 col_map["status"] = i
+            elif "applicability" in h:
+                # FIXED: columna "Applicability" existe en tabla de recientes → product_type
+                col_map["applicability"] = i
+            elif "manufacturer" in h:
+                col_map["manufacturer"] = i
+            elif h in ("en",):
+                # FIXED: la columna "EN" contiene el link al PDF en inglés
+                col_map["pdf_col"] = i
 
     for row in rows[1:]:
         cells = row.find_all("td")
@@ -287,34 +301,116 @@ def _parse_tc_results(soup, make_name, model_name):
             cell_texts = [c.get_text(strip=True) for c in cells]
 
             ad_number = cell_texts[col_map.get("ad_number", 0)] if cell_texts else ""
-            subject = cell_texts[col_map.get("subject", 1)] if len(cell_texts) > 1 else ""
-            effective_date = cell_texts[col_map.get("effective_date", 2)] if len(cell_texts) > 2 else ""
+            subject = cell_texts[col_map.get("subject", -1)] if col_map.get("subject") is not None and len(cell_texts) > col_map.get("subject", 0) else ""
+            if not subject and len(cell_texts) > 1:
+                # Fallback: última columna larga suele ser el subject
+                subject = max(cell_texts, key=len)
+            effective_date = cell_texts[col_map.get("effective_date", -1)] if col_map.get("effective_date") is not None and len(cell_texts) > col_map.get("effective_date", 0) else ""
 
+            # FIXED: El link PDF usa el patrón "AD_dl.aspx?ad=...&ft=pdf" — NO tiene ".pdf" en el href.
+            # El selector original (.pdf en href) NUNCA matcheaba. Ahora buscamos ft=pdf, lbPDFE id, o blob.
             pdf_link = ""
-            for cell in cells:
-                for link in cell.find_all("a"):
-                    href = link.get("href", "")
-                    if ".pdf" in href.lower() or "blob" in href.lower():
-                        pdf_link = href if href.startswith("http") else f"{TC_BASE_URL}/{href}"
+
+            # Estrategia 1: buscar en la columna "EN" específicamente (más confiable)
+            if col_map.get("pdf_col") is not None and col_map["pdf_col"] < len(cells):
+                pdf_cell = cells[col_map["pdf_col"]]
+                a_tag = pdf_cell.find("a", href=True)
+                if a_tag:
+                    href = a_tag.get("href", "")
+                    pdf_link = href if href.startswith("http") else f"{TC_BASE_URL}/{href.lstrip('/')}"
+
+            # Estrategia 2: barrer todas las celdas buscando href con ft=pdf, .pdf, blob, lbPDFE
+            if not pdf_link:
+                for cell in cells:
+                    for link in cell.find_all("a", href=True):
+                        href = link.get("href", "")
+                        link_id = link.get("id", "").lower()
+                        if href and (
+                            "ft=pdf" in href.lower()        # FIXED: patrón real de CAWIS
+                            or "lbpdfe" in link_id          # FIXED: ID real del link EN PDF
+                            or ".pdf" in href.lower()
+                            or "blob" in href.lower()
+                            or "ad_dl" in href.lower()      # FIXED: patrón download de CAWIS
+                        ):
+                            pdf_link = href if href.startswith("http") else f"{TC_BASE_URL}/{href.lstrip('/')}"
+                            break
+                    if pdf_link:
                         break
+
+            # Estrategia 3: cualquier link al detalle del AD como fallback
+            if not pdf_link:
+                for cell in cells:
+                    for link in cell.find_all("a", href=True):
+                        href = link.get("href", "")
+                        if href and ("ad_html" in href.lower() or "AD_dsp" in href):
+                            pdf_link = href if href.startswith("http") else f"{TC_BASE_URL}/{href.lstrip('/')}"
+                            break
+                    if pdf_link:
+                        break
+
+            # FIXED: debug para cada AD sin pdf_link
+            if not pdf_link and ad_number:
+                print(f"[TC] WARNING no pdf_link: AD={ad_number!r} make={make_name!r} hrefs={[a.get('href','') for c in cells for a in c.find_all('a',href=True)]}")
+
+            # FIXED: status real a partir del subject (no hay columna propia en CAWIS)
+            subject_lower = subject.lower()
+            if col_map.get("status") is not None and len(cell_texts) > col_map.get("status", 0):
+                status = cell_texts[col_map["status"]]
+            elif "emergency" in subject_lower:
+                status = "Emergency AD"
+            elif "proposed" in subject_lower or "nprm" in subject_lower:
+                status = "NPRM"
+            elif "cancelled" in subject_lower or "canceled" in subject_lower:
+                status = "Cancelled"
+            elif "superseded" in subject_lower:
+                status = "Superseded"
+            else:
+                status = "Current"  # FIXED: fallback real de TC (no "Final Rule")
+
+            # FIXED: docket = AD Number (es el identificador CAWIS, equivalente a docket)
+            docket = ad_number
+
+            # FIXED: product_type desde columna "Applicability" o contexto de búsqueda
+            applicability = ""
+            if col_map.get("applicability") is not None and len(cell_texts) > col_map.get("applicability", 0):
+                applicability = cell_texts[col_map["applicability"]]
+            combined = f"{applicability} {subject}".lower()
+            if re.search(r"\bengine\b", combined):
+                product_type = "Engine"
+            elif re.search(r"\bpropeller\b", combined):
+                product_type = "Propeller"
+            elif re.search(r"\bappliance\b", combined):
+                product_type = "Appliance"
+            elif re.search(r"\bhelicopter\b|\baircraft\b|\bairplane\b|\bairship\b", combined):
+                product_type = "Aircraft"
+            else:
+                product_type = "Aircraft"  # FIXED: CAWIS es principalmente ADs de aeronaves
+
+            # FIXED: make desde columna Manufacturer si existe (tabla de recientes)
+            if col_map.get("manufacturer") is not None and len(cell_texts) > col_map.get("manufacturer", 0):
+                resolved_make = cell_texts[col_map["manufacturer"]] or make_name
+            else:
+                resolved_make = make_name
 
             if ad_number:
                 results.append({
                     "Source": "Transport Canada",
                     "AD_Number": ad_number,
                     "Subject": subject,
-                    "Make": make_name,
+                    "Make": resolved_make,
                     "Model": model_name,
                     "Effective_Date": effective_date,
-                    "Status": "",
-                    "Product_Type": "",
-                    "Docket": "",
+                    "Status": status,           # FIXED: ya no vacío
+                    "Product_Type": product_type,  # FIXED: ya no vacío
+                    "Docket": docket,           # FIXED: ya no vacío
                     "PDF_Link": pdf_link,
                 })
 
-        except Exception:
+        except Exception as e:
+            print(f"[TC] WARNING error parseando fila: {e}")
             continue
 
+    print(f"[TC] Parseados {len(results)} ADs (make={make_name!r}, model={model_name!r})")
     return results
 
 

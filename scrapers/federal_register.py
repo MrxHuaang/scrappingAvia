@@ -149,6 +149,54 @@ def _parse_document(doc, filter_make=None, filter_model=None):
         effective_date = doc.get("effective_on", "") or doc.get("publication_date", "")
         pdf_link = doc.get("pdf_url", "") or doc.get("html_url", "")
 
+        # FIXED: Determinar status real desde el campo "type" de la API y el titulo/action,
+        # en lugar de hardcodear "Final Rule".
+        doc_type = (doc.get("type") or "").upper()       # e.g. "RULE", "PROPOSED_RULE", "NOTICE"
+        action_field = (doc.get("action") or "").lower() # e.g. "final rule", "notice of proposed rule..."
+        title_lower = title.lower()
+        abstract_lower = abstract.lower()
+
+        if doc_type == "PROPOSED_RULE" or "proposed" in title_lower or "nprm" in title_lower or "proposed" in action_field:
+            status = "NPRM"
+        elif "emergency" in title_lower or "emergency" in action_field:
+            status = "Emergency AD"
+        elif "correction" in title_lower or "correcting amendment" in title_lower or "correction" in action_field:
+            status = "Correction"
+        elif "interim" in title_lower or "interim" in action_field:
+            status = "Interim Final Rule"
+        elif doc_type == "RULE" or "final rule" in action_field:
+            status = "Final Rule"
+        else:
+            status = "Final Rule"  # Fallback conservador
+
+        print(f"[Federal Register] DEBUG status: doc_type={doc_type!r} action={action_field[:40]!r} -> {status}")
+
+        # FIXED: Extraer product_type desde cfr_references (part 39 = airworthiness), titulo y abstract.
+        # La API retorna cfr_references como lista de dicts con {title, part, chapter...}.
+        cfr_refs = doc.get("cfr_references") or []
+        product_type = ""
+
+        # Intentar extraer del titulo/abstract primero (más específico)
+        combined = f"{title_lower} {abstract_lower}"
+        if re.search(r"\bengine\b", combined):
+            product_type = "Engine"
+        elif re.search(r"\bpropeller\b", combined):
+            product_type = "Propeller"
+        elif re.search(r"\bappliance\b", combined):
+            product_type = "Appliance"
+        elif re.search(r"\baircraft\b|\bairplane\b|\bhelicopter\b|\bairship\b|\bglider\b", combined):
+            product_type = "Aircraft"
+
+        # Si no se pudo inferir del texto, usar la parte del CFR como pista
+        if not product_type and cfr_refs:
+            for ref in cfr_refs:
+                part = str(ref.get("part", "") if isinstance(ref, dict) else "")
+                if part == "39":
+                    product_type = "Aircraft"  # 14 CFR Part 39 = Airworthiness Directives (general)
+                    break
+
+        print(f"[Federal Register] DEBUG product_type: cfr_parts={[r.get('part') if isinstance(r,dict) else r for r in cfr_refs]} -> {product_type!r}")
+
         result = {
             "Source": "FAA (Federal Register)",
             "AD_Number": ad_number.strip(),
@@ -156,8 +204,8 @@ def _parse_document(doc, filter_make=None, filter_model=None):
             "Make": make.strip(),
             "Model": model.strip(),
             "Effective_Date": effective_date,
-            "Status": "Final Rule",
-            "Product_Type": "",
+            "Status": status,           # FIXED: ya no hardcodeado
+            "Product_Type": product_type,  # FIXED: ya no hardcodeado a ""
             "Docket": doc.get("document_number", ""),
             "PDF_Link": pdf_link,
         }

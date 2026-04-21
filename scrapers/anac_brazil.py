@@ -415,7 +415,7 @@ def _parse_list_table(soup, source_tag="", make_override=None):
     de datos correcta se identifica por la presencia de links a
     DA_DetailE.asp?Emd= (página de detalle de cada AD).
 
-    Columnas típicas de la tabla de datos:
+    Columnas reales de la tabla de datos (verificadas en DOM):
       Directive No. | Effective Date | Subject / Reference | Action | Texts
     """
     results = []
@@ -464,6 +464,7 @@ def _parse_list_table(soup, source_tag="", make_override=None):
     col_date = None
     col_make = None
     col_model = None
+    col_action = None   # FIXED: columna "Action" existe en el listado real de ANAC
 
     for idx, row in enumerate(rows):
         cells_text = [c.get_text(strip=True).lower() for c in row.find_all(["th", "td"])]
@@ -475,6 +476,8 @@ def _parse_list_table(soup, source_tag="", make_override=None):
             col_date = _find_col(cells_text, ["effective", "date", "data"])
             col_make = _find_col(cells_text, ["manufacturer", "fabricante", "holder", "make"])
             col_model = _find_col(cells_text, ["model", "modelo", "aircraft", "type"])
+            col_action = _find_col(cells_text, ["action"])  # FIXED: mapear columna Action
+            print(f"[ANAC Brasil] DEBUG headers: {cells_text} -> action_col={col_action}")
             break
 
     # Defaults si no encontramos encabezados
@@ -484,6 +487,21 @@ def _parse_list_table(soup, source_tag="", make_override=None):
         col_date = 1
     if col_subject is None:
         col_subject = 2
+
+    # FIXED: Mapeo del campo "Action" de ANAC a status en inglés.
+    # Valores reales observados en DOM: "F" (Final/Terminal), "B" (Repetitive/Terminal),
+    # "E" (Emergency), "C" (Cancelled), "R" (Revision/Superseded).
+    # Nota: el sitio también usa texto como "TERMINAL", "REPETITIVE / TERMINAL".
+    _ACTION_STATUS_MAP = {
+        "f": "Current",        # Final Rule → vigente
+        "b": "Current",        # Biennial / Repetitive → vigente
+        "e": "Emergency AD",   # Emergency
+        "c": "Cancelled",      # Cancelled / Cancelada
+        "r": "Superseded",     # Replaced / Substituída
+        "s": "Superseded",     # Superseded
+        "n": "NPRM",           # NPR-AD (Notice of Proposed Regulation)
+        "p": "NPRM",           # Proposed
+    }
 
     # --- Parsear filas de datos ---
     for row in rows[header_row_idx + 1:]:
@@ -501,6 +519,7 @@ def _parse_list_table(soup, source_tag="", make_override=None):
         subject_raw = cell_text(col_subject)
         make_raw = cell_text(col_make) if col_make is not None else ""
         model_raw = cell_text(col_model) if col_model is not None else ""
+        action_raw = cell_text(col_action) if col_action is not None else ""  # FIXED: leer Action
 
         # Saltar filas vacías, footer, o sub-encabezados
         if not ad_number_raw or not subject_raw:
@@ -512,24 +531,69 @@ def _parse_list_table(soup, source_tag="", make_override=None):
         # --- Extraer link al detalle y al PDF ---
         detail_link = ""
         pdf_link = ""
+        emd_id = ""   # FIXED: capturar el ID Emd= para construir URL de detalle
+
         for cell in cells:
             for a in cell.find_all("a", href=True):
                 href = a["href"]
                 href_full = _resolve_url(href)
                 link_text = a.get_text(strip=True).lower()
+
                 if "detail" in href.lower() or "emd=" in href.lower():
                     detail_link = href_full
+                    # FIXED: extraer el ID del Emd para poder construir URL limpia
+                    emd_match = re.search(r"Emd=(\d+)", href, re.I)
+                    if emd_match:
+                        emd_id = emd_match.group(1)
                 elif ".pdf" in href.lower() or "pdf" in link_text:
                     if not pdf_link:
+                        # FIXED: validar que sea URL absoluta. Si es relativa, resolver con base ANAC
                         pdf_link = href_full
                 elif not detail_link and href_full:
                     detail_link = href_full
+
+        # FIXED: debug para ADs sin pdf_link — nos ayuda a ver qué hrefs hay en la fila
+        if not pdf_link and ad_number_raw:
+            all_hrefs = [a["href"] for c in cells for a in c.find_all("a", href=True)]
+            print(f"[ANAC Brasil] WARNING no pdf_link: AD={ad_number_raw!r} hrefs={all_hrefs}")
 
         # --- Normalizar número de AD ---
         ad_number = _normalize_ad_number(ad_number_raw)
 
         # --- Normalizar fecha ---
         effective_date = _normalize_date(effective_date_raw)
+
+        # FIXED: Determinar status real desde la columna "Action".
+        # Action="F" → Current, "E" → Emergency AD, "C" → Cancelled, etc.
+        # También revisamos el subject para "emergência" o "proposed".
+        action_key = action_raw.strip().lower()[:1]  # primera letra del código
+        subject_lower = subject_raw.lower()
+
+        if "emergência" in subject_lower or "emergency" in subject_lower or action_key == "e":
+            status = "Emergency AD"
+        elif "cancelada" in subject_lower or "cancelled" in subject_lower or action_key == "c":
+            status = "Cancelled"
+        elif "substituída" in subject_lower or "superseded" in subject_lower or action_key in ("r", "s"):
+            status = "Superseded"
+        elif "proposta" in subject_lower or "proposed" in subject_lower or action_key in ("n", "p"):
+            status = "NPRM"
+        else:
+            # FIXED: Fallback: buscar en el mapa de Action, o "Current" como default
+            status = _ACTION_STATUS_MAP.get(action_key, "Current")
+
+        # FIXED: product_type desde subject en portugués Y en inglés.
+        # Valores reales del campo "Product" en página detalle: AIRPLANE, HELICOPTER, ENGINE, PROPELLER.
+        combined = subject_lower
+        if re.search(r"\bmotor\b|\bengine\b", combined):
+            product_type = "Engine"
+        elif re.search(r"\bhélice\b|\bhelice\b|\bpropeller\b", combined):
+            product_type = "Propeller"
+        elif re.search(r"\bhelicóptero\b|\bhelicoptero\b|\bhelicopter\b|\brotor\b", combined):
+            product_type = "Helicopter"
+        elif re.search(r"\baplicativo\b|\bappliance\b|\bequipamento\b", combined):
+            product_type = "Appliance"
+        else:
+            product_type = "Aircraft"  # FIXED: default sensato (mayoría son ADs de aeronaves)
 
         # --- Inferir make/model del subject si no están en columnas propias ---
         if make_override:
@@ -544,6 +608,15 @@ def _parse_list_table(soup, source_tag="", make_override=None):
         if not model_raw:
             _, model_raw = _extract_make_model_from_subject(subject_raw)
 
+        # FIXED: Docket — ANAC NO tiene campo "Processo" en el listado HTML.
+        # El campo Amendment No. (Emd=) es un identificador interno, no un docket público.
+        # Lo dejamos vacío ("") en lugar de duplicar el ad_number.
+        docket = ""
+        if emd_id:
+            # El Emd ID es el único identificador interno disponible — lo guardamos como docket
+            # para poder recuperar la página de detalle si se necesita.
+            docket = f"Emd:{emd_id}"
+
         result = {
             "Source": "ANAC (Brasil)",
             "AD_Number": ad_number,
@@ -551,10 +624,10 @@ def _parse_list_table(soup, source_tag="", make_override=None):
             "Make": make_raw,
             "Model": model_raw,
             "Effective_Date": effective_date,
-            "Status": "Final Rule",
-            "Product_Type": "",
-            "Docket": ad_number,
-            "PDF_Link": pdf_link or detail_link,
+            "Status": status,           # FIXED: ya no hardcodeado a "Final Rule"
+            "Product_Type": product_type,  # FIXED: ya no ""
+            "Docket": docket,           # FIXED: ya no duplica ad_number
+            "PDF_Link": pdf_link or detail_link,  # detail como fallback si no hay PDF directo
         }
 
         results.append(result)
