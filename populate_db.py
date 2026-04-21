@@ -229,7 +229,7 @@ def run_federal_register() -> list[dict]:
 
 def run_easa() -> list[dict]:
     logger.info("Scraping easa (search)...")
-    results = easa_search(max_pages=50)
+    results = easa_search(max_pages=910)  # FASE 2 produccion completa
     if not results:
         logger.info("easa search devolvio 0 resultados, usando fallback main page...")
         results = easa_main(max_pages=10)

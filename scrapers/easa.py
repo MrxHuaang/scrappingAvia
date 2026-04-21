@@ -11,8 +11,11 @@ import re
 
 EASA_BASE_URL = "https://ad.easa.europa.eu"
 EASA_SEARCH_URL = f"{EASA_BASE_URL}/search/advanced"
-EASA_RESULTS_URL = f"{EASA_BASE_URL}/search/advanced/result/"
+EASA_RESULTS_URL = f"{EASA_BASE_URL}/search/advanced/result"  # FIXED: sin trailing slash
 EASA_EXPORT_CSV = f"{EASA_BASE_URL}/search/export/csv"
+
+# FIXED: EASA muestra 20 ADs por pagina (sin link de paginacion en HTML — es JS)
+_PAGE_SIZE = 20
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -59,38 +62,54 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
 
     all_results = []
     page = 1
+    total_available = None  # FIXED: se lee del HTML en page 1
 
     while page <= max_pages:
-        print(f"[EASA] Buscando pagina {page}...", end=" ")
+        # FIXED: page 1 usa la URL base; page 2+ usa ?page=N con la misma sesion
+        url = EASA_RESULTS_URL if page == 1 else f"{EASA_RESULTS_URL}/?page={page}"
 
         try:
-            if page == 1:
-                url = EASA_RESULTS_URL
-                resp = session.get(url, params=params, headers=HEADERS, timeout=60)
-            else:
-                url = f"{EASA_RESULTS_URL}/page-{page}"
-                resp = session.get(url, params=params, headers=HEADERS, timeout=60)
+            resp = session.get(url, params=params if page == 1 else {}, headers=HEADERS, timeout=60)
+
+            # Rate limiting: si EASA responde 429, esperar y reintentar una vez
+            if resp.status_code == 429:
+                print(f"[EASA] Rate limit (429) en pagina {page}, esperando 5s...")
+                time.sleep(5)
+                resp = session.get(url, params=params if page == 1 else {}, headers=HEADERS, timeout=60)
 
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
 
+            # FIXED: leer total de resultados del texto "Displaying X to Y out of total of Z"
+            if total_available is None:
+                total_available = _parse_total_results(soup)
+                max_page_calc = ((total_available - 1) // _PAGE_SIZE + 1) if total_available else max_pages
+                effective_max = min(max_pages, max_page_calc)
+                print(f"[EASA] Total disponible: {total_available} ADs ({effective_max} paginas)")
+
             results = _parse_results_table(soup)
 
             if not results:
-                print("Sin mas resultados.")
+                print(f"[EASA] Pagina {page}: sin resultados, deteniendo.")
                 break
 
-            print(f"Encontrados {len(results)} resultados.")
             all_results.extend(results)
 
-            if not _has_next_page(soup, page):
+            # Log detallado cada 100 paginas, resumen breve el resto
+            if page % 100 == 0:
+                print(f"[EASA] *** PROGRESO: Pagina {page}/{effective_max} | Total acumulado: {len(all_results)} ADs ***")
+            else:
+                print(f"[EASA] Pagina {page}/{effective_max}: {len(results)} ADs | acumulado: {len(all_results)}")
+
+            # FIXED: parar cuando ya tenemos todos o llegamos al limite
+            if len(all_results) >= (total_available or 0) or page >= effective_max:
                 break
 
             page += 1
             time.sleep(0.8)
 
         except requests.RequestException as e:
-            print(f"Error: {e}")
+            print(f"[EASA] Error en pagina {page}: {e}")
             break
 
     # Filtrar por modelo si se especifico
@@ -116,35 +135,33 @@ def search_main_page(model_keyword=None, max_pages=5):
     session = requests.Session()
     all_results = []
 
+    # FIXED: search_main_page redirige a la misma URL de resultados sin filtros
+    # La pagina principal lista los ADs mas recientes, es equivalente a result/ sin params
+    total_available = None
     for page in range(1, max_pages + 1):
-        print(f"[EASA] Obteniendo pagina principal {page}...", end=" ")
+        url = EASA_RESULTS_URL if page == 1 else f"{EASA_RESULTS_URL}/?page={page}"  # FIXED
 
         try:
-            if page == 1:
-                url = EASA_BASE_URL
-            else:
-                url = f"{EASA_BASE_URL}/ad-list/page-{page}"
-
             resp = session.get(url, headers=HEADERS, timeout=30)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
 
+            if total_available is None:
+                total_available = _parse_total_results(soup)
+                print(f"[EASA] Total disponible: {total_available} ADs")
+
             results = _parse_results_table(soup)
 
             if not results:
-                print("Sin mas resultados.")
+                print(f"[EASA] Pagina principal {page}: sin resultados, deteniendo.")
                 break
 
-            print(f"Encontrados {len(results)} resultados.")
             all_results.extend(results)
-
-            if not _has_next_page(soup, page):
-                break
-
+            print(f"[EASA] Pagina principal {page}: {len(results)} ADs | acumulado: {len(all_results)}")
             time.sleep(0.8)
 
         except requests.RequestException as e:
-            print(f"Error: {e}")
+            print(f"[EASA] Error pagina principal {page}: {e}")
             break
 
     if model_keyword and all_results:
@@ -242,6 +259,19 @@ def _parse_results_table(soup):
                         if not pdf_link:
                             pdf_link = href
 
+            # FIXED: extraer product_type desde keywords del subject
+            subject_lower = subject.lower()
+            if re.search(r"\bengine\b|\bengines\b|\bmotor\b", subject_lower):
+                product_type = "Engine"
+            elif re.search(r"\bpropeller\b|\bpropellers\b", subject_lower):
+                product_type = "Propeller"
+            elif re.search(r"\bhelicopter\b|\bhelicopters\b|\brotorcraft\b", subject_lower):
+                product_type = "Helicopter"
+            elif re.search(r"\bappliance\b|\bavionics\b|\bequipment\b", subject_lower):
+                product_type = "Appliance"
+            else:
+                product_type = "Aircraft"  # FIXED: default sensato (mayoría son ADs de aeronave)
+
             results.append({
                 "Source": "EASA",
                 "AD_Number": ad_number,
@@ -250,7 +280,7 @@ def _parse_results_table(soup):
                 "Model": model,
                 "Effective_Date": effective_date or issue_date,
                 "Status": "Current",
-                "Product_Type": "",
+                "Product_Type": product_type,  # FIXED: ya no hardcodeado a ""
                 "Docket": "",
                 "PDF_Link": pdf_link,
             })
@@ -261,19 +291,17 @@ def _parse_results_table(soup):
     return results
 
 
-def _has_next_page(soup, current_page):
-    """Verifica si hay una pagina siguiente."""
-    next_page = current_page + 1
-
-    pagination = soup.find_all("a", href=re.compile(rf"page-{next_page}"))
-    if pagination:
-        return True
-
-    next_btn = soup.find("a", string=re.compile(r"next|>|>|>>", re.I))
-    if next_btn:
-        return True
-
-    return False
+def _parse_total_results(soup):
+    """
+    FIXED: Lee el total de resultados del texto que EASA incluye en el HTML:
+    'Displaying records 1 to 20 out of a total of 18199 publications.'
+    Retorna el numero entero, o None si no lo encuentra.
+    """
+    for tag in soup.find_all(string=re.compile(r"total of", re.I)):
+        m = re.search(r"total of\s+([\d,]+)", tag, re.I)
+        if m:
+            return int(m.group(1).replace(",", ""))
+    return None
 
 
 def export_csv(keyword=None, session=None):
