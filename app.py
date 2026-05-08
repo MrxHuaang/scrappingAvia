@@ -22,6 +22,7 @@ import stripe
 import requests as http_requests
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, send_file, Response, redirect, session
+from flask_cors import CORS
 import pandas as pd
 
 # Agregar el directorio raiz al path para importar scrapers
@@ -42,6 +43,9 @@ from utils import map_product_type, run_with_timeout, VALID_SOURCES, MAX_RESULTS
 
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
+
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*")
+CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
 
 APP_VERSION = "1.1.0"
 
@@ -107,6 +111,124 @@ PDF_DOWNLOAD_TIMEOUT = 15
 PDF_MAX_WORKERS = 5
 PDF_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
+# Fuentes que tienen datos precargados en Supabase y deben buscarse primero en la BD.
+# Si la búsqueda en BD retorna resultados, no se hace scraping en vivo.
+# Si no hay datos en BD (o la fuente no está aquí), se hace scraping en vivo como fallback.
+DB_BACKED_SOURCES = frozenset([
+    "easa", "federal_register", "transport_canada", "anac_brazil",
+])
+
+
+# ------------------------------------------------------------------
+# Supabase DB search
+# ------------------------------------------------------------------
+_SUPABASE_PAGE_SIZE = 1000  # PostgREST max rows per request
+
+def _build_supabase_query(sb, source, keyword, make, model, product_type, date_from, date_to):
+    """Construye el query base de Supabase (sin limit/range)."""
+    q = sb.table("ads").select(
+        "source, source_label, ad_number, subject, make, model, "
+        "product_type, effective_date, status, docket, pdf_link"
+    )
+
+    if source != "all":
+        q = q.eq("source", source)
+
+    search_term = keyword or ""
+    if search_term:
+        q = q.or_(
+            f"ad_number.ilike.%{search_term}%,"
+            f"subject.ilike.%{search_term}%,"
+            f"make.ilike.%{search_term}%,"
+            f"model.ilike.%{search_term}%"
+        )
+
+    if make and make != keyword:
+        q = q.ilike("make", f"%{make}%")
+
+    if model:
+        q = q.or_(
+            f"model.ilike.%{model}%,"
+            f"subject.ilike.%{model}%"
+        )
+
+    if product_type:
+        q = q.ilike("product_type", f"%{product_type}%")
+
+    if date_from:
+        q = q.gte("effective_date", date_from)
+    if date_to:
+        q = q.lte("effective_date", date_to)
+
+    q = q.order("effective_date", desc=True)
+    return q
+
+
+def _search_supabase(source, keyword="", make="", model="", product_type="",
+                     date_from="", date_to="", max_results=10000):
+    """
+    Busca ADs en la tabla 'ads' de Supabase.
+    Usa paginación para superar el límite de 1000 rows de PostgREST.
+    Retorna lista de dicts con el mismo formato que los scrapers.
+    """
+    sb = get_supabase_admin()
+    if not sb:
+        return []
+
+    try:
+        all_rows = []
+        offset = 0
+
+        while offset < max_results:
+            batch_size = min(_SUPABASE_PAGE_SIZE, max_results - offset)
+            q = _build_supabase_query(sb, source, keyword, make, model, product_type, date_from, date_to)
+            q = q.range(offset, offset + batch_size - 1)
+
+            resp = q.execute()
+            rows = resp.data or []
+            all_rows.extend(rows)
+
+            # Si recibimos menos de lo pedido, no hay más datos
+            if len(rows) < batch_size:
+                break
+
+            offset += len(rows)
+
+        # Map to scraper output format (PascalCase keys)
+        source_labels = {
+            "easa": "EASA",
+            "federal_register": "FAA (Federal Register)",
+            "transport_canada": "Transport Canada",
+            "anac_brazil": "ANAC Brasil",
+            "dgac_chile": "DGAC Chile",
+            "anac_argentina": "ANAC Argentina",
+            "aerocivil_colombia": "AEROCIVIL Colombia",
+            "casa_australia": "CASA Australia",
+            "gcaa_uae": "GCAA UAE",
+        }
+
+        results = []
+        for row in all_rows:
+            results.append({
+                "Source": source_labels.get(row.get("source", ""), row.get("source_label", "")),
+                "AD_Number": row.get("ad_number", ""),
+                "Subject": row.get("subject", "") or "",
+                "Make": row.get("make", "") or "",
+                "Model": row.get("model", "") or "",
+                "Effective_Date": row.get("effective_date", "") or "",
+                "Status": row.get("status", "") or "",
+                "Product_Type": row.get("product_type", "") or "",
+                "Docket": row.get("docket", "") or "",
+                "PDF_Link": row.get("pdf_link", "") or "",
+            })
+
+        logger.info(f"[DB] {source}: {len(results)} resultados desde Supabase")
+        return results
+
+    except Exception as e:
+        logger.error(f"[DB] Error buscando en Supabase ({source}): {e}")
+        return []
+
 
 # ------------------------------------------------------------------
 # Auth helpers
@@ -121,29 +243,63 @@ def require_auth(f):
     return decorated
 
 
-_rate_limits = {}
-_rate_limits_lock = threading.Lock()
-
 def check_rate_limit():
+    """
+    Rate limiting respaldado por Supabase (tabla rate_limits).
+    Funciona en serverless — no usa memoria local.
+    Planes pro/team: sin limite.
+    Plan free: 20 busquedas/dia.
+    Anonimo: 3 busquedas/hora.
+    """
     plan = session.get("plan")
     if plan in ("pro", "team"):
         return None
+
     ip = request.remote_addr or "unknown"
     now = time.time()
-    with _rate_limits_lock:
-        if ip not in _rate_limits:
-            _rate_limits[ip] = []
+
+    sb = get_supabase_admin()
+    if not sb:
+        # Sin Supabase no podemos verificar — permitir con warning
+        logger.warning("[RATE] Supabase no disponible, rate limit omitido")
+        return None
+
+    try:
         if plan == "free":
-            cutoff = now - 86400
-            _rate_limits[ip] = [t for t in _rate_limits[ip] if t > cutoff]
-            if len(_rate_limits[ip]) >= 20:
-                return jsonify({"error": "Limite de busquedas alcanzado (20/dia). Actualiza tu plan para busquedas ilimitadas."}), 429
+            window = 86400   # 24h
+            limit = 20
         else:
-            cutoff = now - 3600
-            _rate_limits[ip] = [t for t in _rate_limits[ip] if t > cutoff]
-            if len(_rate_limits[ip]) >= 3:
-                return jsonify({"error": "Limite de busquedas alcanzado (3/hora). Inicia sesion para mas busquedas."}), 429
-        _rate_limits[ip].append(now)
+            window = 3600    # 1h
+            limit = 3
+
+        cutoff_iso = datetime.fromtimestamp(now - window, tz=timezone.utc).isoformat()
+
+        # Contar requests recientes de esta IP en la ventana
+        resp = sb.table("rate_limits") \
+            .select("id", count="exact") \
+            .eq("ip", ip) \
+            .gte("requested_at", cutoff_iso) \
+            .execute()
+
+        count = resp.count or 0
+
+        if count >= limit:
+            if plan == "free":
+                msg = "Limite de busquedas alcanzado (20/dia). Actualiza tu plan para busquedas ilimitadas."
+            else:
+                msg = "Limite de busquedas alcanzado (3/hora). Inicia sesion para mas busquedas."
+            return jsonify({"error": msg}), 429
+
+        # Registrar este request
+        sb.table("rate_limits").insert({
+            "ip": ip,
+            "plan": plan or "anonymous",
+            "requested_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
+        }).execute()
+
+    except Exception as e:
+        logger.warning(f"[RATE] Error en rate limit check: {e} — permitiendo request")
+
     return None
 
 
@@ -521,82 +677,14 @@ def _stripe_get(obj, key, default=None):
 
 @app.route("/api/stripe/webhook", methods=["POST"])
 def stripe_webhook():
-    try:
-        payload = request.get_data(as_text=False)
-        sig_header = request.headers.get("Stripe-Signature")
-
-        # Parsear el JSON crudo para extraer metadata directamente
-        # Esto evita problemas con el StripeObject del SDK
-        try:
-            raw_event = json.loads(payload.decode("utf-8"))
-            raw_metadata = (
-                raw_event.get("data", {})
-                .get("object", {})
-                .get("metadata", {})
-            )
-            raw_user_id = raw_metadata.get("user_id")
-            raw_plan = raw_metadata.get("plan")
-            raw_customer = (
-                raw_event.get("data", {}).get("object", {}).get("customer")
-            )
-            raw_subscription = (
-                raw_event.get("data", {}).get("object", {}).get("subscription")
-            )
-            raw_event_type = raw_event.get("type")
-            logger.info(
-                f"[WEBHOOK] Raw JSON - type={raw_event_type} user_id={raw_user_id} plan={raw_plan}"
-            )
-        except Exception as e:
-            logger.error(f"[WEBHOOK] Error parseando JSON crudo: {e}")
-            raw_user_id = None
-            raw_plan = None
-            raw_customer = None
-            raw_subscription = None
-            raw_event_type = None
-
-        secret = (STRIPE_WEBHOOK_SECRET or "").strip()
-        if not secret:
-            return jsonify({"error": "webhook secret not configured"}), 400
-
-        try:
-            event = stripe.Webhook.construct_event(payload, sig_header, secret)
-            event_type = raw_event_type or _stripe_event_type(event)
-            logger.info(f"[WEBHOOK] Evento válido: {event_type}")
-        except Exception as e:
-            logger.error(f"[WEBHOOK] Error validando firma: {e}")
-            return jsonify({"error": str(e)}), 400
-
-        if event_type == "checkout.session.completed":
-            user_id = raw_user_id
-            plan = raw_plan
-            customer_id = raw_customer
-            subscription_id = raw_subscription
-
-            logger.info(f"[WEBHOOK] user_id={user_id} plan={plan} customer={customer_id}")
-
-            if not user_id:
-                logger.error("[WEBHOOK] ERROR: user_id no está en metadata")
-                return jsonify({"error": "no user_id in metadata"}), 200
-            if not plan:
-                logger.error("[WEBHOOK] ERROR: plan no está en metadata")
-                return jsonify({"error": "no plan in metadata"}), 200
-
-            logger.info("[WEBHOOK] Llamando _update_user_plan...")
-            _update_user_plan(user_id, plan, customer_id, subscription_id)
-            logger.info("[WEBHOOK] _update_user_plan completado")
-
-        elif event_type == "customer.subscription.deleted":
-            customer_id = raw_customer or _stripe_expand_id(
-                _stripe_get(event["data"]["object"], "customer")
-            )
-            logger.info(f"[WEBHOOK] subscription.deleted customer={customer_id}")
-            if customer_id:
-                _downgrade_to_free_by_customer(customer_id)
-
-        return jsonify({"ok": True})
-    except Exception as e:
-        logger.error(f"[WEBHOOK] CRASH: {traceback.format_exc()}")
-        return jsonify({"error": "internal error", "detail": str(e)}), 500
+    """
+    Webhook de Stripe deprecado en Flask.
+    El webhook canonico vive en Next.js: /api/stripe/webhook
+    Este endpoint retorna 410 Gone para evitar procesar eventos duplicados.
+    Actualiza la URL del webhook en el dashboard de Stripe a:
+    https://ad-scrapper.vercel.app/api/stripe/webhook
+    """
+    return jsonify({"error": "deprecated — use Next.js webhook"}), 410
 
 
 @app.route("/payment/success")
@@ -677,13 +765,39 @@ def page_not_found(e):
 # Helpers para construir las funciones de cada scraper
 # ------------------------------------------------------------------
 
-def _build_scrapers(source, keyword, make, model, product_type, date_from, date_to, max_results=2000):
+def _make_db_search_fn(src_key, keyword, make, model, product_type, date_from, date_to, max_results, live_fn=None):
+    """
+    Crea una función que busca primero en Supabase.
+    Si Supabase retorna resultados, los usa.  Si no, intenta live_fn como fallback.
+    """
+    def _db_search():
+        db_results = _search_supabase(
+            source=src_key,
+            keyword=keyword,
+            make=make,
+            model=model,
+            product_type=product_type,
+            date_from=date_from,
+            date_to=date_to,
+            max_results=max_results,
+        )
+        if db_results:
+            return db_results
+        # Fallback al scraper en vivo si BD no retorna nada
+        if live_fn:
+            logger.info(f"[DB] {src_key}: 0 resultados en BD, intentando scraping en vivo...")
+            return live_fn()
+        return []
+    return _db_search
+
+
+def _build_scrapers(source, keyword, make, model, product_type, date_from, date_to, max_results=20000):
     """Devuelve lista de (source_key, label, fn) a ejecutar."""
     scrapers = []
     fr_max_pages = ceil(max_results / 100)
 
     if source in ("federal_register", "all"):
-        def _fr():
+        def _fr_live():
             return fr_search(
                 keyword=keyword or None,
                 make=make or None,
@@ -693,21 +807,25 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
                 date_to=date_to or None,
                 max_pages=fr_max_pages,
             )
-        scrapers.append(("federal_register", "Federal Register", _fr))
+        fn = _make_db_search_fn("federal_register", keyword, make, model,
+                                product_type, date_from, date_to, max_results, _fr_live)
+        scrapers.append(("federal_register", "Federal Register", fn))
 
     if source in ("easa", "all"):
         _easa_pages = max(2, ceil(max_results / 100))
-        def _easa():
+        def _easa_live():
             search_term = keyword or make or model
             if search_term:
                 return easa_search(model_keyword=search_term, max_pages=_easa_pages)
             else:
                 return easa_main_page(max_pages=2)
-        scrapers.append(("easa", "EASA", _easa))
+        fn = _make_db_search_fn("easa", keyword, make, model,
+                                product_type, date_from, date_to, max_results, _easa_live)
+        scrapers.append(("easa", "EASA", fn))
 
     if source in ("anac_brazil", "all"):
         _anac_limit = min(max_results, 2000)
-        def _anac():
+        def _anac_live():
             return anac_brazil_search(
                 keyword=keyword or None,
                 make=make or None,
@@ -716,19 +834,26 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
                 date_to=date_to or None,
                 max_results=_anac_limit,
             )
-        scrapers.append(("anac_brazil", "ANAC Brasil", _anac))
+        fn = _make_db_search_fn("anac_brazil", keyword, make, model,
+                                product_type, date_from, date_to, max_results, _anac_live)
+        scrapers.append(("anac_brazil", "ANAC Brasil", fn))
 
     if source in ("transport_canada", "all"):
         if make:
-            def _tc():
+            def _tc_live():
                 return tc_search(
                     manufacturer_name=make,
                     model_name=model or None,
                     search_type=map_product_type(product_type),
                 )
-            scrapers.append(("transport_canada", "Transport Canada", _tc))
-        elif source == "transport_canada":
-            pass
+            fn = _make_db_search_fn("transport_canada", keyword, make, model,
+                                    product_type, date_from, date_to, max_results, _tc_live)
+            scrapers.append(("transport_canada", "Transport Canada", fn))
+        else:
+            # Sin make: buscar solo en BD (TC live requiere fabricante)
+            fn = _make_db_search_fn("transport_canada", keyword, make, model,
+                                    product_type, date_from, date_to, max_results, None)
+            scrapers.append(("transport_canada", "Transport Canada", fn))
 
     if source in ("dgac_chile", "all"):
         def _dgac():
@@ -831,7 +956,7 @@ def api_search():
         product_type = data.get("product_type", "").strip()
         date_from = data.get("date_from", "").strip()
         date_to = data.get("date_to", "").strip()
-        max_results = min(int(data.get("max_results", MAX_RESULTS_PER_SOURCE)), 5000)
+        max_results = min(int(data.get("max_results", MAX_RESULTS_PER_SOURCE)), 20000)
 
         if source not in VALID_SOURCES:
             return jsonify({"error": f"Fuente no válida: '{source}'."}), 400
@@ -878,7 +1003,7 @@ def api_search_stream():
     product_type = request.args.get("product_type", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
-    max_results = min(int(request.args.get("max_results", MAX_RESULTS_PER_SOURCE)), 5000)
+    max_results = min(int(request.args.get("max_results", MAX_RESULTS_PER_SOURCE)), 20000)
 
     # Validación de source
     if source not in VALID_SOURCES:
