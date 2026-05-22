@@ -104,8 +104,9 @@ def search_ads(keyword=None, make=None, model=None, product_type=None, date_from
                     all_results.append(ad)
 
             # Verificar si hay mas paginas
-            next_url = data.get("next_page_url")
-            if not next_url or len(all_results) >= total:
+            # NOTA: La API deja de enviar next_page_url despues de page 50,
+            # pero los datos siguen. Usamos len(documents) < per_page como señal de fin.
+            if len(documents) < 100 or len(all_results) >= total:
                 break
 
             page += 1
