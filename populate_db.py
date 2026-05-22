@@ -20,10 +20,14 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client
 
+from utils import normalize_ad_number
+
 # Agregar directorio raiz al path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from scrapers.federal_register import search_ads as fr_search
+from scrapers.faa_govinfo import search_ads as govinfo_search
+from scrapers.faa_drs import search_ads as drs_search
 from scrapers.easa import search_ads as easa_search, search_main_page as easa_main
 from scrapers.transport_canada import search_ads as tc_search
 from scrapers.anac_brazil import search_ads as anac_brazil_search
@@ -116,7 +120,7 @@ def normalize(row: dict, source_key: str) -> dict | None:
     Mapea el dict de un scraper al esquema de la tabla 'ads'.
     Retorna None si ad_number esta vacio.
     """
-    ad_number = (row.get("AD_Number") or "").strip()
+    ad_number = normalize_ad_number(row.get("AD_Number") or "")
     if not ad_number:
         return None
 
@@ -221,10 +225,44 @@ def save_scrape_run(supabase, source: str, ads_found: int, ads_new: int,
 # Runners por fuente
 # ---------------------------------------------------------------------------
 def run_federal_register() -> list[dict]:
-    logger.info("Scraping federal_register...")
-    results = fr_search(max_pages=200)
-    logger.info(f"federal_register: {len(results)} ADs encontrados")
-    return results
+    """
+    Source 'federal_register' consolida 3 upstreams FAA bajo el mismo source key:
+      1. DRS (drs.faa.gov)        -> pre-1995 historicos
+      2. FR API (year-split)       -> 1994+ via federalregister.gov
+      3. GovInfo API (XML)         -> 1995+ via api.govinfo.gov (autoritativo)
+
+    Orden importa para dedupe en upsert_ads(): "ultimo gana" en el dict deduped,
+    por lo que GovInfo (mas completo) debe estar AL FINAL.
+    """
+    logger.info("Scraping federal_register (3 fases: DRS + FR + GovInfo)...")
+    all_results: list[dict] = []
+
+    # Fase 1: DRS pre-1995 (best-effort, no falla si Akamai bloquea)
+    logger.info("  [1/3] DRS (drs.faa.gov, pre-1995 historicos)...")
+    try:
+        drs_results = drs_search(pre_govinfo_only=True)
+        logger.info(f"  DRS: {len(drs_results)} ADs")
+        all_results.extend(drs_results)
+    except Exception as e:
+        logger.warning(f"  DRS fallo (continua pipeline): {e}")
+
+    # Fase 2: FR API year-split (1994 -> current)
+    logger.info("  [2/3] Federal Register API (year-split)...")
+    fr_results = fr_search()
+    logger.info(f"  FR API: {len(fr_results)} ADs")
+    all_results.extend(fr_results)
+
+    # Fase 3: GovInfo — deshabilitado temporalmente.
+    # GovInfo usa FR granule IDs (ej. "2023-28800") como ad_number, mientras que
+    # FR API usa numeros FAA (ej. "2024-01-02"). Los formatos difieren → el dedup
+    # por (source, ad_number) no fusiona los registros → duplicados en BD.
+    # FR API year-split ya cubre 1994+ sin cap, por lo que GovInfo no agrega
+    # cobertura unica. Reactivar solo si se implementa matching por titulo/fecha.
+    logger.info("  [3/3] GovInfo API (skip - FR API cubre el mismo rango sin duplicados)")
+    logger.info(f"  GovInfo: 0 ADs (deshabilitado)")
+
+    logger.info(f"federal_register: {len(all_results)} ADs encontrados (pre-dedupe)")
+    return all_results
 
 
 def run_easa() -> list[dict]:
@@ -327,6 +365,11 @@ def main():
         action="store_true",
         help="Scrape pero no guarda en Supabase",
     )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="DESTRUCTIVO: borra todas las filas de la(s) fuente(s) antes de repoblar",
+    )
     args = parser.parse_args()
 
     sources_to_run = [args.source] if args.source else ALL_SOURCES
@@ -344,6 +387,15 @@ def main():
         started_at = datetime.now(timezone.utc)
         error_msg = None
         raw_results = []
+
+        if args.reset and supabase and not args.dry_run:
+            logger.warning(f"[{source}] --reset: borrando filas existentes...")
+            try:
+                # Supabase requiere un filtro; usamos source_eq garantizado
+                deleted = supabase.table("ads").delete().eq("source", source).execute()
+                logger.info(f"[{source}] Borradas {len(deleted.data or [])} filas")
+            except Exception as e:
+                logger.error(f"[{source}] Error en --reset: {e}")
 
         try:
             raw_results = RUNNERS[source]()
