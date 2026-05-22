@@ -1,86 +1,180 @@
-# AD Scraper - Airworthiness Directives
+# Zephr - scrappingAvia (Backend)
 
-AD Scraper es una herramienta web integral construida en Python (Flask) que permite buscar y descargar **Airworthiness Directives (AD)** o Directivas de Aeronavegabilidad. 
+Python backend for Zephr: scrapers for aviation Airworthiness Directives (ADs) from 9+ national regulators. Populates a Supabase Postgres database consumed by the [ad-scrapper](https://github.com/MrxHuaang/Ad-Scrapper) Next.js frontend.
 
-Agrega resultados automáticos, consolidados y exportables desde las tres autoridades reguladoras más grandes:
-- **Federal Register (FAA - Estados Unidos)**: Vía API Oficial del Registro Federal.
-- **EASA (Unión Europea)**: Scraper de páginas oficial.
-- **Transport Canada CAWIS (Canadá)**: Solución de web scraping simulando postbacks.
-- **ANAC (Brasil)**: Scraper web del Sistema de Certificación DAE brasileño.
+## What this does
 
-A través de esta interfaz puedes buscar los AD recientes, filtrar por palabras clave, fabricante o modelo para mantenerte al tanto de las reglas y regulaciones aéreas.
+Aggregates ADs from regulators with fragmented or hard-to-scrape sites and writes a unified row per AD into the `ads` table. Each row keyed by `(source, ad_number)`.
 
----
+Run as scheduled cron (GitHub Actions) or manually for backfill and testing.
 
-## ⚡ Requerimientos
+## Sources
 
-- Python 3.8 o superior.
-- Recomendación: usar un entorno virtual para las dependencias.
+| Source key            | Authority            | Status        | Verified count |
+|-----------------------|----------------------|---------------|----------------|
+| `federal_register`    | FAA (USA)            | OK (API)      | 10,000         |
+| `transport_canada`    | Transport Canada     | OK            | 36,399         |
+| `easa`                | EASA (EU)            | OK            | 18,199         |
+| `anac_brazil`         | ANAC Brazil          | OK            | 450            |
+| `dgac_chile`          | DGAC Chile           | Active        | TBV            |
+| `anac_argentina`      | ANAC Argentina       | Active        | TBV            |
+| `gcaa_uae`            | GCAA UAE             | Active        | TBV            |
+| `aerocivil_colombia`  | AEROCIVIL Colombia   | Blocked       | 0              |
+| `casa_australia`      | CASA Australia       | Blocked (403) | 0              |
 
-## 🛠️ Instalación y Uso
+## Quick start
 
-1. **Instala las dependencias:**
-   Ejecuta el siguiente comando en la raíz del proyecto para instalar las librerías requeridas (Flask, BeautifulSoup, Requests, Pandas, Openpyxl, lxml).
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+git clone https://github.com/MrxHuaang/scrappingAvia.git
+cd scrappingAvia
+python -m venv .venv
+.venv\Scripts\activate            # Windows
+# source .venv/bin/activate       # Linux/macOS
+pip install -r requirements.txt
+cp .env.example .env              # then fill secrets
+```
 
-2. **Inicia el Servidor Web:**
-   El proyecto levanta un servidor backend usando Flask y sirve la interfaz en el frontend.
-   ```bash
-   python app.py
-   ```
+## Environment variables
 
-3. **Accede a la herramienta:**
-   Abre una pestaña en tu navegador web y visita: `http://127.0.0.1:5000`
+`.env`:
 
----
+```
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_SERVICE_KEY=eyJ...       # service role (writes)
+SUPABASE_ANON_KEY=eyJ...          # anon (reads only)
+```
 
-## 💡 Ejemplos Funcionales de Búsqueda (Test)
+Never commit `.env`.
 
-Para validar que los tres orígenes están funcionando correctamente, puedes probar realizar las siguientes búsquedas a través de la interfaz visual.
+## Usage
 
-### **1. Federal Register (USA)**
-La FAA bloquea las herramientas automáticas en sus apartados de DRS (Dinamic Regulatory System). En esta aplicación la búsqueda para USA se delega al `api.federalregister.gov`, la fuente nativa de las regulaciones.
+```bash
+# Single source, dry-run (no DB writes)
+python populate_db.py --source federal_register --dry-run
 
-- **Prueba Sugerida:**
-  - Selecciona la tarjeta **"Federal Register"**.
-  - Escribe en **Fabricante**: `Boeing` o **Modelo**: `737`.
-  - Dale en "Buscar". Podrás ver los números de la directiva y extraer los PDFs con un click.
+# Single source, live (upserts to Supabase)
+python populate_db.py --source easa
 
-### **2. EASA (Región Europea)**
-EASA devuelve mucha información estructurada a través de su Safety Publications Tool.
+# All sources sequentially
+python populate_db.py
 
-- **Prueba Sugerida:**
-  - Selecciona la tarjeta **"EASA"**.
-  - Escribe en **Palabra clave/Fabricante**: `Airbus` o **Modelo**: `A320neo`.
-  - Los resultados contarán con la fecha de la ejecución y el enlace visual al .pdf y si existe.
-  - Alternativa sin fabricante: *Haz una búsqueda con los campos en blanco*, EASA traerá los ADs publicados recientemente esta semana.
+# Data quality report (complete / partial / critical per source)
+python scripts/validate_ads.py
+```
 
-### **3. Transport Canada (Canadá)**
-Transport Canada utiliza una interfaz antigua CAWIS hecha en ASP.NET. El scraper se encarga de saltar la validación y traer la lista de manera automatizada.
+## Schema (table `ads`)
 
-- **Prueba Sugerida:**
-  - Selecciona la tarjeta **"Transport Canada"**.
-  - **Requiere escribir explícitamente el nombre de un fabricante** para funcionar, por ejemplo **Fabricante**: `Bombardier` y **Modelo**: `Global` o **Fabricante**: `Bell`.
-  - Da click en buscar. Tomará un par de segundos mientras transacciona páginas internas del gobierno canadiense antes de traerte la lista exacta para el proveedor dado.
+```sql
+source          TEXT          -- "federal_register", "easa", ...
+source_label    TEXT          -- "FAA", "EASA", ...
+ad_number       TEXT
+subject         TEXT
+make            TEXT
+model           TEXT
+product_type    TEXT          -- Aircraft | Engine | Propeller | Helicopter | Appliance
+effective_date  DATE
+status          TEXT          -- Current | Final Rule | Superseded | Cancelled | Emergency AD | NPRM
+docket          TEXT
+pdf_link        TEXT
+raw_data        JSONB         -- original scraper payload
+last_updated_at TIMESTAMPTZ
+PRIMARY KEY (source, ad_number)
+```
 
-### **4. ANAC (Brasil)**
-La Agência Nacional de Aviação Civil tiene su portal clásico DAE. Este scraper realiza navegación automatizada para resolver listas y extraer las Directivas de Aeronavegabilidad (DAs).
+Audit table `scrape_runs` records every live execution (source, status, counts, error_msg, timestamps). Consumed by the frontend admin dashboard at `/admin/scrapers`.
 
-- **Prueba Sugerida:**
-  - Selecciona la tarjeta **"ANAC Brasil"**.
-  - Escribe en **Fabricante**: `Airbus` o `Boeing`.
-  - Da click en buscar. Traerá los listados y las directrices (incluidas las provistas para empresas como Embraer si no filtras).
+## Project structure
 
-### **5. Vista "Todas las Fuentes"**
-El botón global enviará las instrucciones a los cuatro apartados al mismo tiempo y listará los registros en una sola tabla, útil para partes o modelos que deban cumplir la múltiple directiva entre FAA, EASA, TC y ANAC.
+```
+scrapers/
+  federal_register.py        FAA via federalregister.gov API
+  transport_canada.py        TC CAWIS HTML scraping
+  easa.py                    EASA AD list paginated HTML
+  anac_brazil.py             ANAC Brazil HTML
+  dgac_chile.py              DGAC Chile
+  anac_argentina.py          ANAC Argentina
+  gcaa_uae.py                GCAA UAE
+  aerocivil_colombia.py      Blocked; stub kept
+  casa_australia.py          Blocked; stub kept
+populate_db.py               Orchestrator + upsert + scrape_runs logger
+utils.py                     MAX_RESULTS_PER_SOURCE, timeout helpers
+scripts/
+  validate_ads.py            Data quality report, emits ads_to_rescrape.csv
+app.py                       Legacy Flask API (deprecating)
+static/, templates/          Legacy Flask assets
+outputs/                     Generated CSVs and logs (gitignored)
+.github/workflows/           GitHub Actions cron
+```
 
----
+## Adding a new source
 
-## 🌗 Interfaz Clara y Oscura (Theme Toggle)
+1. Create `scrapers/<source_key>.py` with a `search_ads(...)` function returning `list[dict]`.
+2. Each dict must include: `Source`, `AD_Number`, `Subject`, `Make`, `Model`, `Effective_Date`, `Status`, `Product_Type`, `Docket`, `PDF_Link`.
+3. Register a `run_<source>()` wrapper in `populate_db.py` and add it to `RUNNERS` + `ALL_SOURCES`.
+4. Dry-run to validate.
+5. Verify row counts via `scripts/validate_ads.py`.
 
-El frontend de este proyecto incluye un diseño moderno con soporte de Modo Oscuro (Por defecto) y **Modo Claro**. 
-Puedes alternarlo haciendo clic en el ícono del **Sol / Luna** que encontrarás en la parte superior derecha de la interfaz, justo al lado de la palabra "Listo".
+## Gotchas
 
-Tu preferencia quedará guardada en el `localStorage` de tal forma que al recargar la página siga viéndose optimizado bajo el mismo diseño.
+### Windows console encoding (cp1252)
+
+Scrapers must use ASCII only in `print()`. No `->`, no checkmarks, no arrows. The validate script reconfigures stdout to UTF-8 explicitly.
+
+### Supabase PostgREST 1000-row cap
+
+For full-table reads use `.range(page*1000, (page+1)*1000-1)` in a loop. See `fetch_all_ads()` in `scripts/validate_ads.py`.
+
+### Transport Canada superseded ADs
+
+ADs superseded by FAA/EASA equivalents have only reference links, no PDF. Around 867 such rows are expected critical in the quality report. Not a bug.
+
+### FAA Federal Register pagination
+
+The API stops sending `next_page_url` after roughly page 50 but pagination continues. Detect end-of-results via `len(documents) < per_page` and compare cumulative count to the API `count` total. Implemented in `scrapers/federal_register.py`.
+
+### EASA pagination
+
+EASA paginates via JS. Workaround: request `result/?page=N` directly with a persistent session. Total ADs read from the response text `Displaying X to Y out of total of Z`.
+
+## Resilience patterns
+
+- All `requests.get()` calls have explicit timeouts (15-60s).
+- SSL verification always on.
+- EASA implements exponential backoff on HTTP 429.
+- `MAX_RESULTS_PER_SOURCE` (utils.py) caps any single source at 20,000 rows.
+- EASA row parser counts and logs first 10 row-level parse failures rather than swallowing silently.
+- Orchestrator (`populate_db.py`) isolates each source with try/except; one failure does not block others.
+
+## Cron
+
+GitHub Actions in `.github/workflows/scrape.yml` runs daily 04:00 UTC. See workflow file for schedule details.
+
+## Cleaning a source for re-scrape
+
+```python
+from supabase import create_client
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+client = create_client(os.getenv('SUPABASE_URL'), os.getenv('SUPABASE_SERVICE_KEY'))
+result = client.table('ads').delete().eq('source', 'transport_canada').execute()
+print(f'Deleted: {len(result.data)}')
+```
+
+Then re-run `python populate_db.py --source transport_canada`.
+
+Production note: upsert is idempotent, so cleaning is rarely needed. Use only if the source data structure is known to be corrupted in DB.
+
+## Roadmap
+
+See `Documentacion Proyectos/Zephr/ROADMAP.md`. Near-term goals:
+
+- Migrate Flask `app.py` to Next.js + Supabase Edge Functions.
+- Add automated daily smoke test (CI) comparing row counts against baseline.
+- Investigate proxy bypass for AEROCIVIL Colombia and CASA Australia.
+- Add HTML fixture-based unit tests per scraper.
+
+## License
+
+Proprietary. All rights reserved.
