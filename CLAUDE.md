@@ -150,8 +150,25 @@ El runner `run_federal_register()` ejecuta en orden:
 3. **GovInfo** (`scrapers/faa_govinfo.py`) — DESHABILITADO en populate_db.py.
    GovInfo usa FR granule IDs como ad_number (ej. "2023-28800") mientras FR API
    usa numeros FAA (ej. "2024-01-02"). Los formatos difieren → dedupe no funciona
-   → duplicados. FR API year-split ya cubre 1994+ sin cap. Reactivar solo si se
-   implementa matching por titulo/fecha para unificar IDs.
+   → duplicados. FR API year-split ya cubre 1994+ sin cap.
+
+   **Para reactivar GovInfo correctamente** (verificado 2026-05-22): el MODS XML
+   de cada granulo (`/packages/{pkgId}/granules/{granId}/mods`) contiene el numero
+   AD real de FAA. Patrones encontrados via regex sobre el XML:
+   - `AD 2024-01-02` (numero AD real)
+   - `Docket No. FAA-2024-0027`
+   - `Amendment 39-22653`
+   - `Project Identifier AD-2023-01202-T`
+   - `RIN 2120-AA64`
+   - `89 FR 1030` (citation)
+
+   Implementacion futura: tras listar granulos RULE con "Airworthiness" en titulo,
+   fetch del MODS XML (1 extra HTTP call por AD), regex `AD\s*(\d{4}-\d{2}-\d{2,4})`
+   para extraer numero AD real. Costo: ~14k calls extra a 40 req/s = ~6 min. Valor:
+   matching limpio con FR API + metadata rica (docket, amendment, RIN).
+
+   Roadmap dice "Mas sources mientras AEROCIVIL/CASA sigan bloqueados (diminishing
+   returns)" — deferido hasta tener mas valor en features de compliance.
 
 Dedupe por `(source, ad_number)` con normalizacion ASCII en `normalize_ad_number()`
 (utils.py).
