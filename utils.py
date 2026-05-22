@@ -11,7 +11,7 @@ import traceback
 # ------------------------------------------------------------------
 # Configuración global
 # ------------------------------------------------------------------
-MAX_RESULTS_PER_SOURCE = 2000
+MAX_RESULTS_PER_SOURCE = 20000
 
 IS_SERVERLESS = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
 DEFAULT_TIMEOUT = 25 if IS_SERVERLESS else 45

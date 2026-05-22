@@ -213,7 +213,7 @@
         });
     }
     function getMaxResults() {
-        return dom.maxResultsSelect ? parseInt(dom.maxResultsSelect.value) || 2000 : 2000;
+        return dom.maxResultsSelect ? parseInt(dom.maxResultsSelect.value) || 20000 : 20000;
     }
 
     // ================================================================

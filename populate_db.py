@@ -222,7 +222,7 @@ def save_scrape_run(supabase, source: str, ads_found: int, ads_new: int,
 # ---------------------------------------------------------------------------
 def run_federal_register() -> list[dict]:
     logger.info("Scraping federal_register...")
-    results = fr_search(max_pages=100)
+    results = fr_search(max_pages=200)
     logger.info(f"federal_register: {len(results)} ADs encontrados")
     return results
 
@@ -240,7 +240,7 @@ def run_easa() -> list[dict]:
 def run_anac_brazil() -> list[dict]:
     logger.info("Scraping anac_brazil...")
     all_results = []
-    for yr in ["2021-2025", "2016-2020", "2011-2015"]:
+    for yr in ["2021-2025", "2016-2020", "2011-2015", "2006-2010", "2001-2005", "1996-2000"]:
         logger.info(f"  anac_brazil: rango {yr}...")
         batch = anac_brazil_search(year_range=yr)
         logger.info(f"  anac_brazil [{yr}]: {len(batch)} ADs")
