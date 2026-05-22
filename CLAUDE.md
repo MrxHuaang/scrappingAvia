@@ -22,7 +22,7 @@ utils.py            Helpers compartidos
 
 | Source key (BD)       | Label en BD          | Estado scraper    |
 |-----------------------|----------------------|-------------------|
-| `federal_register`    | FAA                  | OK — 5000 ADs     |
+| `federal_register`    | FAA                  | OK — consolida DRS + FR API year-split (~13-14k ADs; GovInfo deshabilitado) |
 | `transport_canada`    | Transport Canada     | OK — 4716 ADs     |
 | `anac_brazil`         | ANAC Brasil          | OK — 179 ADs      |
 | `easa`                | EASA                 | activo            |
@@ -134,4 +134,37 @@ Luego: `python populate_db.py --source transport_canada`
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...   # service role key (para writes)
 SUPABASE_ANON_KEY=eyJ...      # anon key (solo lectura)
+GOVINFO_API_KEY=...           # gratis en https://api.govinfo.gov/signup/
+                              # opcional: si falta, fase GovInfo se skipea
+```
+
+## FAA: 3 fuentes consolidadas bajo `source='federal_register'`
+
+El runner `run_federal_register()` ejecuta en orden:
+
+1. **DRS** (`scrapers/faa_drs.py`) — drs.faa.gov via Playwright. Pre-1995
+   historicos. Best-effort: si Akamai bloquea o playwright no esta instalado,
+   retorna `[]` sin fallar el pipeline.
+2. **FR API** (`scrapers/federal_register.py`) — federalregister.gov con
+   year-split (cap 10k por query se evita iterando 1994→presente).
+3. **GovInfo** (`scrapers/faa_govinfo.py`) — DESHABILITADO en populate_db.py.
+   GovInfo usa FR granule IDs como ad_number (ej. "2023-28800") mientras FR API
+   usa numeros FAA (ej. "2024-01-02"). Los formatos difieren → dedupe no funciona
+   → duplicados. FR API year-split ya cubre 1994+ sin cap. Reactivar solo si se
+   implementa matching por titulo/fecha para unificar IDs.
+
+Dedupe por `(source, ad_number)` con normalizacion ASCII en `normalize_ad_number()`
+(utils.py).
+
+### Setup adicional
+
+```bash
+pip install playwright
+playwright install chromium    # ~150MB, solo Phase DRS
+```
+
+### Reset completo
+
+```bash
+python populate_db.py --source federal_register --reset   # borra y repobla
 ```

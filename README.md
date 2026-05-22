@@ -12,7 +12,7 @@ Run as scheduled cron (GitHub Actions) or manually for backfill and testing.
 
 | Source key            | Authority            | Status        | Verified count |
 |-----------------------|----------------------|---------------|----------------|
-| `federal_register`    | FAA (USA)            | OK (API)      | 10,000         |
+| `federal_register`    | FAA (USA)            | OK (3 sources) | ~40-50k expected |
 | `transport_canada`    | Transport Canada     | OK            | 36,399         |
 | `easa`                | EASA (EU)            | OK            | 18,199         |
 | `anac_brazil`         | ANAC Brazil          | OK            | 450            |
@@ -42,9 +42,22 @@ cp .env.example .env              # then fill secrets
 SUPABASE_URL=https://<project>.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...       # service role (writes)
 SUPABASE_ANON_KEY=eyJ...          # anon (reads only)
+GOVINFO_API_KEY=...               # free key https://api.govinfo.gov/signup/
+                                  # required for full FAA coverage via GovInfo
 ```
 
 Never commit `.env`.
+
+### FAA: optional Playwright for pre-1995 ADs
+
+The `federal_register` source consolidates 3 upstreams: DRS (Playwright,
+pre-1995 historical), FR API (year-split, 1994+), and GovInfo (XML, 1995+).
+DRS is best-effort — pipeline does not fail if browser missing.
+
+```bash
+pip install playwright
+playwright install chromium       # ~150MB
+```
 
 ## Usage
 
@@ -57,6 +70,9 @@ python populate_db.py --source easa
 
 # All sources sequentially
 python populate_db.py
+
+# DESTRUCTIVE: wipe a source and repopulate (use after schema changes)
+python populate_db.py --source federal_register --reset
 
 # Data quality report (complete / partial / critical per source)
 python scripts/validate_ads.py
