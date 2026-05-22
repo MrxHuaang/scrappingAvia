@@ -71,11 +71,15 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
         try:
             resp = session.get(url, params=params if page == 1 else {}, headers=HEADERS, timeout=60)
 
-            # Rate limiting: si EASA responde 429, esperar y reintentar una vez
-            if resp.status_code == 429:
-                print(f"[EASA] Rate limit (429) en pagina {page}, esperando 5s...")
-                time.sleep(5)
+            # Rate limiting: exponential backoff hasta 3 reintentos (2s, 4s, 8s)
+            retry_delay = 2
+            for attempt in range(3):
+                if resp.status_code != 429:
+                    break
+                print(f"[EASA] Rate limit (429) en pagina {page}, reintento {attempt + 1}/3 en {retry_delay}s...")
+                time.sleep(retry_delay)
                 resp = session.get(url, params=params if page == 1 else {}, headers=HEADERS, timeout=60)
+                retry_delay *= 2
 
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
@@ -179,10 +183,14 @@ def search_main_page(model_keyword=None, max_pages=5):
     return all_results
 
 
+_PARSE_FAILURES = 0
+
+
 def _parse_results_table(soup):
     """
     Parsea la tabla de resultados de EASA.
     """
+    global _PARSE_FAILURES
     results = []
 
     table = soup.find("table", class_="ad-list")
@@ -285,7 +293,10 @@ def _parse_results_table(soup):
                 "PDF_Link": pdf_link,
             })
 
-        except Exception:
+        except Exception as e:
+            _PARSE_FAILURES += 1
+            if _PARSE_FAILURES <= 10:
+                print(f"[EASA] WARNING row parse failed: {type(e).__name__}: {e}")
             continue
 
     return results
