@@ -15,6 +15,10 @@ import logging
 import traceback
 import zipfile
 import threading
+import hmac
+import socket
+import ipaddress
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -23,6 +27,7 @@ import requests as http_requests
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, send_file, Response, redirect, session
 from flask_cors import CORS
+from werkzeug.middleware.proxy_fix import ProxyFix
 import pandas as pd
 
 # Agregar el directorio raiz al path para importar scrapers
@@ -44,17 +49,44 @@ from utils import map_product_type, run_with_timeout, VALID_SOURCES, MAX_RESULTS
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
 
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "*")
-CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
+# Trust one hop of X-Forwarded-* (Vercel/Next proxy) so request.remote_addr is the
+# real client IP, not the proxy IP (BUG-2).
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
+# CORS (SEC-5): never combine wildcard origins with credentials.
+# Configure an explicit allowlist via ALLOWED_ORIGINS (comma-separated). If unset,
+# allow any origin but WITHOUT credentials (server-to-server proxy calls are unaffected).
+_raw_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
+if _raw_origins and _raw_origins != "*":
+    ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+    CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
+else:
+    ALLOWED_ORIGINS = "*"
+    CORS(app, origins="*", supports_credentials=False)
 
 APP_VERSION = "1.1.0"
+
+# Shared secret injected by the Next.js proxy (SEC-3). When set, /api/search*,
+# /api/export* reject any request lacking the matching X-Internal-Secret header.
+INTERNAL_PROXY_SECRET = os.environ.get("INTERNAL_PROXY_SECRET", "")
 
 # Supabase Auth (optional — app works without it)
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-change-in-production")
 IS_SERVERLESS = bool(os.environ.get("VERCEL"))
+
+# Flask session signing key (SEC-6). Fail fast in production instead of falling back
+# to a publicly-known constant (which would make session cookies forgeable).
+_flask_secret = os.environ.get("FLASK_SECRET_KEY")
+if not _flask_secret:
+    if IS_SERVERLESS or os.environ.get("FLASK_ENV") == "production":
+        raise RuntimeError(
+            "FLASK_SECRET_KEY must be set in production. Generate with: "
+            "python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    _flask_secret = "dev-secret-change-in-production"
+app.secret_key = _flask_secret
 
 # Stripe (optional — works without it)
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
@@ -86,7 +118,6 @@ def get_supabase_admin():
         from supabase import create_client
         sk = os.environ.get("SUPABASE_SERVICE_KEY", "")
         logger.info(f"[ADMIN] Creando cliente admin. Service key presente: {bool(sk)}")
-        logger.info(f"[ADMIN] Service key primeros 20 chars: {sk[:20]}")
         if SUPABASE_URL and SUPABASE_SERVICE_KEY:
             _supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
             _SUPABASE_ADMIN_USES_SERVICE_ROLE = True
@@ -243,6 +274,28 @@ def require_auth(f):
     return decorated
 
 
+def require_proxy(f):
+    """
+    Guard for data endpoints reached through the Next.js proxy (SEC-3).
+    When INTERNAL_PROXY_SECRET is configured, requests must carry a matching
+    X-Internal-Secret header (set by the proxy); otherwise they are rejected.
+    If the secret is not configured, the guard is a no-op (backward compatible)
+    but logs a warning so the hardening can be rolled out via env config.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if INTERNAL_PROXY_SECRET:
+            sent = request.headers.get("X-Internal-Secret", "")
+            if not hmac.compare_digest(sent, INTERNAL_PROXY_SECRET):
+                return jsonify({"error": "Forbidden"}), 403
+        else:
+            logger.warning(
+                "[SEC] INTERNAL_PROXY_SECRET not set — data endpoints are unauthenticated"
+            )
+        return f(*args, **kwargs)
+    return decorated
+
+
 def check_rate_limit():
     """
     Rate limiting respaldado por Supabase (tabla rate_limits).
@@ -251,11 +304,16 @@ def check_rate_limit():
     Plan free: 20 busquedas/dia.
     Anonimo: 3 busquedas/hora.
     """
+    # Identity: prefer the proxy-forwarded user id over the (shared) IP so paying
+    # users get their own bucket and aren't throttled by other users' traffic (BUG-2).
+    uid = request.headers.get("X-User-Id")
     plan = session.get("plan")
+    if not plan and uid:
+        plan = _fetch_user_plan(uid)
     if plan in ("pro", "team"):
         return None
 
-    ip = request.remote_addr or "unknown"
+    ip = uid or request.remote_addr or "unknown"
     now = time.time()
 
     sb = get_supabase_admin()
@@ -598,38 +656,6 @@ def debug_stripe():
     })
 
 
-@app.route("/api/debug/supabase-write")
-def debug_supabase_write():
-    user = session.get("user", {})
-    user_id = _user_id_from_flask_session()
-
-    admin = get_supabase_admin()
-    if not admin:
-        return jsonify({"error": "no admin client"})
-
-    try:
-        result = admin.table("profiles").upsert({
-            "id": user_id,
-            "plan": "test",
-            "stripe_customer_id": "debug_customer",
-            "stripe_subscription_id": "debug_sub",
-        }).execute()
-
-        return jsonify({
-            "ok": True,
-            "user_id_extracted": user_id,
-            "session_user": user,
-            "upsert_result": result.data,
-        })
-    except Exception as e:
-        return jsonify({
-            "error": str(e),
-            "user_id_extracted": user_id,
-            "session_user": user,
-            "traceback": traceback.format_exc(),
-        })
-
-
 def _stripe_event_type(event):
     """Stripe devuelve dict o StripeObject según versión."""
     try:
@@ -943,6 +969,7 @@ def api_health():
 # API: Busqueda de ADs (POST — compatibilidad)
 # ------------------------------------------------------------------
 @app.route("/api/search", methods=["POST"])
+@require_proxy
 def api_search():
     rl = check_rate_limit()
     if rl:
@@ -992,6 +1019,7 @@ def api_search():
 # API: Busqueda SSE (GET — streaming)
 # ------------------------------------------------------------------
 @app.route("/api/search/stream")
+@require_proxy
 def api_search_stream():
     rl = check_rate_limit()
     if rl:
@@ -1093,20 +1121,81 @@ def _safe_filename(name):
     return re.sub(r'[<>:"/\\|?*]', '_', name).strip()
 
 
+MAX_PDF_BYTES = 25 * 1024 * 1024  # 25 MB hard cap per PDF
+
+_PDF_ALLOWED_SUFFIXES = (
+    ".faa.gov", ".easa.europa.eu", ".tc.canada.ca", ".tc.gc.ca", ".gov.br",
+    ".anac.gov.br", ".gcaa.gov.ae", ".dgac.gob.cl", ".anac.gov.ar",
+    ".casa.gov.au", ".aerocivil.gov.co", ".federalregister.gov",
+    ".govinfo.gov", ".argentina.gob.ar",
+)
+_PDF_ALLOWED_EXACT = {
+    "faa.gov", "easa.europa.eu", "tc.canada.ca", "tc.gc.ca",
+    "gcaa.gov.ae", "federalregister.gov",
+}
+
+
+def _host_resolves_private(host):
+    """True if the host resolves to any private/loopback/link-local/reserved IP (SSRF guard)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return True
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return True
+        if (addr.is_private or addr.is_loopback or addr.is_link_local
+                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+            return True
+    return False
+
+
+def _is_safe_pdf_url(url):
+    """Only allow http(s) URLs on known regulator domains that don't resolve to private IPs."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        u = urlparse(url)
+    except Exception:
+        return False
+    if u.scheme not in ("http", "https"):
+        return False
+    host = (u.hostname or "").lower()
+    if not host:
+        return False
+    allowed = host in _PDF_ALLOWED_EXACT or any(host.endswith(s) for s in _PDF_ALLOWED_SUFFIXES)
+    if not allowed:
+        return False
+    return not _host_resolves_private(host)
+
+
 def _download_pdf(url, timeout=PDF_DOWNLOAD_TIMEOUT):
-    """Descarga un PDF y devuelve (bytes, None) o (None, error_msg)."""
+    """Descarga un PDF de una fuente permitida y devuelve (bytes, None) o (None, error_msg)."""
+    if not _is_safe_pdf_url(url):
+        return None, "URL no permitida"
     try:
         resp = http_requests.get(
             url,
             timeout=timeout,
             headers={"User-Agent": PDF_USER_AGENT},
-            allow_redirects=True,
+            allow_redirects=False,  # block redirect-based SSRF
+            stream=True,
         )
         if resp.status_code != 200:
             return None, f"HTTP {resp.status_code}"
-        if len(resp.content) < 100:
+        chunks = []
+        total = 0
+        for chunk in resp.iter_content(8192):
+            total += len(chunk)
+            if total > MAX_PDF_BYTES:
+                return None, "Archivo demasiado grande"
+            chunks.append(chunk)
+        content = b"".join(chunks)
+        if len(content) < 100:
             return None, "Archivo vacío o inválido"
-        return resp.content, None
+        return content, None
     except http_requests.Timeout:
         return None, f"Timeout ({timeout}s)"
     except Exception as e:
@@ -1114,6 +1203,7 @@ def _download_pdf(url, timeout=PDF_DOWNLOAD_TIMEOUT):
 
 
 @app.route("/api/export/<fmt>", methods=["POST"])
+@require_proxy
 def api_export(fmt):
     rl = check_rate_limit()
     if rl:
@@ -1307,4 +1397,4 @@ if __name__ == "__main__":
     print(f"  App:      http://127.0.0.1:5000/app")
     print(f"  Health:   http://127.0.0.1:5000/api/health\n")
 
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=os.environ.get("FLASK_DEBUG") == "1")
