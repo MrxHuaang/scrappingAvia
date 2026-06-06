@@ -112,28 +112,36 @@ def run_with_timeout(fn, timeout_seconds=None, label="scraper", max_results=None
 
     limit = max_results if max_results else MAX_RESULTS_PER_SOURCE
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(fn)
-        try:
-            result = future.result(timeout=timeout_seconds)
+    # NOTE: a running thread cannot be force-killed in CPython. On timeout we do NOT
+    # use `with ... as executor` because its __exit__ calls shutdown(wait=True), which
+    # would block on the hung worker and defeat the timeout. Instead we shut down with
+    # wait=False so the request returns immediately; the orphaned (daemon) thread is
+    # abandoned and reaped at process exit.
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(fn)
+    try:
+        result = future.result(timeout=timeout_seconds)
 
-            truncated = False
-            if isinstance(result, list) and len(result) > limit:
-                result = result[:limit]
-                truncated = True
+        truncated = False
+        if isinstance(result, list) and len(result) > limit:
+            result = result[:limit]
+            truncated = True
 
-            if truncated:
-                msg = f"{label}: resultados truncados a {limit}"
-                print(f"[Truncated] {msg}")
-                return result, msg
+        executor.shutdown(wait=False)
+        if truncated:
+            msg = f"{label}: resultados truncados a {limit}"
+            print(f"[Truncated] {msg}")
+            return result, msg
 
-            return result, None
-        except concurrent.futures.TimeoutError:
-            msg = f"{label}: Tiempo de espera agotado ({timeout_seconds}s)"
-            print(f"[Timeout] {msg}")
-            return [], msg
-        except Exception as e:
-            msg = f"{label}: {str(e)}"
-            print(f"[Error] {msg}")
-            traceback.print_exc()
-            return [], msg
+        return result, None
+    except concurrent.futures.TimeoutError:
+        msg = f"{label}: Tiempo de espera agotado ({timeout_seconds}s)"
+        print(f"[Timeout] {msg}")
+        executor.shutdown(wait=False, cancel_futures=True)
+        return [], msg
+    except Exception as e:
+        msg = f"{label}: {str(e)}"
+        print(f"[Error] {msg}")
+        traceback.print_exc()
+        executor.shutdown(wait=False, cancel_futures=True)
+        return [], msg
