@@ -43,12 +43,18 @@ _OUTPUTS_DIR = os.path.join(
 MODS_CACHE_PATH = os.path.join(_OUTPUTS_DIR, "govinfo_mods_cache.json")
 _CACHE_SAVE_EVERY = 200  # fetches entre guardados incrementales
 
-# Numeros AD: 4 digitos de anio (2024-01-02) o 2 (98-21-09, era pre-2000)
-_AD_RE = re.compile(r"\bAD\s*(\d{2,4}[-–—]\d{2}[-–—]\d{2,4})\b", re.I)
+# Numeros AD: 4 digitos de anio (2024-01-02) o 2 (98-21-09, era pre-2000).
+# –/— = guiones en/em (escapados para mantener el archivo ASCII-puro).
+_AD_RE = re.compile("\\bAD\\s*(\\d{2,4}[-–—]\\d{2}[-–—]\\d{2,4})\\b", re.I)
 # Dockets modernos (FAA-2024-0027) y antiguos (98-NM-123-AD)
-_DOCKET_MODERN_RE = re.compile(r"Docket\s*No\.?\s*[:,]?\s*(FAA[-\s]?\d{4}[-–—]\d{1,6})", re.I)
-_DOCKET_LEGACY_RE = re.compile(r"Docket\s*No\.?\s*[:,]?\s*(\d{2,4}[-–—][A-Z]{2}[-–—]\d{1,4}[-–—]AD)", re.I)
-_AMENDMENT_RE = re.compile(r"Amendment\s*(?:No\.?\s*)?(39[-–—]\d{3,6})", re.I)
+_DOCKET_MODERN_RE = re.compile("Docket\\s*No\\.?\\s*[:,]?\\s*(FAA[-\\s]?\\d{4}[-–—]\\d{1,6})", re.I)
+_DOCKET_LEGACY_RE = re.compile("Docket\\s*No\\.?\\s*[:,]?\\s*(\\d{2,4}[-–—][A-Z]{2}[-–—]\\d{1,4}[-–—]AD)", re.I)
+_AMENDMENT_RE = re.compile("Amendment\\s*(?:No\\.?\\s*)?(39[-–—]\\d{3,6})", re.I)
+
+
+# Session compartida: reusa la conexion TLS (sin esto cada request paga
+# handshake ~1s y un backfill completo pasa de ~1h a varias horas).
+_session = requests.Session()
 
 
 def _get_key() -> str | None:
@@ -77,7 +83,7 @@ def _get(path: str, params: dict | None = None, retries: int = 3) -> dict | None
     delay = 2
     for attempt in range(retries):
         try:
-            resp = requests.get(url, params=p, timeout=30)
+            resp = _session.get(url, params=p, timeout=30)
             if resp.status_code == 404:
                 return None
             if resp.status_code == 429 or resp.status_code >= 500:
@@ -108,7 +114,7 @@ def _get_text(path: str, params: dict | None = None, retries: int = 3) -> str | 
     delay = 2
     for attempt in range(retries):
         try:
-            resp = requests.get(url, params=p, timeout=30)
+            resp = _session.get(url, params=p, timeout=30)
             if resp.status_code == 404:
                 return None
             if resp.status_code == 429 or resp.status_code >= 500:
@@ -311,7 +317,7 @@ def _parse_granule(g: dict, pkg_id: str, mods: dict | None = None) -> dict | Non
     Parsea un granulo del listado a formato estandar.
     Datos del listado: granuleId, title, dateIssued, granuleClass, granuleLink.
     mods (opcional): {"ad", "docket", "amend"} extraido del MODS XML.
-    Retorna None si no hay numero AD real (ni MODS ni titulo) — esos granulos
+    Retorna None si no hay numero AD real (ni MODS ni titulo): esos granulos
     se descartan para no contaminar el dedupe con granuleIds.
     """
     try:
