@@ -22,9 +22,9 @@ utils.py            Helpers compartidos
 
 | Source key (BD)       | Label en BD          | Estado scraper    |
 |-----------------------|----------------------|-------------------|
-| `federal_register`    | FAA                  | OK — consolida DRS + FR API year-split (~13-14k ADs; GovInfo deshabilitado) |
-| `transport_canada`    | Transport Canada     | OK — 4716 ADs     |
-| `anac_brazil`         | ANAC Brasil          | OK — 179 ADs      |
+| `federal_register`    | FAA                  | OK — consolida DRS + FR API year-split + GovInfo MODS (~13-14k ADs) |
+| `transport_canada`    | Transport Canada     | OK — 4735 ADs     |
+| `anac_brazil`         | ANAC Brasil          | OK — 450 ADs      |
 | `easa`                | EASA                 | activo            |
 | `dgac_chile`          | DGAC Chile           | activo            |
 | `anac_argentina`      | ANAC Argentina       | activo            |
@@ -52,17 +52,27 @@ last_updated_at TIMESTAMPTZ
 
 Constraint único: `(source, ad_number)` → upsert usa `on_conflict=source,ad_number`.
 
-## Calidad de datos actual (2026-04-21)
+## Calidad de datos actual (2026-06-12)
 
 ```
-ANAC Brasil       179 completos   0 parciales   0 críticos
-FAA              5000 completos   0 parciales   0 críticos
-Transport Canada 3849 completos   0 parciales 867 críticos (sin pdf_link — superseded, esperado)
-TOTAL            9028 completos (91.2%)
+ANAC Argentina      0 completos  15 parciales   1 crítico
+ANAC Brasil       450 completos   0 parciales   0 críticos
+DGAC Chile          0 completos  42 parciales   2 críticos
+EASA            18282 completos   0 parciales   2 críticos
+FAA             13465 completos   0 parciales   0 críticos
+Transport Canada 3865 completos   0 parciales 870 críticos (sin pdf_link — superseded, esperado)
+TOTAL           36062 completos (97.5%)
 ```
 
-Los 867 TC críticos son ADs superseded: TC solo guarda link al AD original (FAA/EASA)
+Los ~870 TC críticos son ADs superseded: TC solo guarda link al AD original (FAA/EASA)
 y al que los reemplaza, sin PDF propio. No es un bug del scraper.
+
+**Defecto FAA conocido (pendiente de backfill, detectado 2026-06-12):** los 13,465
+ad_numbers de FAA en BD son FR document_numbers (ej. "2016-03689", "E8-7662"),
+NO números AD reales (ej. "2016-14-07"). El título de FR casi nunca trae el número
+AD y el scraper caía a document_number como fallback. Fix implementado vía GovInfo
+MODS (ver sección FAA); para reparar la BD correr:
+`python populate_db.py --source federal_register --reset`
 
 ## Cómo correr los scrapers
 
@@ -144,34 +154,42 @@ El runner `run_federal_register()` ejecuta en orden:
 
 1. **DRS** (`scrapers/faa_drs.py`) — drs.faa.gov via Playwright. Pre-1995
    historicos. Best-effort: si Akamai bloquea o playwright no esta instalado,
-   retorna `[]` sin fallar el pipeline.
+   retorna `[]` sin fallar el pipeline. (En la practica casi siempre retorna 0.)
 2. **FR API** (`scrapers/federal_register.py`) — federalregister.gov con
-   year-split (cap 10k por query se evita iterando 1994→presente).
-3. **GovInfo** (`scrapers/faa_govinfo.py`) — DESHABILITADO en populate_db.py.
-   GovInfo usa FR granule IDs como ad_number (ej. "2023-28800") mientras FR API
-   usa numeros FAA (ej. "2024-01-02"). Los formatos difieren → dedupe no funciona
-   → duplicados. FR API year-split ya cubre 1994+ sin cap.
-
-   **Para reactivar GovInfo correctamente** (verificado 2026-05-22): el MODS XML
-   de cada granulo (`/packages/{pkgId}/granules/{granId}/mods`) contiene el numero
-   AD real de FAA. Patrones encontrados via regex sobre el XML:
-   - `AD 2024-01-02` (numero AD real)
-   - `Docket No. FAA-2024-0027`
+   year-split (cap 10k por query se evita iterando 1994→presente). Aporta el
+   CONTENIDO: subject/make/model del abstract, effective_on, pdf publico.
+   OJO: su ad_number es casi siempre el FR document_number (el titulo no trae
+   el numero AD real) — lo corrige la fase 3.
+3. **GovInfo MODS** (`scrapers/faa_govinfo.py`) — RE-HABILITADO (2026-06-12).
+   Aporta la IDENTIDAD: por cada granulo RULE con "Airworthiness" en el titulo
+   se fetchea el MODS XML (`/packages/{pkgId}/granules/{granId}/mods`) y se
+   extrae via regex:
+   - `AD 2024-01-02` → ad_number real (tambien formato viejo `AD 98-21-09`)
+   - `Docket No. FAA-2024-0027` (o legacy `98-NM-123-AD`)
    - `Amendment 39-22653`
-   - `Project Identifier AD-2023-01202-T`
-   - `RIN 2120-AA64`
-   - `89 FR 1030` (citation)
 
-   Implementacion futura: tras listar granulos RULE con "Airworthiness" en titulo,
-   fetch del MODS XML (1 extra HTTP call por AD), regex `AD\s*(\d{4}-\d{2}-\d{2,4})`
-   para extraer numero AD real. Costo: ~14k calls extra a 40 req/s = ~6 min. Valor:
-   matching limpio con FR API + metadata rica (docket, amendment, RIN).
+   Granulos sin numero AD en MODS ni titulo se DESCARTAN (nunca granuleId como
+   ad_number — eso era el bug que obligo a deshabilitarlo).
 
-   Roadmap dice "Mas sources mientras AEROCIVIL/CASA sigan bloqueados (diminishing
-   returns)" — deferido hasta tener mas valor en features de compliance.
+   **Merge** (`_merge_faa_results()` en populate_db.py): join por FR document
+   number (FR API lo guarda en `Docket`; GovInfo lo expone como `GranuleId`).
+   En match, la fila FR es base y GovInfo sobreescribe AD_Number/Docket y agrega
+   Amendment. No-matcheados pasan tal cual.
+
+   **Cache MODS** (`outputs/govinfo_mods_cache.json`, gitignored): granuleId →
+   {ad, docket, amend}, incluye negativos. Primer backfill ≈ 14k fetches MODS
+   (~10-15 min a 40 req/s); re-runs solo pagan los listings (~4 min).
+   Rate limit GovInfo: 36,000 req/hr por key — un backfill completo cabe en 1 hora.
 
 Dedupe por `(source, ad_number)` con normalizacion ASCII en `normalize_ad_number()`
 (utils.py).
+
+### Run incremental
+
+```bash
+# Solo publicaciones desde una fecha (year-split desde ese anio + GovInfo MODS)
+python populate_db.py --source federal_register --since 2026-01-01
+```
 
 ### Setup adicional
 
