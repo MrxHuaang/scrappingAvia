@@ -102,6 +102,15 @@ def search_ads_by_year_range(year_from: int, year_to: int) -> list[dict]:
     for yr in range(year_from, year_to + 1):
         all_results.extend(_search_year(yr))
     print(f"[Federal Register] Total {year_from}-{year_to}: {len(all_results)} ADs")
+    # El titulo de FR casi nunca trae el numero AD real; cuando falta, el
+    # ad_number cae al document_number (mismo valor que Docket). La fase
+    # GovInfo MODS lo repara en el merge; este warning da visibilidad.
+    fallbacks = sum(1 for r in all_results if r["AD_Number"] == r["Docket"])
+    if fallbacks:
+        print(
+            f"[Federal Register] WARNING: {fallbacks}/{len(all_results)} ADs sin numero "
+            f"AD real (usan document_number; se reparan en fase GovInfo MODS)"
+        )
     return all_results
 
 
