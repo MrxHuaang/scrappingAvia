@@ -1,5 +1,9 @@
 # Zephr — scrappingAvia (Python scraper backend)
 
+> **Convención de commits (IMPORTANTE):** NO agregar trailer `Co-Authored-By:`
+> ni ninguna atribución a Claude/IA en los mensajes de commit ni en los cuerpos
+> de PR. Los commits van solo a nombre del autor humano configurado en git.
+
 ## Qué es este repo
 
 Backend de scraping de Airworthiness Directives (ADs) para la plataforma Zephr.
