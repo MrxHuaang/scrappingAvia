@@ -224,17 +224,63 @@ def save_scrape_run(supabase, source: str, ads_found: int, ads_new: int,
 # ---------------------------------------------------------------------------
 # Runners por fuente
 # ---------------------------------------------------------------------------
-def run_federal_register() -> list[dict]:
+def _merge_faa_results(fr_rows: list[dict], govinfo_rows: list[dict]) -> list[dict]:
+    """
+    Fusiona resultados FR API + GovInfo a nivel de campo.
+
+    Join key: el FR document_number, que FR API guarda en "Docket" y GovInfo
+    expone como "GranuleId" (son el mismo identificador del Federal Register).
+
+    En match: la fila FR es la base (mejor Subject/Make/Model via abstract,
+    effective_on real, pdf de federalregister.gov) y GovInfo aporta la
+    identidad correcta: AD_Number real del MODS XML, Docket FAA-xxxx-xxxx
+    y Amendment 39-xxxxx. Esto repara el defecto de FR API, cuyo titulo casi
+    nunca trae el numero AD y cae a document_number como ad_number.
+
+    Filas sin match pasan tal cual; el dedupe last-wins de upsert_ads()
+    queda como red de seguridad.
+    """
+    fr_by_docnum: dict[str, dict] = {}
+    for row in fr_rows:
+        doc_num = (row.get("Docket") or "").strip()
+        if doc_num:
+            fr_by_docnum[doc_num] = row
+
+    merged_count = 0
+    extra_govinfo: list[dict] = []
+    for grow in govinfo_rows:
+        granule_id = (grow.get("GranuleId") or "").strip()
+        fr_row = fr_by_docnum.get(granule_id)
+        if fr_row is not None:
+            fr_row["AD_Number"] = grow["AD_Number"]
+            if grow.get("Docket") and not grow["Docket"].startswith("FR-"):
+                fr_row["Docket"] = grow["Docket"]
+            if grow.get("Amendment"):
+                fr_row["Amendment"] = grow["Amendment"]
+            merged_count += 1
+        else:
+            extra_govinfo.append(grow)
+
+    logger.info(
+        f"  Merge FAA: {merged_count} filas FR enriquecidas con MODS, "
+        f"{len(extra_govinfo)} solo-GovInfo, {len(fr_rows) - merged_count} solo-FR"
+    )
+    return fr_rows + extra_govinfo
+
+
+def run_federal_register(since: str | None = None) -> list[dict]:
     """
     Source 'federal_register' consolida 3 upstreams FAA bajo el mismo source key:
-      1. DRS (drs.faa.gov)        -> pre-1995 historicos
-      2. FR API (year-split)       -> 1994+ via federalregister.gov
-      3. GovInfo API (XML)         -> 1995+ via api.govinfo.gov (autoritativo)
+      1. DRS (drs.faa.gov)        -> pre-1995 historicos (best-effort)
+      2. FR API (year-split)       -> 1994+ via federalregister.gov (contenido)
+      3. GovInfo API (MODS XML)    -> 1994+ via api.govinfo.gov (identidad:
+         numero AD real, docket FAA-xxxx, amendment 39-xxxxx)
 
-    Orden importa para dedupe en upsert_ads(): "ultimo gana" en el dict deduped,
-    por lo que GovInfo (mas completo) debe estar AL FINAL.
+    FR API y GovInfo se fusionan por FR document_number (_merge_faa_results).
+    since (YYYY-MM-DD): acota FR API y GovInfo a publicaciones desde esa fecha
+    (runs incrementales); DRS no aplica (historicos pre-1995).
     """
-    logger.info("Scraping federal_register (3 fases: DRS + FR + GovInfo)...")
+    logger.info("Scraping federal_register (3 fases: DRS + FR + GovInfo MODS)...")
     all_results: list[dict] = []
 
     # Fase 1: DRS pre-1995 (best-effort, no falla si Akamai bloquea)
@@ -248,19 +294,34 @@ def run_federal_register() -> list[dict]:
 
     # Fase 2: FR API year-split (1994 -> current)
     logger.info("  [2/3] Federal Register API (year-split)...")
-    fr_results = fr_search()
+    if since:
+        from scrapers.federal_register import search_ads_by_year_range
+        # Year-split desde el anio de --since; el filtro fino por fecha lo da
+        # el propio year range (FR API filtra por publication_date por anio).
+        fr_results = search_ads_by_year_range(int(since[:4]), datetime.now().year)
+    else:
+        fr_results = fr_search()
     logger.info(f"  FR API: {len(fr_results)} ADs")
-    all_results.extend(fr_results)
 
-    # Fase 3: GovInfo — deshabilitado temporalmente.
-    # GovInfo usa FR granule IDs (ej. "2023-28800") como ad_number, mientras que
-    # FR API usa numeros FAA (ej. "2024-01-02"). Los formatos difieren → el dedup
-    # por (source, ad_number) no fusiona los registros → duplicados en BD.
-    # FR API year-split ya cubre 1994+ sin cap, por lo que GovInfo no agrega
-    # cobertura unica. Reactivar solo si se implementa matching por titulo/fecha.
-    logger.info("  [3/3] GovInfo API (skip - FR API cubre el mismo rango sin duplicados)")
-    logger.info(f"  GovInfo: 0 ADs (deshabilitado)")
+    # Fase 3: GovInfo MODS — identidad real del AD (numero, docket, amendment).
+    # El titulo de FR API casi nunca trae el numero AD: sin esta fase, los
+    # ad_numbers de FAA quedan como FR document_numbers (defecto historico).
+    logger.info("  [3/3] GovInfo API (MODS XML: numero AD real + docket + amendment)...")
+    try:
+        # Mismo span que FR API (desde el 1 de enero del anio de --since) para
+        # que el merge cubra los mismos documentos; el cache MODS hace baratos
+        # los re-fetches dentro del anio.
+        gov_from = f"{int(since[:4])}-01-01" if since else None
+        gov_results = (
+            govinfo_search(date_from=gov_from) if gov_from
+            else govinfo_search(year_from=1994)
+        )
+        logger.info(f"  GovInfo: {len(gov_results)} ADs")
+    except Exception as e:
+        logger.warning(f"  GovInfo fallo (continua con FR API solo): {e}")
+        gov_results = []
 
+    all_results.extend(_merge_faa_results(fr_results, gov_results))
     logger.info(f"federal_register: {len(all_results)} ADs encontrados (pre-dedupe)")
     return all_results
 
@@ -370,7 +431,16 @@ def main():
         action="store_true",
         help="DESTRUCTIVO: borra todas las filas de la(s) fuente(s) antes de repoblar",
     )
+    parser.add_argument(
+        "--since",
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="Solo federal_register: scrape incremental desde esta fecha de publicacion",
+    )
     args = parser.parse_args()
+
+    if args.since and not re.match(r"^\d{4}-\d{2}-\d{2}$", args.since):
+        parser.error("--since debe tener formato YYYY-MM-DD")
 
     sources_to_run = [args.source] if args.source else ALL_SOURCES
 
@@ -398,7 +468,10 @@ def main():
                 logger.error(f"[{source}] Error en --reset: {e}")
 
         try:
-            raw_results = RUNNERS[source]()
+            if source == "federal_register" and args.since:
+                raw_results = run_federal_register(since=args.since)
+            else:
+                raw_results = RUNNERS[source]()
         except Exception:
             error_msg = traceback.format_exc()
             logger.error(f"[{source}] ERROR durante scraping:\n{error_msg}")
