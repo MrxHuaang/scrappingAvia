@@ -10,6 +10,18 @@ on:
         description: "Source to scrape (leave empty for all)"
         required: false
         default: ""
+        type: choice
+        options:
+          - ""
+          - federal_register
+          - easa
+          - transport_canada
+          - anac_brazil
+          - dgac_chile
+          - anac_argentina
+          - aerocivil_colombia
+          - casa_australia
+          - gcaa_uae
 
 jobs:
   scrape:
@@ -29,13 +41,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Validate scraper registry
+        run: python scripts/check_scraper_contracts.py
+
       - name: Run scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GOVINFO_API_KEY: ${{ secrets.GOVINFO_API_KEY }}
         run: |
-          if [ -n "${{ github.event.inputs.source }}" ]; then
-            python populate_db.py --source ${{ github.event.inputs.source }}
+          source="${{ github.event.inputs.source }}"
+          if [ -n "$source" ]; then
+            python populate_db.py --source "$source"
           else
             python populate_db.py
           fi
