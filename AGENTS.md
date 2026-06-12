@@ -177,9 +177,10 @@ El runner `run_federal_register()` ejecuta en orden:
    Amendment. No-matcheados pasan tal cual.
 
    **Cache MODS** (`outputs/govinfo_mods_cache.json`, gitignored): granuleId →
-   {ad, docket, amend}, incluye negativos. Primer backfill ≈ 14k fetches MODS
-   (~10-15 min a 40 req/s); re-runs solo pagan los listings (~4 min).
-   Rate limit GovInfo: 36,000 req/hr por key — un backfill completo cabe en 1 hora.
+   {ad, docket, amend}, incluye negativos. Primer backfill ≈ 8k listings + 14k
+   fetches MODS; a ~0.4s/request medidos (con Session reuse) son ~2-2.5 horas.
+   Re-runs posteriores solo pagan los listings (~1 hora). Rate limit GovInfo:
+   36,000 req/hr por key — no es el cuello de botella, la latencia HTTP sí.
 
 Dedupe por `(source, ad_number)` con normalizacion ASCII en `normalize_ad_number()`
 (utils.py).
