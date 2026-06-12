@@ -184,9 +184,14 @@ Production note: upsert is idempotent, so cleaning is rarely needed. Use only if
 
 ## Roadmap
 
-See `Documentacion Proyectos/Zephr/ROADMAP.md`. Near-term goals:
+See:
 
-- Migrate Flask `app.py` to Next.js + Supabase Edge Functions.
+- `docs/ADR-0001-hybrid-architecture.md` for the backend/frontend architecture decision.
+- `docs/INGESTION_RUNBOOK.md` for ingestion operations and source contract expectations.
+
+Near-term goals:
+
+- Retire Flask product endpoints as equivalent Next.js route handlers or server-only data access layers are created.
 - Add automated daily smoke test (CI) comparing row counts against baseline.
 - Investigate proxy bypass for AEROCIVIL Colombia and CASA Australia.
 - Add HTML fixture-based unit tests per scraper.
