@@ -1,4 +1,4 @@
-"""
+﻿"""
 Zephr - populate_db.py
 Ejecuta todos los scrapers y persiste los resultados en Supabase.
 
@@ -113,6 +113,45 @@ def parse_date(raw: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Status mapping  (raw source value -> normalized DB enum)
+# DB constraint ads_status_chk allows: New | Revision | Superseded | Cancelled | NULL
+# ---------------------------------------------------------------------------
+_STATUS_MAP = {
+    "current":             "New",
+    "final rule":          "New",
+    "final":               "New",
+    "active":              "New",
+    "issued":              "New",
+    "effective":           "New",
+    "in force":            "New",
+    "mandatory":           "New",
+    "emergency":           "New",
+    "interim":             "New",
+    "notice":              "New",
+    "amendment":           "Revision",
+    "amended":             "Revision",
+    "corrected":           "Revision",
+    "corrected amendment": "Revision",
+    "revision":            "Revision",
+    "revised":             "Revision",
+    "re-issued":           "Revision",
+    "superseded":          "Superseded",
+    "replaced":            "Superseded",
+    "cancelled":           "Cancelled",
+    "canceled":            "Cancelled",
+    "withdrawn":           "Cancelled",
+    "rescinded":           "Cancelled",
+    "terminated":          "Cancelled",
+    "void":                "Cancelled",
+}
+
+
+def _map_status(raw):
+    if not raw:
+        return None
+    return _STATUS_MAP.get(raw.strip().lower(), None)
+
+# ---------------------------------------------------------------------------
 # Normalizer
 # ---------------------------------------------------------------------------
 def normalize(row: dict, source_key: str) -> dict | None:
@@ -133,7 +172,7 @@ def normalize(row: dict, source_key: str) -> dict | None:
         "model": (row.get("Model") or "").strip() or None,
         "product_type": (row.get("Product_Type") or "").strip() or None,
         "effective_date": parse_date(row.get("Effective_Date")),
-        "status": (row.get("Status") or "").strip() or None,
+        "status": _map_status(row.get("Status")),
         "docket": (row.get("Docket") or "").strip() or None,
         "pdf_link": (row.get("PDF_Link") or "").strip() or None,
         "raw_data": row,
@@ -146,14 +185,14 @@ def normalize(row: dict, source_key: str) -> dict | None:
 def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
     """
     Inserta o actualiza ADs en la tabla 'ads'.
-    Retorna (ads_new, ads_updated) — conteos aproximados basados en
+    Retorna (ads_new, ads_updated) â€” conteos aproximados basados en
     si el registro ya existia antes del upsert.
     """
     if not rows:
         return 0, 0
 
-    # Deduplicar en memoria por (source, ad_number) — último gana
-    # Necesario para TC que retorna el mismo AD bajo múltiples modelos
+    # Deduplicar en memoria por (source, ad_number) â€” Ãºltimo gana
+    # Necesario para TC que retorna el mismo AD bajo mÃºltiples modelos
     deduped: dict[tuple, dict] = {}
     for r in rows:
         key = (r["source"], r["ad_number"])
@@ -303,7 +342,7 @@ def run_federal_register(since: str | None = None) -> list[dict]:
         fr_results = fr_search()
     logger.info(f"  FR API: {len(fr_results)} ADs")
 
-    # Fase 3: GovInfo MODS — identidad real del AD (numero, docket, amendment).
+    # Fase 3: GovInfo MODS â€” identidad real del AD (numero, docket, amendment).
     # El titulo de FR API casi nunca trae el numero AD: sin esta fase, los
     # ad_numbers de FAA quedan como FR document_numbers (defecto historico).
     logger.info("  [3/3] GovInfo API (MODS XML: numero AD real + docket + amendment)...")
@@ -413,7 +452,7 @@ RUNNERS = {
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="Zephr — poblar Supabase con ADs de todas las fuentes"
+        description="Zephr â€” poblar Supabase con ADs de todas las fuentes"
     )
     parser.add_argument(
         "--source",
@@ -535,3 +574,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
