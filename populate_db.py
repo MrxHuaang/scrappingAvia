@@ -218,6 +218,36 @@ def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
         logger.warning(f"No se pudo pre-verificar existentes: {e}")
         existing = set()
 
+    # 'linked' = pares (source, ad_number) que ya tienen un enlace de
+    # supersedencia (superseded_to_ad_id) puesto por el proceso de linking.
+    # El re-scrape diario NO debe pisar su status: la constraint
+    # ads_superseded_coherence_chk exige status='Superseded' siempre que
+    # superseded_to_ad_id no sea NULL. Forzamos ese status en el payload.
+    # Se pagina porque PostgREST limita a 1000 filas por respuesta.
+    linked: set[tuple] = set()
+    try:
+        page = 0
+        PAGE = 1000
+        while True:
+            resp = (
+                supabase.table("ads")
+                .select("source, ad_number")
+                .in_("source", source_vals)
+                .not_.is_("superseded_to_ad_id", "null")
+                .range(page * PAGE, page * PAGE + PAGE - 1)
+                .execute()
+            )
+            chunk = resp.data or []
+            for rec in chunk:
+                linked.add((rec["source"], rec["ad_number"]))
+            if len(chunk) < PAGE:
+                break
+            page += 1
+        logger.info(f"ADs con enlace de supersedencia (status forzado): {len(linked)}")
+    except Exception as e:
+        logger.warning(f"No se pudo pre-verificar superseded links: {e}")
+        linked = set()
+
     ads_new = sum(1 for r in rows if (r["source"], r["ad_number"]) not in existing)
     ads_updated = len(rows) - ads_new
 
@@ -230,6 +260,9 @@ def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
             rec = dict(r)
             rec["raw_data"] = json.dumps(rec["raw_data"], ensure_ascii=False, default=str)
             rec["last_updated_at"] = datetime.now(timezone.utc).isoformat()
+            # Preservar coherencia con superseded_to_ad_id existente.
+            if (rec["source"], rec["ad_number"]) in linked:
+                rec["status"] = "Superseded"
             payload.append(rec)
 
         supabase.table("ads").upsert(
