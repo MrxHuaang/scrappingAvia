@@ -7,6 +7,8 @@ import requests
 from bs4 import BeautifulSoup
 import time
 import re
+import os
+import json
 
 
 EASA_BASE_URL = "https://ad.easa.europa.eu"
@@ -313,6 +315,283 @@ def _parse_total_results(soup):
         if m:
             return int(m.group(1).replace(",", ""))
     return None
+
+
+# ---------------------------------------------------------------------------
+# Enriquecimiento via pagina de detalle (ad.easa.europa.eu/ad/{number})
+# La pagina de listado no trae los campos profundos; el detalle expone (estructurado,
+# sin PDF): Issue date, Supersedure, Publication(s)=Service Bulletins, y el Remark
+# estandar de AMOC. La prosa (unsafe condition / required action / compliance time)
+# solo vive en el PDF -> queda fuera de este paso.
+# Llamar SOLO desde el batch (run_easa), NO desde search_ads (frenaria la busqueda
+# en vivo del app). Cacheado por AD_Number en outputs/easa_detail_cache.json.
+# ---------------------------------------------------------------------------
+EASA_DETAIL_URL = f"{EASA_BASE_URL}/ad"
+_DETAIL_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "outputs", "easa_detail_cache.json",
+)
+_detail_cache = None
+
+
+def _load_detail_cache():
+    global _detail_cache
+    if _detail_cache is None:
+        try:
+            with open(_DETAIL_CACHE_PATH, encoding="utf-8") as f:
+                _detail_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            _detail_cache = {}
+    return _detail_cache
+
+
+def _save_detail_cache():
+    if _detail_cache is None:
+        return
+    try:
+        os.makedirs(os.path.dirname(_DETAIL_CACHE_PATH), exist_ok=True)
+        with open(_DETAIL_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(_detail_cache, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _parse_detail(text: str) -> dict:
+    """Extrae campos estructurados del texto plano de la pagina de detalle."""
+    out = {"publication_date": None, "amoc": False,
+           "service_bulletins": [], "supersedes": None, "superseded_by": None}
+
+    m = re.search(r"Issue date\s+(\d{4}-\d{2}-\d{2})", text)
+    if m:
+        out["publication_date"] = m.group(1)
+
+    out["amoc"] = "alternative methods of compliance" in text.lower() \
+        or "alternative method of compliance" in text.lower()
+
+    m = re.search(r"supersede[sd]?\s+(?:by\s+)?EASA AD\s+([A-Z0-9][A-Z0-9\-/]+)", text, re.I)
+    if m:
+        if re.search(r"superseded by", text, re.I):
+            out["superseded_by"] = m.group(1).strip()
+        else:
+            out["supersedes"] = m.group(1).strip()
+
+    # Bloque "Publication(s) and related information" -> referencias SB/AOT
+    pub = re.search(
+        r"Publication\(s\)[^\n]*\n(.*?)(?:\nPAD number|\nRemarks|\nDownload)",
+        text, re.S | re.I,
+    )
+    if pub:
+        sbs = []
+        _SKIP = ("the use of later", "acceptable for compliance",
+                 "requirements of this ad", "compliance with the requirements",
+                 "consultation", "comments were received")
+        for line in pub.group(1).splitlines():
+            line = line.strip()
+            low = line.lower()
+            if not line or any(s in low for s in _SKIP) or line[0].islower():
+                continue
+            tok = re.search(r"[A-Z]{2,}[A-Z0-9]*[-/][A-Z0-9\-/]*\d", line)
+            sbs.append((tok.group(0) if tok else line)[:120])
+        out["service_bulletins"] = sbs[:20]
+
+    return out
+
+
+def _fetch_detail(ad_number: str, session: requests.Session) -> dict:
+    cache = _load_detail_cache()
+    if ad_number in cache:
+        return cache[ad_number]
+    result = {"publication_date": None, "amoc": False,
+              "service_bulletins": [], "supersedes": None, "superseded_by": None}
+    try:
+        resp = session.get(f"{EASA_DETAIL_URL}/{ad_number}", headers=HEADERS, timeout=40)
+        if resp.ok:
+            soup = BeautifulSoup(resp.text, "lxml")
+            text = re.sub(r"[ \t]+", " ", soup.get_text("\n"))
+            result = _parse_detail(text)
+    except requests.RequestException:
+        pass
+    cache[ad_number] = result
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Parseo del PDF del AD (unica fuente de la prosa: Reason / Required Action(s)
+# and Compliance Time(s) / Ref. Publications). PDFs EASA son texto, no escaneos.
+# ---------------------------------------------------------------------------
+FETCH_PDF = True
+_PDF_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "outputs", "easa_pdf_cache.json",
+)
+_pdf_cache = None
+
+
+def _load_pdf_cache():
+    global _pdf_cache
+    if _pdf_cache is None:
+        try:
+            with open(_PDF_CACHE_PATH, encoding="utf-8") as f:
+                _pdf_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            _pdf_cache = {}
+    return _pdf_cache
+
+
+def _save_pdf_cache():
+    if _pdf_cache is None:
+        return
+    try:
+        os.makedirs(os.path.dirname(_PDF_CACHE_PATH), exist_ok=True)
+        with open(_PDF_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(_pdf_cache, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _clean_pdf(s: str) -> str:
+    # Quitar footers/headers repetidos del PDF EASA.
+    s = re.sub(r"EASA AD No\.?:.*", " ", s)
+    s = re.sub(r"TE\.CAP\.[0-9\-]+", " ", s)
+    s = re.sub(r"Page \d+ of \d+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _pdf_section(txt: str, start: str, ends: list[str], cap: int = 600) -> str | None:
+    i = txt.find(start)
+    if i < 0:
+        return None
+    j = i + len(start)
+    end = len(txt)
+    for lbl in ends:
+        k = txt.find(lbl, j)
+        if 0 <= k < end:
+            end = k
+    seg = _clean_pdf(txt[j:end])
+    return seg[:cap].strip() or None
+
+
+_EASA_COMPLIANCE = re.compile(
+    r"(before further flight"
+    r"|before exceeding[^.;]{0,80}"
+    r"|within\s+\d[\d,]*\s*(?:flight\s+)?(?:hours?|days?|weeks?|months?|years?|cycles?|landings?|FH|FC)\b[^.;]{0,40}"
+    r"|at intervals not to exceed[^.;]{0,60}"
+    r"|before the threshold[^.;]{0,60})",
+    re.I,
+)
+
+
+def _parse_pdf_fields(text: str) -> dict:
+    out = {"unsafe_condition": None, "corrective_action": None,
+           "compliance_time": None, "service_bulletins": []}
+    if not text:
+        return out
+    txt = re.sub(r"[ \t]+", " ", text)
+
+    out["unsafe_condition"] = _pdf_section(
+        txt, "Reason:",
+        ["Required Action", "Ref. Publications", "Remarks:", "Effective Date"], cap=500,
+    )
+    action = _pdf_section(
+        txt, "Required Action(s) and Compliance Time(s):",
+        ["Ref. Publications", "Remarks:"], cap=900,
+    )
+    if action:
+        m = _EASA_COMPLIANCE.search(action)
+        out["compliance_time"] = re.sub(r"\s+", " ", m.group(0)).strip() if m else None
+        # Strip the standard lead-in boilerplate to reach the real action text.
+        action = re.sub(
+            r"^Required as indicated by this AD,\s*unless the action[^:]*:\s*",
+            "", action, flags=re.I,
+        )
+        action = re.sub(
+            r"^(?:Inspection\(s\)|Action\(s\)|Modification\(s\)|Replacement\(s\)|Corrective action\(s\))\s*:\s*",
+            "", action, flags=re.I,
+        )
+        out["corrective_action"] = action[:500].strip() or None
+
+    refs = _pdf_section(txt, "Ref. Publications:", ["Remarks:", "Effective Date", "Appendix"], cap=800)
+    if refs:
+        sbs = []
+        for m in re.finditer(r"\b(?:SB|VSB|ASB|Service Bulletin)\s+([A-Z0-9][A-Z0-9\-/]+)", refs, re.I):
+            tok = m.group(1).strip().rstrip(".")
+            if tok and tok.upper() not in (x.upper() for x in sbs):
+                sbs.append(tok)
+        out["service_bulletins"] = sbs[:20]
+    return out
+
+
+def _fetch_pdf(ad_number: str, pdf_link: str, session: requests.Session) -> dict:
+    cache = _load_pdf_cache()
+    if ad_number in cache:
+        return cache[ad_number]
+    result = {"unsafe_condition": None, "corrective_action": None,
+              "compliance_time": None, "service_bulletins": []}
+    if pdf_link and ".pdf" in pdf_link.lower():
+        try:
+            import io
+            from pypdf import PdfReader
+            resp = session.get(pdf_link, headers=HEADERS, timeout=60)
+            if resp.ok and resp.content[:4] == b"%PDF":
+                reader = PdfReader(io.BytesIO(resp.content))
+                text = "\n".join((p.extract_text() or "") for p in reader.pages[:8])
+                result = _parse_pdf_fields(text)
+        except Exception:
+            pass
+    cache[ad_number] = result
+    return result
+
+
+def enrich_details(results: list[dict]) -> list[dict]:
+    """
+    Para cada AD del listado, baja su pagina de detalle y agrega las claves que
+    consume normalize()/populate_relations: Publication_Date, AMOC_Available,
+    Service_Bulletins, Supersedes, Superseded_By. Idempotente + cacheado.
+    """
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    total = len(results)
+    dcache = _load_detail_cache()
+    pcache = _load_pdf_cache()
+    for i, row in enumerate(results, 1):
+        num = (row.get("AD_Number") or "").strip()
+        if not num:
+            continue
+        cached = (num in dcache) and (num in pcache)
+        d = _fetch_detail(num, session)
+        if d.get("publication_date"):
+            row["Publication_Date"] = d["publication_date"]
+        row["AMOC_Available"] = bool(d.get("amoc"))
+        sbs = list(d.get("service_bulletins") or [])
+        if d.get("supersedes"):
+            row["Supersedes"] = d["supersedes"]
+        if d.get("superseded_by"):
+            row["Superseded_By"] = d["superseded_by"]
+
+        # Prosa: solo del PDF (Reason / Required Action(s) and Compliance Time(s)).
+        if FETCH_PDF:
+            pf = _fetch_pdf(num, row.get("PDF_Link") or "", session)
+            if pf.get("unsafe_condition"):
+                row["Unsafe_Condition"] = pf["unsafe_condition"]
+            if pf.get("corrective_action"):
+                row["Corrective_Action"] = pf["corrective_action"]
+            if pf.get("compliance_time"):
+                row["Compliance_Time"] = pf["compliance_time"]
+            for sb in pf.get("service_bulletins") or []:
+                if sb not in sbs:
+                    sbs.append(sb)
+        if sbs:
+            row["Service_Bulletins"] = sbs
+
+        if i % 200 == 0:
+            print(f"[EASA] detalle+pdf: {i}/{total} enriquecidos")
+            _save_detail_cache()
+            _save_pdf_cache()
+        if not cached:  # no dormir si ya estaba en cache (re-run rapido)
+            time.sleep(0.15)
+    _save_detail_cache()
+    _save_pdf_cache()
+    return results
 
 
 def export_csv(keyword=None, session=None):

@@ -39,22 +39,58 @@ utils.py            Helpers compartidos
 ## Esquema de la tabla `ads` en Supabase
 
 ```
-source          TEXT   -- source key (ej: "federal_register")
-source_label    TEXT   -- label legible (ej: "FAA")
-ad_number       TEXT   -- PK junto con source
-subject         TEXT
-make            TEXT
-model           TEXT
-product_type    TEXT   -- Aircraft | Engine | Propeller | Helicopter | Appliance
-effective_date  DATE   -- YYYY-MM-DD
-status          TEXT   -- Final Rule | Current | Cancelled | Superseded | Emergency AD | NPRM
-docket          TEXT
-pdf_link        TEXT   -- NULL en ~867 TC ADs superseded (esperado, no es bug)
-raw_data        JSONB
-last_updated_at TIMESTAMPTZ
+source            TEXT   -- source key (ej: "federal_register")
+source_label      TEXT   -- label legible (ej: "FAA")
+ad_number         TEXT   -- PK natural junto con source
+state_of_design   TEXT   -- pais emisor (derivado del source via enrich.STATE_OF_DESIGN)
+subject           TEXT
+make              TEXT
+model             TEXT   -- modelo principal; los multiples van en ad_applicability
+product_type      TEXT   -- enum: Aircraft|Engine|Propeller|Appliance|Helicopter
+published_date    DATE   -- fecha de publicacion (distinta de effective)
+effective_date    DATE   -- YYYY-MM-DD
+status            TEXT   -- enum CANONICO: New | Revision | Superseded | Cancelled
+priority          TEXT   -- enum: Emergency | Normal
+unsafe_condition  TEXT   -- best-effort desde el abstract (FAA)
+corrective_action TEXT   -- best-effort desde el abstract (FAA)
+compliance_time   TEXT   -- best-effort ("within N flight hours")
+amoc_available    BOOL   -- true si el texto menciona AMOC
+superseded_to_ad_id UUID -- FK a ads.id del AD que lo reemplaza (si status=Superseded)
+docket            TEXT
+pdf_link          TEXT   -- NULL en ~867 TC ADs superseded (esperado, no es bug)
+raw_data          JSONB  -- dict crudo del scraper (preserva valores originales)
+first_seen_at     TIMESTAMPTZ
+last_updated_at   TIMESTAMPTZ
 ```
 
 Constraint único: `(source, ad_number)` → upsert usa `on_conflict=source,ad_number`.
+
+**Tablas relacionales pobladas en el post-pass (`populate_relations`):**
+- `ad_applicability` — make/model afectados (1 AD -> N). Las tablas de usuario y
+  Watchlist hacen match contra esta.
+- `ad_service_bulletins` — SBs referenciados, extraidos de subject/abstract.
+
+**Enriquecimiento (`enrich.py`):** todas las derivaciones (state_of_design, status
+canonico, priority, product_type canonico, AMOC, unsafe/corrective/compliance, SBs)
+viven en un solo modulo. `normalize()` en populate_db lo usa para TODAS las fuentes.
+Valores explicitos del scraper (claves `Unsafe_Condition`, `Corrective_Action`,
+`Compliance_Time`, `AMOC_Available`, `Publication_Date`, `Superseded_By`, `Abstract`)
+tienen prioridad sobre la derivacion automatica.
+
+### Cobertura de campos profundos por fuente
+
+| Fuente | Fuente del texto | Campos profundos | Cache |
+|--------|------------------|------------------|-------|
+| `federal_register` | GovInfo full-text (`api.govinfo.gov/.../htm`) + abstract FR | unsafe/corrective (abstract), compliance_time + AMOC (cuerpo), SBs | `outputs/fr_fulltext_cache.json` |
+| `easa` | pagina detalle `ad.easa.europa.eu/ad/{n}` + **PDF** (`pypdf`) | published_date/AMOC/SBs/supersesion (detalle) + unsafe/corrective/compliance (PDF: Reason / Required Action(s) and Compliance Time(s)) | `easa_detail_cache.json`, `easa_pdf_cache.json` |
+| `transport_canada` | **PDF** `AD_dl.aspx?...ft=pdf` (`pypdf`) | unsafe/corrective/compliance/SBs. 3 layouts: propia CF (Background/Corrective/Compliance), EU-adoptada (formato EASA), US-adoptada (FAA, best-effort) | `tc_pdf_cache.json` |
+| `anac_brazil` / `anac_argentina` | listado (+Action codes Brasil) | solo escalares: state_of_design, status canonico, priority, product_type, applicability. Prosa profunda **omitida** (PDFs PT/ES, volumen ~466, plataforma EN-only) | — |
+| resto (dgac, gcaa, aerocivil, casa) | listado | solo escalares via enrich | — |
+
+> federalregister.gov full_text bloquea bots -> FAA usa GovInfo (requiere
+> `GOVINFO_API_KEY`). EASA/TC usan PDF (`pypdf`, agregado a requirements).
+> Re-scrape completo: `python populate_db.py --source <x> --reset` (FAA ~13k,
+> EASA ~18k, TC ~4.7k fetches de cuerpo/PDF en el primer run; cacheado despues).
 
 ## Calidad de datos actual (2026-06-12)
 

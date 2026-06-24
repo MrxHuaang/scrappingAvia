@@ -9,12 +9,15 @@ Endpoint: https://www.federalregister.gov/api/v1/documents.json
 Docs:     https://www.federalregister.gov/developers/documentation/api/v1
 """
 
+import json
+import os
 import re
 import time
 from datetime import datetime
 
 import requests
 
+import enrich
 from utils import extract_make_model, normalize_ad_number
 
 
@@ -30,8 +33,86 @@ HEADERS = {
 _FIELDS = [
     "title", "abstract", "document_number", "publication_date",
     "effective_on", "pdf_url", "html_url", "agencies",
-    "cfr_references", "action", "type",
+    "cfr_references", "action", "type", "raw_text_url",
 ]
+
+# ---------------------------------------------------------------------------
+# Full-text enrichment (compliance_time + AMOC viven en el cuerpo del rule,
+# no en el abstract). Se baja raw_text_url una vez por documento y se cachean
+# SOLO los campos extraidos (no el texto completo) en outputs/.
+# ---------------------------------------------------------------------------
+FETCH_FULL_TEXT = True  # poner False para saltar el parseo del cuerpo (mas rapido)
+_FULLTEXT_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "outputs", "fr_fulltext_cache.json",
+)
+_fulltext_cache: dict | None = None
+_ft_session: requests.Session | None = None
+
+
+def _load_fulltext_cache() -> dict:
+    global _fulltext_cache
+    if _fulltext_cache is None:
+        try:
+            with open(_FULLTEXT_CACHE_PATH, encoding="utf-8") as f:
+                _fulltext_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            _fulltext_cache = {}
+    return _fulltext_cache
+
+
+def _save_fulltext_cache() -> None:
+    if _fulltext_cache is None:
+        return
+    try:
+        os.makedirs(os.path.dirname(_FULLTEXT_CACHE_PATH), exist_ok=True)
+        with open(_FULLTEXT_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(_fulltext_cache, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _fetch_fulltext_fields(doc_number: str, publication_date: str) -> dict:
+    """
+    Baja el cuerpo COMPLETO del rule desde GovInfo (FR-{date}/granules/{docnum}/htm)
+    y extrae {compliance_time, amoc}. GovInfo se usa porque federalregister.gov
+    bloquea (bot) los endpoints full_text. Cacheado por document_number.
+    Requiere GOVINFO_API_KEY (leida en runtime; load_dotenv corre tras el import).
+    """
+    cache = _load_fulltext_cache()
+    if doc_number in cache:
+        return cache[doc_number]
+
+    result = {"compliance_time": None, "amoc": False}
+    key = os.environ.get("GOVINFO_API_KEY", "").strip()
+    if doc_number and publication_date and key:
+        global _ft_session
+        if _ft_session is None:
+            _ft_session = requests.Session()
+            _ft_session.headers.update({"User-Agent": "AD-Scraper/1.0"})
+        url = (
+            f"https://api.govinfo.gov/packages/FR-{publication_date}"
+            f"/granules/{doc_number}/htm?api_key={key}"
+        )
+        try:
+            resp = _ft_session.get(url, timeout=40)
+            if resp.ok and "request access" not in resp.text[:600].lower():
+                txt = _TAG_RE.sub(" ", resp.text)
+                low = txt.lower()
+                result["amoc"] = (
+                    "alternative method of compliance" in low
+                    or "alternative methods of compliance" in low
+                )
+                result["compliance_time"] = enrich.extract_compliance_from_fulltext(txt)
+        except requests.RequestException:
+            pass
+
+    if doc_number:
+        cache[doc_number] = result
+    return result
 
 
 def _request_page(params: dict, retries: int = 3) -> dict | None:
@@ -101,6 +182,7 @@ def search_ads_by_year_range(year_from: int, year_to: int) -> list[dict]:
     all_results = []
     for yr in range(year_from, year_to + 1):
         all_results.extend(_search_year(yr))
+        _save_fulltext_cache()  # persistir progreso del cache full-text por anio
     print(f"[Federal Register] Total {year_from}-{year_to}: {len(all_results)} ADs")
     # El titulo de FR casi nunca trae el numero AD real; cuando falta, el
     # ad_number cae al document_number (mismo valor que Docket). La fase
@@ -225,18 +307,34 @@ def _parse_document(doc) -> dict | None:
                     product_type = "Aircraft"
                     break
 
-        return {
+        out = {
             "Source": "FAA (Federal Register)",
             "AD_Number": ad_number.strip(),
             "Subject": subject.strip(),
+            # Abstract = FAA AD summary; enrich.py mines it for unsafe_condition,
+            # corrective_action and Service Bulletin refs.
+            "Abstract": abstract.strip(),
             "Make": make.strip(),
             "Model": model.strip(),
+            "Publication_Date": doc.get("publication_date", "") or "",
             "Effective_Date": effective_date,
             "Status": status,
             "Product_Type": product_type,
             "Docket": doc.get("document_number", ""),
             "PDF_Link": pdf_link,
         }
+
+        # compliance_time + AMOC viven en el cuerpo completo del rule, no en el
+        # abstract -> se bajan de raw_text_url (cacheado por document_number).
+        if FETCH_FULL_TEXT:
+            ft = _fetch_fulltext_fields(
+                doc.get("document_number", ""), doc.get("publication_date", "") or ""
+            )
+            if ft.get("compliance_time"):
+                out["Compliance_Time"] = ft["compliance_time"]
+            out["AMOC_Available"] = bool(ft.get("amoc"))
+
+        return out
     except Exception as e:
         print(f"[Federal Register] Error parseando: {e}")
         return None

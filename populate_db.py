@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from utils import normalize_ad_number
+import enrich
 
 # Agregar directorio raiz al path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -28,8 +29,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from scrapers.federal_register import search_ads as fr_search
 from scrapers.faa_govinfo import search_ads as govinfo_search
 from scrapers.faa_drs import search_ads as drs_search
-from scrapers.easa import search_ads as easa_search, search_main_page as easa_main
-from scrapers.transport_canada import search_ads as tc_search
+from scrapers.easa import (
+    search_ads as easa_search,
+    search_main_page as easa_main,
+    enrich_details as easa_enrich_details,
+)
+from scrapers.transport_canada import (
+    search_ads as tc_search,
+    enrich_details as tc_enrich_details,
+)
 from scrapers.anac_brazil import search_ads as anac_brazil_search
 from scrapers.dgac_chile import search_ads as dgac_chile_search
 from scrapers.anac_argentina import search_ads as anac_argentina_search
@@ -158,21 +166,44 @@ def normalize(row: dict, source_key: str) -> dict | None:
     """
     Mapea el dict de un scraper al esquema de la tabla 'ads'.
     Retorna None si ad_number esta vacio.
+
+    Ademas del mapeo base, deriva el modelo de dominio AD completo via enrich:
+    state_of_design, status/priority/product_type canonicos, y best-effort de
+    unsafe_condition / corrective_action / compliance_time / amoc desde el texto
+    disponible (Subject + Abstract si el scraper lo aporta).
     """
     ad_number = normalize_ad_number(row.get("AD_Number") or "")
     if not ad_number:
         return None
 
+    subject = (row.get("Subject") or "").strip() or None
+    abstract = (row.get("Abstract") or "").strip()
+    raw_status = (row.get("Status") or "").strip() or None
+    text_blob = " ".join(t for t in (subject or "", abstract, row.get("Type") or "") if t)
+
+    # Explicit scraper-provided values win; otherwise derive from available text.
+    unsafe = (row.get("Unsafe_Condition") or "").strip() or enrich.extract_unsafe_condition(abstract)
+    corrective = (row.get("Corrective_Action") or "").strip() or enrich.extract_corrective_action(abstract)
+    compliance_time = (row.get("Compliance_Time") or "").strip() or enrich.extract_compliance_time(abstract, subject or "")
+    amoc = bool(row.get("AMOC_Available")) or enrich.detect_amoc(abstract, subject or "")
+
     return {
         "source": source_key,
         "source_label": SOURCE_LABELS.get(source_key, source_key),
         "ad_number": ad_number,
-        "subject": (row.get("Subject") or "").strip() or None,
+        "state_of_design": enrich.state_of_design(source_key),
+        "subject": subject,
         "make": (row.get("Make") or "").strip() or None,
         "model": (row.get("Model") or "").strip() or None,
-        "product_type": (row.get("Product_Type") or "").strip() or None,
+        "product_type": enrich.normalize_product_type(row.get("Product_Type")),
+        "published_date": parse_date(row.get("Publication_Date") or row.get("Published_Date")),
         "effective_date": parse_date(row.get("Effective_Date")),
         "status": _map_status(row.get("Status")),
+        "priority": enrich.priority(raw_status, subject or "", row.get("Type") or ""),
+        "unsafe_condition": unsafe or None,
+        "corrective_action": corrective or None,
+        "compliance_time": compliance_time or None,
+        "amoc_available": amoc,
         "docket": (row.get("Docket") or "").strip() or None,
         "pdf_link": (row.get("PDF_Link") or "").strip() or None,
         "raw_data": row,
@@ -271,6 +302,137 @@ def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
         ).execute()
 
     return ads_new, ads_updated
+
+
+# ---------------------------------------------------------------------------
+# Relations: ad_applicability, ad_service_bulletins, supersession
+# ---------------------------------------------------------------------------
+def _fetch_ad_ids(supabase, source: str, ad_numbers: list[str]) -> dict[str, str]:
+    """Mapea ad_number -> ads.id para una fuente (en lotes para PostgREST)."""
+    ids: dict[str, str] = {}
+    BATCH = 300
+    uniq = list({n for n in ad_numbers if n})
+    for i in range(0, len(uniq), BATCH):
+        chunk = uniq[i : i + BATCH]
+        try:
+            resp = (
+                supabase.table("ads")
+                .select("id, ad_number")
+                .eq("source", source)
+                .in_("ad_number", chunk)
+                .execute()
+            )
+            for rec in resp.data or []:
+                ids[rec["ad_number"]] = rec["id"]
+        except Exception as e:
+            logger.warning(f"  relations: no se pudieron leer ids ({source}): {e}")
+    return ids
+
+
+def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
+    """
+    Tras el upsert de `ads`, puebla las tablas relacionales derivadas de cada AD:
+      - ad_applicability  (make/model afectados)
+      - ad_service_bulletins (SBs referenciados en subject/abstract)
+      - superseded_to_ad_id (si el scraper aporto 'Superseded_By')
+    Idempotente: borra applicability previa de estos ad_ids y reinserta;
+    SBs por upsert (ad_id, sb_number).
+    """
+    if not normalized:
+        return
+    id_map = _fetch_ad_ids(supabase, source, [r["ad_number"] for r in normalized])
+    if not id_map:
+        return
+
+    applic_rows: list[dict] = []
+    sb_rows: list[dict] = []
+    # (ad_id_to_update, target_ad_number) — the row at ad_id is superseded BY target.
+    supersede_updates: list[tuple[str, str]] = []
+    touched_ids: list[str] = []
+
+    for r in normalized:
+        ad_id = id_map.get(r["ad_number"])
+        if not ad_id:
+            continue
+        touched_ids.append(ad_id)
+
+        make = (r.get("make") or "").strip()
+        model = (r.get("model") or "").strip()
+        if make:
+            # EASA packs several models in "A, B, C"; one applicability row each.
+            models = [m.strip() for m in (model.split(",") if model else [""]) if True]
+            for mod in (models or [""]):
+                applic_rows.append({
+                    "ad_id": ad_id,
+                    "make": make,
+                    "model": mod or None,
+                    "confidence": "high" if make and mod else "medium",
+                })
+
+        raw = r.get("raw_data") or {}
+        # Explicit SB list (EASA detail page) wins; else mine subject/abstract.
+        explicit_sbs = raw.get("Service_Bulletins")
+        sbs = explicit_sbs if isinstance(explicit_sbs, list) else \
+            enrich.extract_service_bulletins(raw.get("Subject") or "", raw.get("Abstract") or "")
+        for sb in sbs:
+            sb = (sb or "").strip()
+            if sb:
+                sb_rows.append({"ad_id": ad_id, "sb_number": sb[:120]})
+
+        # "This AD is superseded by X" -> this row's superseded_to = X.
+        superseded_by = (raw.get("Superseded_By") or "").strip()
+        if superseded_by:
+            supersede_updates.append((ad_id, normalize_ad_number(superseded_by)))
+        # "This AD supersedes Y" (EASA) -> the OLDER row Y's superseded_to = this AD.
+        supersedes = (raw.get("Supersedes") or "").strip()
+        if supersedes:
+            old_id = id_map.get(normalize_ad_number(supersedes))
+            if old_id and old_id != ad_id:
+                # mark Y superseded by this ad_number (resolved below)
+                supersede_updates.append((old_id, r["ad_number"]))
+
+    # ad_applicability: delete-then-insert for touched ads (scraper-owned table)
+    BATCH = 300
+    for i in range(0, len(touched_ids), BATCH):
+        chunk = touched_ids[i : i + BATCH]
+        try:
+            supabase.table("ad_applicability").delete().in_("ad_id", chunk).execute()
+        except Exception as e:
+            logger.warning(f"  applicability: delete fallo: {e}")
+    for i in range(0, len(applic_rows), 500):
+        try:
+            supabase.table("ad_applicability").insert(applic_rows[i : i + 500]).execute()
+        except Exception as e:
+            logger.warning(f"  applicability: insert fallo: {e}")
+
+    # ad_service_bulletins: upsert on (ad_id, sb_number)
+    for i in range(0, len(sb_rows), 500):
+        try:
+            supabase.table("ad_service_bulletins").upsert(
+                sb_rows[i : i + 500], on_conflict="ad_id,sb_number"
+            ).execute()
+        except Exception as e:
+            logger.warning(f"  service_bulletins: upsert fallo: {e}")
+
+    # supersession: resolve the superseding AD number -> its ads.id.
+    # Must also set status='Superseded' to satisfy ads_superseded_coherence_chk.
+    if supersede_updates:
+        target_numbers = [n for _, n in supersede_updates]
+        target_ids = _fetch_ad_ids(supabase, source, target_numbers)
+        for ad_id, target_num in supersede_updates:
+            tgt = target_ids.get(target_num)
+            if tgt and tgt != ad_id:
+                try:
+                    supabase.table("ads").update(
+                        {"superseded_to_ad_id": tgt, "status": "Superseded"}
+                    ).eq("id", ad_id).execute()
+                except Exception as e:
+                    logger.warning(f"  supersede: update fallo {ad_id}: {e}")
+
+    logger.info(
+        f"[{source}] relaciones: {len(applic_rows)} applicability, "
+        f"{len(sb_rows)} service bulletins, {len(supersede_updates)} supersession"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +567,10 @@ def run_easa() -> list[dict]:
         logger.info("easa search devolvio 0 resultados, usando fallback main page...")
         results = easa_main(max_pages=10)
     logger.info(f"easa: {len(results)} ADs encontrados")
+    # Enriquecer cada AD con su pagina de detalle (issue date, AMOC, SBs, supersesion).
+    # Cacheado: re-runs no re-bajan. Pesado en el primer full (~18k fetches).
+    logger.info("easa: enriqueciendo con paginas de detalle...")
+    results = easa_enrich_details(results)
     return results
 
 
@@ -429,6 +595,8 @@ def run_transport_canada() -> list[dict]:
         logger.info(f"  transport_canada [{manufacturer}]: {len(batch)} ADs")
         all_results.extend(batch)
     logger.info(f"transport_canada: {len(all_results)} ADs encontrados (total)")
+    logger.info("transport_canada: enriqueciendo con PDFs...")
+    all_results = tc_enrich_details(all_results)
     return all_results
 
 
@@ -572,6 +740,10 @@ def main():
                 logger.info(
                     f"[{source}] Guardados: {ads_new} nuevos, {ads_updated} actualizados"
                 )
+                try:
+                    populate_relations(supabase, source, normalized)
+                except Exception as rel_err:
+                    logger.warning(f"[{source}] relaciones fallaron (ads OK): {rel_err}")
             except Exception:
                 error_msg = traceback.format_exc()
                 logger.error(f"[{source}] ERROR durante upsert:\n{error_msg}")
