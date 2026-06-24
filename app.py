@@ -986,9 +986,9 @@ def api_search():
         max_results = min(int(data.get("max_results", MAX_RESULTS_PER_SOURCE)), 20000)
 
         if source not in VALID_SOURCES:
-            return jsonify({"error": f"Fuente no válida: '{source}'."}), 400
+            return jsonify({"error": f"Invalid source: '{source}'."}), 400
         if source == "all" and not keyword and not make and not model:
-            return jsonify({"error": "Ingresa al menos un término para buscar en todas las fuentes"}), 400
+            return jsonify({"error": "Enter a search term, make, or model to search all sources — or pick a specific authority to browse it."}), 400
 
         all_results = []
         errors = []
@@ -1043,11 +1043,11 @@ def api_search_stream():
         return Response(error_gen(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    # Validación de inputs: "all" sin términos no está permitido; fuentes específicas sí pueden ir sin filtro
+    # Input validation: "all" with no terms is not allowed; specific sources may run unfiltered
     if not keyword and not make and not model and source == "all":
         def empty_gen():
             event = {"source": source, "results": [], "count": 0,
-                     "error": "Ingresa al menos un término para buscar en todas las fuentes"}
+                     "error": "Enter a search term, make, or model to search all sources — or pick a specific authority to browse it."}
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'event': 'done', 'total': 0})}\n\n"
         return Response(empty_gen(), mimetype="text/event-stream",
