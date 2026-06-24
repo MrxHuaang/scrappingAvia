@@ -7,6 +7,9 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
+import os
+import io
+import json
 
 
 TC_BASE_URL = "https://wwwapps.tc.gc.ca/Saf-Sec-Sur/2/cawis-swimn"
@@ -411,6 +414,171 @@ def _parse_tc_results(soup, make_name, model_name):
             continue
 
     print(f"[TC] Parseados {len(results)} ADs (make={make_name!r}, model={model_name!r})")
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Enriquecimiento via PDF del AD (AD_dl.aspx?...&ft=pdf). El PDF de TC trae
+# secciones limpias: Background (unsafe), Corrective Actions, Compliance.
+# Cacheado por AD_Number. Llamar desde el batch (run_transport_canada).
+# ---------------------------------------------------------------------------
+FETCH_PDF = True
+_TC_PDF_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "outputs", "tc_pdf_cache.json",
+)
+_tc_pdf_cache = None
+
+
+def _load_tc_cache():
+    global _tc_pdf_cache
+    if _tc_pdf_cache is None:
+        try:
+            with open(_TC_PDF_CACHE_PATH, encoding="utf-8") as f:
+                _tc_pdf_cache = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            _tc_pdf_cache = {}
+    return _tc_pdf_cache
+
+
+def _save_tc_cache():
+    if _tc_pdf_cache is None:
+        return
+    try:
+        os.makedirs(os.path.dirname(_TC_PDF_CACHE_PATH), exist_ok=True)
+        with open(_TC_PDF_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(_tc_pdf_cache, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _tc_section(txt: str, start: str, ends: list[str], cap: int = 600) -> str | None:
+    i = txt.find(start)
+    if i < 0:
+        return None
+    j = i + len(start)
+    end = len(txt)
+    for lbl in ends:
+        k = txt.find(lbl, j)
+        if 0 <= k < end:
+            end = k
+    seg = re.sub(r"\s+", " ", txt[j:end]).strip(" :\n")
+    return seg[:cap].strip() or None
+
+
+_TC_SECTIONS = ["Subject:", "Applicability:", "Compliance:", "Background:",
+                "Corrective Action", "Disposition", "Authorization", "Enquiries",
+                "Effective Date:", "Type Certificate:"]
+
+
+_TC_COMPLIANCE = re.compile(
+    r"(before further flight"
+    r"|within\s+\d[\d,]*\s*(?:flight\s+|air\s+)?(?:hours?|days?|weeks?|months?|years?|cycles?|landings?)\b[^.;]{0,40}"
+    r"|before exceeding[^.;]{0,80})",
+    re.I,
+)
+
+
+def _parse_tc_pdf(text: str) -> dict:
+    """
+    TC publica 3 layouts: propia (Background/Corrective Actions/Compliance),
+    EU-adoptada (formato EASA: Reason / Required Action(s) and Compliance Time(s)),
+    US-adoptada (formato FAA). Se intentan TC y EASA; US-adoptada cae best-effort.
+    """
+    out = {"unsafe_condition": None, "corrective_action": None,
+           "compliance_time": None, "amoc": False, "service_bulletins": []}
+    if not text:
+        return out
+    txt = re.sub(r"[ \t]+", " ", text)
+    others = lambda lbl: [s for s in _TC_SECTIONS if s != lbl]
+
+    # unsafe: TC Background -> EASA Reason
+    out["unsafe_condition"] = (
+        _tc_section(txt, "Background:", others("Background:"), cap=500)
+        or _tc_section(txt, "Reason:",
+                       ["Required Action", "Ref. Publications", "Remarks:", "Effective"], cap=500)
+    )
+    # corrective: TC Corrective Action(s) -> EASA Required Action(s)
+    corr = (
+        _tc_section(txt, "Corrective Action", others("Corrective Action"), cap=600)
+        or _tc_section(txt, "Required Action(s) and Compliance Time(s):",
+                       ["Ref. Publications", "Remarks:"], cap=600)
+    )
+    if corr:
+        corr = re.sub(r"^s?\W+", "", corr).strip()  # quitar resto de "Action(s):"
+    out["corrective_action"] = corr or None
+
+    # compliance: seccion TC Compliance -> primera frase; else patron explicito
+    comp = _tc_section(txt, "Compliance:", others("Compliance:"), cap=400)
+    if comp:
+        out["compliance_time"] = re.split(r"(?<=[.])\s", comp)[0].strip()[:240]
+    else:
+        m = _TC_COMPLIANCE.search(txt)
+        if m:
+            out["compliance_time"] = re.sub(r"\s+", " ", m.group(0)).strip()
+
+    low = txt.lower()
+    out["amoc"] = "alternative means of compliance" in low or "alternative method of compliance" in low
+
+    sbs = []
+    # SB token: exige guion + digito para evitar ruido ("label", etc.)
+    for m in re.finditer(
+        r"\b(?:SB|ASB|Service Bulletin)\s+(?:No\.?\s*)?([A-Z0-9]{2,}[-/][A-Z0-9\-/]*\d[A-Z0-9\-/]*)",
+        txt, re.I,
+    ):
+        t = m.group(1).strip().rstrip(".")
+        if t and t.upper() not in (x.upper() for x in sbs):
+            sbs.append(t)
+    out["service_bulletins"] = sbs[:20]
+    return out
+
+
+def _fetch_tc_pdf(ad_number: str, pdf_link: str, session: requests.Session) -> dict:
+    cache = _load_tc_cache()
+    if ad_number in cache:
+        return cache[ad_number]
+    result = {"unsafe_condition": None, "corrective_action": None,
+              "compliance_time": None, "amoc": False, "service_bulletins": []}
+    if pdf_link and "ft=pdf" in pdf_link.lower():
+        try:
+            from pypdf import PdfReader
+            resp = session.get(pdf_link, headers=HEADERS, timeout=60)
+            if resp.ok and resp.content[:4] == b"%PDF":
+                text = "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(resp.content)).pages[:8])
+                result = _parse_tc_pdf(text)
+        except Exception:
+            pass
+    cache[ad_number] = result
+    return result
+
+
+def enrich_details(results: list[dict]) -> list[dict]:
+    """Enriquece cada AD de TC con la prosa de su PDF (Background/Corrective/Compliance)."""
+    if not FETCH_PDF:
+        return results
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    total = len(results)
+    for i, row in enumerate(results, 1):
+        num = (row.get("AD_Number") or "").strip()
+        link = row.get("PDF_Link") or ""
+        if not num or "ft=pdf" not in link.lower():
+            continue
+        pf = _fetch_tc_pdf(num, link, session)
+        if pf.get("unsafe_condition"):
+            row["Unsafe_Condition"] = pf["unsafe_condition"]
+        if pf.get("corrective_action"):
+            row["Corrective_Action"] = pf["corrective_action"]
+        if pf.get("compliance_time"):
+            row["Compliance_Time"] = pf["compliance_time"]
+        row["AMOC_Available"] = bool(pf.get("amoc"))
+        if pf.get("service_bulletins"):
+            row["Service_Bulletins"] = pf["service_bulletins"]
+        if i % 100 == 0:
+            print(f"[TC] pdf: {i}/{total} enriquecidos")
+            _save_tc_cache()
+        time.sleep(0.15)
+    _save_tc_cache()
     return results
 
 
