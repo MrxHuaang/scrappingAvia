@@ -77,7 +77,10 @@ def fetch_all_ads(client) -> list[dict]:
     while True:
         resp = (
             client.table("ads")
-            .select("source_label, ad_number, product_type, status, pdf_link, effective_date")
+            .select(
+                "source_label, ad_number, product_type, status, pdf_link, effective_date,"
+                "unsafe_condition, corrective_action, compliance_time"
+            )
             .range(page * page_size, (page + 1) * page_size - 1)
             .execute()
         )
@@ -87,6 +90,50 @@ def fetch_all_ads(client) -> list[dict]:
             break
         page += 1
     return all_rows
+
+
+AI_FIELDS = ["unsafe_condition", "corrective_action", "compliance_time"]
+
+
+def print_ai_coverage(rows: list[dict]) -> None:
+    """Imprime tabla de cobertura de campos semanticos por fuente."""
+    print(f"\n{BOLD}--- Cobertura AI enrichment (unsafe / corrective / compliance) ---{RESET}\n")
+
+    by_source: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_source[r["source_label"] or "Unknown"].append(r)
+
+    col_w = max(len(s) for s in by_source) + 2
+    header = f"{'Source':<{col_w}} {'Total':>7}  {'Unsafe':>8}  {'Corrective':>11}  {'Compliance':>11}  {'Any':>7}"
+    print(header)
+    print("-" * len(header))
+
+    total_all = 0
+    total_any = 0
+    for source in sorted(by_source):
+        source_rows = by_source[source]
+        n = len(source_rows)
+        unsafe = sum(1 for r in source_rows if r.get("unsafe_condition"))
+        corrective = sum(1 for r in source_rows if r.get("corrective_action"))
+        compliance = sum(1 for r in source_rows if r.get("compliance_time"))
+        any_filled = sum(1 for r in source_rows if any(r.get(f) for f in AI_FIELDS))
+        pct = any_filled / n * 100 if n else 0
+        color = GREEN if pct >= 80 else (YELLOW if pct >= 30 else RED)
+        print(
+            f"{source:<{col_w}} {n:>7}  {unsafe:>8}  {corrective:>11}  {compliance:>11}  "
+            f"{color}{any_filled:>5} {pct:>4.0f}%{RESET}"
+        )
+        total_all += n
+        total_any += any_filled
+
+    print("-" * len(header))
+    pct_total = total_any / total_all * 100 if total_all else 0
+    color = GREEN if pct_total >= 80 else (YELLOW if pct_total >= 30 else RED)
+    print(
+        f"{'TOTAL':<{col_w}} {total_all:>7}  {'':>8}  {'':>11}  {'':>11}  "
+        f"{color}{total_any:>5} {pct_total:>4.0f}%{RESET}"
+    )
+    print()
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +200,8 @@ def main():
 
     pct_ok = total["complete"] / len(rows) * 100 if rows else 0
     print(f"\nCalidad global: {BOLD}{pct_ok:.1f}%{RESET} completos\n")
+
+    print_ai_coverage(rows)
 
     # --- Guardar CSV ---
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
