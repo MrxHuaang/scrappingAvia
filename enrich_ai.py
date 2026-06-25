@@ -147,10 +147,22 @@ def download_pdf(url: str, session: requests.Session) -> bytes | None:
         return None
 
 
+_HTML_SIGNATURES = (b"<!doctype", b"<html", b"<HTML", b"<!DOCTYPE")
+
+
+def _is_html_response(data: bytes) -> bool:
+    """True si el servidor devolvio HTML en vez de un PDF (sesion expirada, redireccion)."""
+    snippet = data[:512].lstrip()
+    return any(snippet.startswith(sig) or b"\r\n\r\n<" in data[:256] for sig in _HTML_SIGNATURES)
+
+
 def extract_text(pdf_bytes: bytes) -> str:
     import io
     from pypdf import PdfReader
 
+    if _is_html_response(pdf_bytes):
+        logger.debug("  respuesta HTML en lugar de PDF (sesion requerida?)")
+        return ""
     try:
         reader = PdfReader(io.BytesIO(pdf_bytes))
     except Exception as e:
@@ -419,6 +431,8 @@ def main():
     ap.add_argument("--no-pdf", action="store_true", help="no descargar PDF; usar solo subject/raw_data")
     ap.add_argument("--pdf-cache", default=PDF_CACHE_DIR)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--subject-fallback", action="store_true",
+                    help="si PDF falla o retorna HTML, usar solo el subject como texto fuente")
     ap.add_argument("--retranslate", action="store_true",
                     help="no extrae; busca campos ya guardados en PT/ES y los traduce a ingles")
     args = ap.parse_args()
@@ -448,10 +462,13 @@ def main():
             # sin texto util: cae a metadata (subject) o se salta
             if row.get("subject"):
                 doc_text = (doc_text + "\n" + row["subject"]).strip()
-            if len(doc_text) < MIN_TEXT_CHARS and not args.no_pdf:
-                stats["skipped_scanned"] += 1
-                logger.info(f"[{stats['seen']}] {ad}: PDF sin texto (escaneado?) -> skip")
-                continue
+            if len(doc_text) < MIN_TEXT_CHARS:
+                if args.subject_fallback and row.get("subject"):
+                    doc_text = row["subject"]
+                elif not args.no_pdf:
+                    stats["skipped_scanned"] += 1
+                    logger.info(f"[{stats['seen']}] {ad}: PDF sin texto -> skip")
+                    continue
 
         out = call_llm(args.endpoint, args.model, args.api_key or None, doc_text, row, session)
         if out is None:
