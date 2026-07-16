@@ -356,10 +356,63 @@ def _save_detail_cache():
         pass
 
 
+# Numero de AD dentro del texto EASA: forma moderna 2024-0195(R1) o legado
+# nacional con prefijo (F-1998-173, US-2002-08-03). Guard anti-PAD abajo.
+_EASA_AD_NUM_RE = re.compile(
+    r"(?<![-\w])((?:[A-Z]{1,2}-)?\d{4}-\d{3,4}(?:R\d+)?)(?![-\d])"
+)
+
+
+def _extract_supersedure(text: str) -> tuple[str | None, list[str]]:
+    """
+    (superseded_by, supersedes_all) desde el texto de la pagina de detalle.
+    La pagina expone el dato como campo estructurado "Supersedure"; fallback a
+    prosa. Excluye referencias a PAD (Proposed AD).
+    """
+    # 1) campo estructurado: "Supersedure\n<contenido hasta el proximo label>"
+    m = re.search(r"Supersedure\s*:?\s*\n(.{0,400}?)(?:\n[A-Z][a-z]+(?:\s[a-z]+)*\s*\n|\Z)", text, re.S)
+    block = m.group(1) if m else ""
+    scope = block or text
+
+    superseded_by = None
+    supersedes: list[str] = []
+
+    def _nums(segment: str) -> list[str]:
+        found = []
+        for nm in _EASA_AD_NUM_RE.finditer(segment):
+            before = segment[max(0, nm.start() - 12):nm.start()]
+            if re.search(r"PAD\s*$", before, re.I):
+                continue  # referencia a un Proposed AD, no supersession
+            found.append(nm.group(1).strip())
+        return list(dict.fromkeys(found))
+
+    by = re.search(r"superseded\s+by\s*:?\s*((?:EASA\s+)?AD\s+)?([^\n]{0,120})", scope, re.I)
+    if by:
+        cands = _nums(by.group(0))
+        if cands:
+            superseded_by = cands[0]
+
+    sup = re.search(r"(?:this\s+AD\s+)?supersedes?\s*:?\s*([^\n]{0,200})", scope, re.I)
+    if sup:
+        supersedes = [n for n in _nums(sup.group(0)) if n != superseded_by]
+
+    # fallback prosa vieja (compat con el regex original)
+    if not superseded_by and not supersedes:
+        m2 = re.search(r"supersede[sd]?\s+(?:by\s+)?EASA AD\s+([A-Z0-9][A-Z0-9\-/]+)", text, re.I)
+        if m2:
+            if re.search(r"superseded by", text, re.I):
+                superseded_by = m2.group(1).strip()
+            else:
+                supersedes = [m2.group(1).strip()]
+
+    return superseded_by, supersedes
+
+
 def _parse_detail(text: str) -> dict:
     """Extrae campos estructurados del texto plano de la pagina de detalle."""
     out = {"publication_date": None, "amoc": False,
-           "service_bulletins": [], "supersedes": None, "superseded_by": None}
+           "service_bulletins": [], "supersedes": None, "superseded_by": None,
+           "supersedes_all": []}
 
     m = re.search(r"Issue date\s+(\d{4}-\d{2}-\d{2})", text)
     if m:
@@ -368,12 +421,10 @@ def _parse_detail(text: str) -> dict:
     out["amoc"] = "alternative methods of compliance" in text.lower() \
         or "alternative method of compliance" in text.lower()
 
-    m = re.search(r"supersede[sd]?\s+(?:by\s+)?EASA AD\s+([A-Z0-9][A-Z0-9\-/]+)", text, re.I)
-    if m:
-        if re.search(r"superseded by", text, re.I):
-            out["superseded_by"] = m.group(1).strip()
-        else:
-            out["supersedes"] = m.group(1).strip()
+    superseded_by, supersedes_all = _extract_supersedure(text)
+    out["superseded_by"] = superseded_by
+    out["supersedes_all"] = supersedes_all
+    out["supersedes"] = supersedes_all[0] if supersedes_all else None
 
     # Bloque "Publication(s) and related information" -> referencias SB/AOT
     pub = re.search(
@@ -399,10 +450,14 @@ def _parse_detail(text: str) -> dict:
 
 def _fetch_detail(ad_number: str, session: requests.Session) -> dict:
     cache = _load_detail_cache()
-    if ad_number in cache:
+    # "supersedes_all" => entrada escrita con el parser nuevo de Supersedure.
+    # Entradas viejas se re-piden una vez (los hits existentes siguen validos
+    # como input del backfill mientras tanto).
+    if ad_number in cache and "supersedes_all" in cache[ad_number]:
         return cache[ad_number]
     result = {"publication_date": None, "amoc": False,
-              "service_bulletins": [], "supersedes": None, "superseded_by": None}
+              "service_bulletins": [], "supersedes": None, "superseded_by": None,
+              "supersedes_all": []}
     try:
         resp = session.get(f"{EASA_DETAIL_URL}/{ad_number}", headers=HEADERS, timeout=40)
         if resp.ok:
@@ -563,8 +618,18 @@ def enrich_details(results: list[dict]) -> list[dict]:
             row["Publication_Date"] = d["publication_date"]
         row["AMOC_Available"] = bool(d.get("amoc"))
         sbs = list(d.get("service_bulletins") or [])
-        if d.get("supersedes"):
-            row["Supersedes"] = d["supersedes"]
+        supersedes_all = list(d.get("supersedes_all") or [])
+        if not supersedes_all and d.get("supersedes"):
+            supersedes_all = [d["supersedes"]]
+        # Regla implicita de revisiones: 2024-0195R2 supersede 2024-0195R1 (y
+        # la base). Aplica solo si la pagina no declaro un Supersedure explicito.
+        if not supersedes_all:
+            rev = re.match(r"^(.+?)R(\d+)$", num)
+            if rev:
+                base, n = rev.group(1), int(rev.group(2))
+                supersedes_all = [f"{base}R{n - 1}" if n > 1 else base]
+        if supersedes_all:
+            row["Supersedes"] = ", ".join(dict.fromkeys(supersedes_all))
         if d.get("superseded_by"):
             row["Superseded_By"] = d["superseded_by"]
 

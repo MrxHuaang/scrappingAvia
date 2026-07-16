@@ -370,6 +370,12 @@ def _parse_tc_results(soup, make_name, model_name):
             else:
                 status = "Current"  # FIXED: fallback real de TC (no "Final Rule")
 
+            # Supersession desde el subject: "(Superseded by CF-2019-33)".
+            superseded_by = None
+            m_sup = re.search(r"superseded\s+by\s+(CF-\d{2,4}-\d{2,3}(?:R\d+)?)", subject, re.I)
+            if m_sup:
+                superseded_by = m_sup.group(1).upper()
+
             # FIXED: docket = AD Number (es el identificador CAWIS, equivalente a docket)
             docket = ad_number
 
@@ -396,7 +402,7 @@ def _parse_tc_results(soup, make_name, model_name):
                 resolved_make = make_name
 
             if ad_number:
-                results.append({
+                row_out = {
                     "Source": "Transport Canada",
                     "AD_Number": ad_number,
                     "Subject": subject,
@@ -407,7 +413,10 @@ def _parse_tc_results(soup, make_name, model_name):
                     "Product_Type": product_type,  # FIXED: ya no vacío
                     "Docket": docket,           # FIXED: ya no vacío
                     "PDF_Link": pdf_link,
-                })
+                }
+                if superseded_by and superseded_by != ad_number:
+                    row_out["Superseded_By"] = superseded_by
+                results.append(row_out)
 
         except Exception as e:
             print(f"[TC] WARNING error parseando fila: {e}")
@@ -530,15 +539,26 @@ def _parse_tc_pdf(text: str) -> dict:
         if t and t.upper() not in (x.upper() for x in sbs):
             sbs.append(t)
     out["service_bulletins"] = sbs[:20]
+
+    # Supersession same-source: solo numeros CF- (los layouts EU/US-adoptados
+    # citan ADs EASA/FAA — esas son equivalencias, no supersession de TC).
+    m = re.search(
+        r"(?:this\s+(?:directive|AD)\s+)?supersedes\s+(?:AD\s+|Airworthiness\s+Directive\s+)?"
+        r"(CF-\d{2,4}-\d{2,3}(?:R\d+)?)(?![-\d])",
+        txt, re.I,
+    )
+    out["supersedes"] = m.group(1).upper() if m else None
     return out
 
 
 def _fetch_tc_pdf(ad_number: str, pdf_link: str, session: requests.Session) -> dict:
     cache = _load_tc_cache()
-    if ad_number in cache:
+    # "supersedes" => entrada con el esquema nuevo; las viejas se re-piden una vez.
+    if ad_number in cache and "supersedes" in cache[ad_number]:
         return cache[ad_number]
     result = {"unsafe_condition": None, "corrective_action": None,
-              "compliance_time": None, "amoc": False, "service_bulletins": []}
+              "compliance_time": None, "amoc": False, "service_bulletins": [],
+              "supersedes": None}
     if pdf_link and "ft=pdf" in pdf_link.lower():
         try:
             from pypdf import PdfReader
@@ -574,6 +594,8 @@ def enrich_details(results: list[dict]) -> list[dict]:
         row["AMOC_Available"] = bool(pf.get("amoc"))
         if pf.get("service_bulletins"):
             row["Service_Bulletins"] = pf["service_bulletins"]
+        if pf.get("supersedes") and pf["supersedes"] != num:
+            row["Supersedes"] = pf["supersedes"]
         if i % 100 == 0:
             print(f"[TC] pdf: {i}/{total} enriquecidos")
             _save_tc_cache()

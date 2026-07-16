@@ -77,12 +77,32 @@ def extract_make_model(title: str, abstract: str = "") -> tuple[str, str]:
 
 
 def normalize_ad_number(raw: str) -> str:
-    """Normaliza ad_number: strip espacios, guion unicode -> ASCII, uppercase prefijo."""
+    """
+    Normaliza ad_number a forma canónica BARE: strip espacios, guion unicode
+    -> ASCII, y quita el prefijo "AD "/"A.D." (la fase GovInfo MODS lo agrega
+    como "AD 2026-13-08"; el resto de fuentes guarda el número pelado). Sin
+    esto, el mismo AD queda como "AD 2026-13-08" y "2026-13-08" -> rompe dedupe
+    por (source, ad_number) y el título muestra el prefijo. Idempotente.
+    """
     if not raw:
         return ""
     s = raw.strip().replace("–", "-").replace("—", "-")
     s = re.sub(r"\s+", " ", s)
-    return s
+    s = re.sub(r"^A\.?\s*D\.?\s+", "", s, flags=re.I)  # "AD " / "A.D. " -> ""
+    return s.strip()
+
+
+# ------------------------------------------------------------------
+# Patrones de numero de AD por autoridad (compartidos por scrapers y
+# scripts de supersession/equivalents). Lookarounds anti-colision para
+# no matchear dentro de dockets (FAA-2025-1364), fechas o SB numbers.
+# ------------------------------------------------------------------
+# FAA: 2024-01-02 o 98-21-09, sufijo de revision opcional (2018-23-51R1)
+AD_NUM_FAA = r"(?<![-\d])(?:\d{2}|\d{4})-\d{2}-\d{2}(?:R\d+)?(?![-\d])"
+# EASA moderno: 2024-0195(R1); legado nacional con prefijo: F-1998-173, US-2002-08-03
+AD_NUM_EASA = r"(?<![-\w])(?:[A-Z]{1,2}-)?\d{4}-\d{3,4}(?:R\d+)?(?![-\d])"
+# Transport Canada: CF-2015-19(R1), legado CF-90-03
+AD_NUM_TC = r"CF-\d{2,4}-\d{2,3}(?:R\d+)?(?![-\d])"
 
 
 def map_product_type(product_type):
