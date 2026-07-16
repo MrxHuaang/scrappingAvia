@@ -383,12 +383,15 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
         superseded_by = (raw.get("Superseded_By") or "").strip()
         if superseded_by:
             supersede_updates.append((ad_id, normalize_ad_number(superseded_by)))
-        # "This AD supersedes Y" (EASA) -> the OLDER row Y's superseded_to = this AD.
+        # "This AD supersedes Y[, Z...]" -> each OLDER row's superseded_to = this AD.
+        # FAA/EASA/TC pueden declarar varios targets separados por coma.
         supersedes = (raw.get("Supersedes") or "").strip()
-        if supersedes:
-            old_id = id_map.get(normalize_ad_number(supersedes))
+        for target in (t.strip() for t in supersedes.split(",")):
+            if not target:
+                continue
+            old_id = id_map.get(normalize_ad_number(target))
             if old_id and old_id != ad_id:
-                # mark Y superseded by this ad_number (resolved below)
+                # mark the older AD superseded by this ad_number (resolved below)
                 supersede_updates.append((old_id, r["ad_number"]))
 
     # ad_applicability: delete-then-insert for touched ads (scraper-owned table)
@@ -462,8 +465,9 @@ def _merge_faa_results(fr_rows: list[dict], govinfo_rows: list[dict]) -> list[di
     """
     Fusiona resultados FR API + GovInfo a nivel de campo.
 
-    Join key: el FR document_number, que FR API guarda en "Docket" y GovInfo
-    expone como "GranuleId" (son el mismo identificador del Federal Register).
+    Join key: el FR document_number, que FR API guarda en "FR_DocNumber" (y,
+    como respaldo para filas viejas, en "Docket") y GovInfo expone como
+    "GranuleId" (son el mismo identificador del Federal Register).
 
     En match: la fila FR es la base (mejor Subject/Make/Model via abstract,
     effective_on real, pdf de federalregister.gov) y GovInfo aporta la
@@ -476,7 +480,9 @@ def _merge_faa_results(fr_rows: list[dict], govinfo_rows: list[dict]) -> list[di
     """
     fr_by_docnum: dict[str, dict] = {}
     for row in fr_rows:
-        doc_num = (row.get("Docket") or "").strip()
+        # FR_DocNumber es el join key estable; Docket puede ser ya el docket
+        # real FAA-xxxx-xxxx (nuevo comportamiento del scraper FR).
+        doc_num = (row.get("FR_DocNumber") or row.get("Docket") or "").strip()
         if doc_num:
             fr_by_docnum[doc_num] = row
 

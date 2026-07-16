@@ -74,19 +74,46 @@ def _save_fulltext_cache() -> None:
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
+# Identidad del AD en el cuerpo del rule. El titulo/abstract de FR API casi
+# nunca traen el numero AD real (2026-13-08); vive en el header regulatorio
+# "[Docket No. FAA-2026-3482; ... AD 2026-13-08]". Lo extraemos del full text
+# (ya lo bajamos para compliance/AMOC) para no depender solo de la fase GovInfo
+# MODS del batch — asi la busqueda en vivo tambien queda reparada.
+# 4 digitos de anio (2024-01-02) o 2 (98-21-09, era pre-2000).
+_FT_AD_RE = re.compile(r"\bAD\s*(\d{2,4}[-–—]\d{2}[-–—]\d{2,4})\b", re.I)
+_FT_DOCKET_RE = re.compile(
+    r"Docket\s*No\.?\s*[:,]?\s*(FAA[-\s]?\d{4}[-–—]\d{1,6})", re.I
+)
+
+# "This AD replaces AD 2020-06-14" / "The FAA is superseding AD 2018-23-51R1".
+# Exige el keyword AD para no matchear fechas/dockets; acepta forma Emergency.
+_FT_SUPERSEDE_RE = re.compile(
+    r"(?:supersed(?:es|ing)|replaces)\s+(?:Emergency\s+)?"
+    r"(?:Airworthiness\s+Directive\s*\(?AD\)?|AD)\s*"
+    r"((?:\d{2}|\d{4})-\d{2}-\d{2}(?:R\d+)?)(?![-\d])",
+    re.I,
+)
+
 
 def _fetch_fulltext_fields(doc_number: str, publication_date: str) -> dict:
     """
     Baja el cuerpo COMPLETO del rule desde GovInfo (FR-{date}/granules/{docnum}/htm)
-    y extrae {compliance_time, amoc}. GovInfo se usa porque federalregister.gov
-    bloquea (bot) los endpoints full_text. Cacheado por document_number.
-    Requiere GOVINFO_API_KEY (leida en runtime; load_dotenv corre tras el import).
+    y extrae {compliance_time, amoc, ad, docket}. GovInfo se usa porque
+    federalregister.gov bloquea (bot) los endpoints full_text. Cacheado por
+    document_number. Requiere GOVINFO_API_KEY (leida en runtime; load_dotenv
+    corre tras el import).
+
+    'ad' y 'docket' son la identidad real del AD extraida del header regulatorio.
     """
     cache = _load_fulltext_cache()
-    if doc_number in cache:
-        return cache[doc_number]
+    # "supersedes" in entry => cache escrito con el esquema nuevo (incluye
+    # supersession). Entradas viejas se re-piden una vez para poblar el campo
+    # nuevo — mismo patron que la migracion previa de ad/docket.
+    cached = cache.get(doc_number)
+    if cached is not None and "supersedes" in cached:
+        return cached
 
-    result = {"compliance_time": None, "amoc": False}
+    result = {"compliance_time": None, "amoc": False, "ad": None, "docket": None, "supersedes": []}
     key = os.environ.get("GOVINFO_API_KEY", "").strip()
     if doc_number and publication_date and key:
         global _ft_session
@@ -107,6 +134,20 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str) -> dict:
                     or "alternative methods of compliance" in low
                 )
                 result["compliance_time"] = enrich.extract_compliance_from_fulltext(txt)
+                m = _FT_AD_RE.search(txt)
+                if m:
+                    result["ad"] = normalize_ad_number(m.group(1))
+                m = _FT_DOCKET_RE.search(txt)
+                if m:
+                    result["docket"] = (
+                        normalize_ad_number(m.group(1)).replace(" ", "-").upper()
+                    )
+                # Supersession: "This AD replaces AD 2020-06-14" /
+                # "The FAA is superseding AD 2018-23-51" en el cuerpo del rule.
+                result["supersedes"] = [
+                    normalize_ad_number(n)
+                    for n in dict.fromkeys(_FT_SUPERSEDE_RE.findall(txt))
+                ]
         except requests.RequestException:
             pass
 
@@ -184,10 +225,10 @@ def search_ads_by_year_range(year_from: int, year_to: int) -> list[dict]:
         all_results.extend(_search_year(yr))
         _save_fulltext_cache()  # persistir progreso del cache full-text por anio
     print(f"[Federal Register] Total {year_from}-{year_to}: {len(all_results)} ADs")
-    # El titulo de FR casi nunca trae el numero AD real; cuando falta, el
-    # ad_number cae al document_number (mismo valor que Docket). La fase
-    # GovInfo MODS lo repara en el merge; este warning da visibilidad.
-    fallbacks = sum(1 for r in all_results if r["AD_Number"] == r["Docket"])
+    # El titulo de FR casi nunca trae el numero AD real; cuando ni title ni
+    # abstract ni full text lo traen, el ad_number cae al FR document_number.
+    # La fase GovInfo MODS lo repara en el merge; este warning da visibilidad.
+    fallbacks = sum(1 for r in all_results if r["AD_Number"] == r.get("FR_DocNumber"))
     if fallbacks:
         print(
             f"[Federal Register] WARNING: {fallbacks}/{len(all_results)} ADs sin numero "
@@ -251,19 +292,38 @@ def _parse_document(doc) -> dict | None:
     try:
         title = doc.get("title", "") or ""
         abstract = doc.get("abstract", "") or ""
+        doc_number = doc.get("document_number", "") or ""
+        pub_date = doc.get("publication_date", "") or ""
 
+        # Numero AD real: prioridad title -> abstract -> full text -> (ultimo
+        # recurso) FR document_number. El titulo casi nunca lo trae, por eso el
+        # historico caia directo a document_number (ej "2026-13540"), que NO es
+        # el numero AD ("2026-13-08") y no concuerda con el PDF mostrado.
         ad_number = ""
         ad_match = re.search(r"(AD\s*\d{4}[-–]\d{2}[-–]\d{2,4})", title, re.I)
         if ad_match:
             ad_number = ad_match.group(1)
-        else:
-            ad_match = re.search(r"(\d{4}[-–]\d{2}[-–]\d{2,4})", title)
+        if not ad_number:
+            ad_match = _FT_AD_RE.search(abstract)
             if ad_match:
                 ad_number = ad_match.group(1)
-            else:
-                ad_number = doc.get("document_number", "")
+
+        # Full text: aporta identidad (ad + docket) y compliance/AMOC. Se baja
+        # una sola vez por documento (cacheado por document_number).
+        ft = {}
+        if FETCH_FULL_TEXT:
+            ft = _fetch_fulltext_fields(doc_number, pub_date)
+            if not ad_number and ft.get("ad"):
+                ad_number = ft["ad"]
+
+        if not ad_number:
+            ad_match = re.search(r"(\d{4}[-–]\d{2}[-–]\d{2,4})", title)
+            ad_number = ad_match.group(1) if ad_match else doc_number
 
         ad_number = normalize_ad_number(ad_number)
+        # Docket real (FAA-2026-3482) si el full text lo trae; si no, el
+        # document_number (la fase GovInfo MODS del batch lo repara igual).
+        docket = ft.get("docket") or doc_number
         make, model = extract_make_model(title, abstract)
 
         subject = re.sub(r"^Airworthiness Directives[;:]\s*", "", title, flags=re.I)
@@ -316,23 +376,28 @@ def _parse_document(doc) -> dict | None:
             "Abstract": abstract.strip(),
             "Make": make.strip(),
             "Model": model.strip(),
-            "Publication_Date": doc.get("publication_date", "") or "",
+            "Publication_Date": pub_date,
             "Effective_Date": effective_date,
             "Status": status,
             "Product_Type": product_type,
-            "Docket": doc.get("document_number", ""),
+            "Docket": docket,
+            # FR document_number estable — clave de join con GovInfo MODS en
+            # _merge_faa_results(). Se mantiene aunque Docket pase a ser el
+            # docket real FAA-xxxx-xxxx.
+            "FR_DocNumber": doc_number,
             "PDF_Link": pdf_link,
         }
 
-        # compliance_time + AMOC viven en el cuerpo completo del rule, no en el
-        # abstract -> se bajan de raw_text_url (cacheado por document_number).
-        if FETCH_FULL_TEXT:
-            ft = _fetch_fulltext_fields(
-                doc.get("document_number", ""), doc.get("publication_date", "") or ""
-            )
-            if ft.get("compliance_time"):
-                out["Compliance_Time"] = ft["compliance_time"]
-            out["AMOC_Available"] = bool(ft.get("amoc"))
+        # compliance_time + AMOC ya vienen del full text bajado arriba (ft).
+        if ft.get("compliance_time"):
+            out["Compliance_Time"] = ft["compliance_time"]
+        out["AMOC_Available"] = bool(ft.get("amoc"))
+
+        # Supersession: el rule nuevo declara a cuales ADs reemplaza. El resolver
+        # de populate_relations() marca esos ADs viejos como Superseded -> este.
+        supersedes = [n for n in (ft.get("supersedes") or []) if n and n != out["AD_Number"]]
+        if supersedes:
+            out["Supersedes"] = ", ".join(supersedes)
 
         return out
     except Exception as e:

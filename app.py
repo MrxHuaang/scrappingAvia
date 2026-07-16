@@ -159,7 +159,10 @@ def _build_supabase_query(sb, source, keyword, make, model, product_type, date_f
     """Construye el query base de Supabase (sin limit/range)."""
     q = sb.table("ads").select(
         "source, source_label, ad_number, subject, make, model, "
-        "product_type, effective_date, status, docket, pdf_link"
+        "product_type, effective_date, status, docket, pdf_link, "
+        # Embed self-FK: the AD that supersedes this row (if any), so the UI
+        # can flag superseded rows inline without a second round trip.
+        "superseded:ads!ads_superseded_to_fkey(ad_number)"
     )
 
     if source != "all":
@@ -251,6 +254,7 @@ def _search_supabase(source, keyword="", make="", model="", product_type="",
                 "Product_Type": row.get("product_type", "") or "",
                 "Docket": row.get("docket", "") or "",
                 "PDF_Link": row.get("pdf_link", "") or "",
+                "Superseded_By": (row.get("superseded") or {}).get("ad_number", "") or "",
             })
 
         logger.info(f"[DB] {source}: {len(results)} resultados desde Supabase")
