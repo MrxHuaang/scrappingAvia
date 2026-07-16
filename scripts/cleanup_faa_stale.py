@@ -1,0 +1,201 @@
+"""
+In-place migration of `ads` (source=federal_register) to canonical BARE AD
+numbers, removing the stale FR-document-number duplicates. No scraping — uses
+only data already present:
+
+  * "AD "-prefixed rows (e.g. "AD 2026-13-08")  -> correct AD, wrong format.
+  * stale doc-number rows (e.g. "2026-13540")   -> FR document number; the
+    GovInfo MODS cache maps each to its real AD.
+
+End state: every real AD exists exactly once as a bare number (e.g. "2026-13-08");
+no doc-number rows; no "AD " prefix. User refs (ad_saved / ad_reviewed /
+ad_compliance) follow via ON UPDATE CASCADE, or are merged when a duplicate
+already exists at the target.
+
+Strategy per target bare number:
+  - keeper = the row already equal to target if present, else we RENAME one
+    member to target (UPDATE -> ON UPDATE CASCADE moves its refs).
+  - every other member: re-point its user refs to the keeper (merge on
+    conflict), then DELETE it.
+Rows whose real AD can't be resolved (doc-number not in cache) are LEFT as-is
+and reported — never deleted (don't lose an AD).
+
+DRY_RUN=1 (default) = read-only plan. DRY_RUN=0 = execute.
+"""
+
+import json
+import os
+import re
+from collections import defaultdict
+
+from dotenv import load_dotenv
+
+load_dotenv()
+from supabase import create_client  # noqa: E402
+
+DRY_RUN = os.environ.get("DRY_RUN", "1") != "0"
+SOURCE = "federal_register"
+# (table, extra PK columns beyond source+ad_number, allow_merge)
+# allow_merge=True: a dup at the target replaces the moved ref (delete the mover).
+# allow_merge=False: the table has no meaningful unique key (ad_notes: many notes
+# per AD, PK=id), so always repoint — never delete, or we'd lose annotations.
+# All four carry the (source, ad_number) FK with on delete restrict, so refs on a
+# to-be-deleted duplicate row must be moved first.
+USER_TABLES = [
+    ("ad_saved", ["workspace_id"], True),
+    ("ad_reviewed", ["workspace_id", "user_id"], True),
+    ("ad_compliance", ["workspace_id", "user_id", "aircraft_id"], True),
+    ("ad_notes", [], False),
+]
+
+_BARE_RE = re.compile(r"^\d{2,4}-\d{2}-\d{2,4}[A-Z]?$", re.I)
+_PREFIX_RE = re.compile(r"^A\.?\s*D\.?\s+", re.I)
+
+
+def bare(s: str) -> str:
+    return _PREFIX_RE.sub("", (s or "").strip()).strip()
+
+
+def is_bare(s: str) -> bool:
+    return bool(_BARE_RE.match(s or ""))
+
+
+def load_docmap() -> dict:
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "outputs", "govinfo_mods_cache.json")
+    cache = json.load(open(path, encoding="utf-8"))
+    out = {}
+    for gid, e in cache.get("granules", {}).items():
+        ad = (e or {}).get("ad")
+        if ad:
+            out[gid] = bare(ad)
+    return out
+
+
+def target_of(adn: str, docmap: dict):
+    """Canonical bare target for a row's ad_number, or None if unresolved."""
+    if is_bare(adn):
+        return adn
+    if _PREFIX_RE.match(adn or ""):
+        b = bare(adn)
+        return b if is_bare(b) else None
+    t = docmap.get(adn)
+    return t if (t and is_bare(t)) else None
+
+
+def main():
+    sb = create_client(os.environ["SUPABASE_URL"],
+                       os.environ.get("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_ANON_KEY"])
+    docmap = load_docmap()
+    print(f"=== FAA canonical migration — {'DRY-RUN' if DRY_RUN else 'EXECUTE'} ===")
+    print(f"MODS docnum->AD entries: {len(docmap)}")
+
+    # load all fed_register ad_numbers ------------------------------------
+    present = set()
+    off = 0
+    while True:
+        r = sb.table("ads").select("ad_number").eq("source", SOURCE).range(off, off + 999).execute().data
+        present.update(x["ad_number"] for x in r)
+        if len(r) < 1000:
+            break
+        off += 1000
+    print(f"federal_register rows: {len(present)}")
+
+    grp = defaultdict(list)      # target bare -> [member ad_numbers]
+    unresolved = []
+    for adn in present:
+        t = target_of(adn, docmap)
+        (grp[t].append(adn) if t else unresolved.append(adn))
+    print(f"distinct target ADs: {len(grp)} | unresolved (kept as-is): {len(unresolved)}")
+    if unresolved:
+        print("  unresolved sample:", sorted(unresolved)[:10])
+
+    renames = []   # (old -> target)  UPDATE ads
+    deletes = []   # ad_numbers to DELETE
+    ref_moves = [] # (old -> target) user-ref repoint (merge)
+    for target, members in grp.items():
+        keeper_exists = target in present
+        rest = [m for m in members if m != target]
+        if not keeper_exists:
+            # rename one member (prefer an "AD "-prefixed one) to the bare target
+            rest_sorted = sorted(rest, key=lambda m: 0 if _PREFIX_RE.match(m) else 1)
+            r0 = rest_sorted[0]
+            renames.append((r0, target))
+            rest = [m for m in rest_sorted[1:]]
+        for m in rest:
+            ref_moves.append((m, target))
+            deletes.append(m)
+
+    print(f"planned: {len(renames)} renames (cascade), {len(deletes)} deletes, "
+          f"{len(ref_moves)} ref-repoint checks")
+    # ref summary (only rows that actually carry user refs matter)
+    print("sample renames:", renames[:3])
+    print("sample deletes:", deletes[:3])
+
+    if DRY_RUN:
+        print("DRY-RUN: no writes. Set DRY_RUN=0 to execute.")
+        return
+
+    # execute -------------------------------------------------------------
+    # 1) re-point user refs off soon-to-be-deleted rows, onto the keeper.
+    #    keeper row is guaranteed to exist AFTER renames, so do renames first.
+    done = 0
+    for old, target in renames:
+        try:
+            sb.table("ads").update({"ad_number": target}).match(
+                {"source": SOURCE, "ad_number": old}).execute()
+        except Exception as e:
+            # target already exists (race/dup) -> treat old as a delete instead
+            print(f"  rename {old!r}->{target!r} failed ({e}); will delete")
+            deletes.append(old)
+            ref_moves.append((old, target))
+        done += 1
+        if done % 1000 == 0:
+            print(f"  renamed {done}/{len(renames)}")
+    print(f"renames done: {done}")
+
+    # 2) merge/repoint user refs sitting on to-be-deleted rows
+    moved = 0
+    for old, target in ref_moves:
+        for tbl, extra, allow_merge in USER_TABLES:
+            rows = sb.table(tbl).select("*").eq("source", SOURCE).eq("ad_number", old).execute().data
+            if not rows:
+                continue
+            if not allow_merge:
+                # No unique key (e.g. ad_notes) — repoint every row, never delete.
+                sb.table(tbl).update({"ad_number": target}).eq("source", SOURCE).eq("ad_number", old).execute()
+                print(f"  [{tbl}] REPOINT-ALL {old!r}->{target!r} ({len(rows)})")
+                moved += len(rows)
+                continue
+            for ro in rows:
+                probe = {"source": SOURCE, "ad_number": target}
+                for c in extra:
+                    probe[c] = ro.get(c)
+                dup = sb.table(tbl).select("ad_number").match(probe).execute().data
+                match = {"source": SOURCE, "ad_number": old}
+                for c in extra:
+                    match[c] = ro.get(c)
+                if dup:
+                    sb.table(tbl).delete().match(match).execute()
+                    print(f"  [{tbl}] MERGE {old!r}->{target!r} (deleted dup)")
+                else:
+                    sb.table(tbl).update({"ad_number": target}).match(match).execute()
+                    print(f"  [{tbl}] REPOINT {old!r}->{target!r}")
+                moved += 1
+    print(f"ref moves applied: {moved}")
+
+    # 3) bulk-delete the stale rows (now unreferenced)
+    deleted = 0
+    dedup = sorted(set(deletes))
+    for i in range(0, len(dedup), 100):
+        chunk = dedup[i:i + 100]
+        sb.table("ads").delete().eq("source", SOURCE).in_("ad_number", chunk).execute()
+        deleted += len(chunk)
+        if deleted % 2000 == 0:
+            print(f"  deleted {deleted}/{len(dedup)}")
+    print(f"done. renamed {len(renames)}, deleted {deleted}, refs moved {moved}, "
+          f"unresolved-kept {len(unresolved)}")
+
+
+if __name__ == "__main__":
+    main()
