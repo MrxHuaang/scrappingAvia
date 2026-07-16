@@ -137,6 +137,26 @@ def main():
         return
 
     # execute -------------------------------------------------------------
+    # 0) detach collection memberships sitting on ANY affected old ad_number.
+    #    ad_saved_collections FKs ad_saved WITHOUT on-update-cascade, so both the
+    #    ads rename cascade (ads -> ad_saved -> child) and the direct ad_saved
+    #    repoint violate it. Detach globally now; reattach mapped at the end.
+    target_by_old = {old: tgt for old, tgt in renames}
+    target_by_old.update({old: tgt for old, tgt in ref_moves})
+    affected_olds = sorted(target_by_old)
+    detached: list[dict] = []
+    for i in range(0, len(affected_olds), 200):
+        chunk = affected_olds[i:i + 200]
+        rows = (sb.table("ad_saved_collections").select("*")
+                .eq("source", SOURCE).in_("ad_number", chunk).execute().data)
+        detached.extend(rows)
+    if detached:
+        nums = sorted({r["ad_number"] for r in detached})
+        for i in range(0, len(nums), 100):
+            sb.table("ad_saved_collections").delete() \
+              .eq("source", SOURCE).in_("ad_number", nums[i:i + 100]).execute()
+        print(f"detached {len(detached)} collection memberships on {len(nums)} ADs")
+
     # 1) re-point user refs off soon-to-be-deleted rows, onto the keeper.
     #    keeper row is guaranteed to exist AFTER renames, so do renames first.
     done = 0
@@ -154,10 +174,27 @@ def main():
             print(f"  renamed {done}/{len(renames)}")
     print(f"renames done: {done}")
 
-    # 2) merge/repoint user refs sitting on to-be-deleted rows
+    # 2) merge/repoint user refs sitting on to-be-deleted rows.
+    #    Bulk-prefetch which old ad_numbers actually carry refs (user tables are
+    #    tiny vs the 13k-row move list) — iterating per-move × per-table costs
+    #    ~53k serial requests and times out; this costs a few hundred.
+    olds_with_refs: dict[str, set] = {}
+    all_olds = sorted({old for old, _ in ref_moves})
+    for tbl, _extra, _am in USER_TABLES:
+        hit: set = set()
+        for i in range(0, len(all_olds), 200):
+            chunk = all_olds[i:i + 200]
+            rows = (sb.table(tbl).select("ad_number").eq("source", SOURCE)
+                    .in_("ad_number", chunk).execute().data)
+            hit.update(r["ad_number"] for r in rows)
+        olds_with_refs[tbl] = hit
+        print(f"  [{tbl}] refs on {len(hit)} of {len(all_olds)} move candidates")
+
     moved = 0
     for old, target in ref_moves:
         for tbl, extra, allow_merge in USER_TABLES:
+            if old not in olds_with_refs.get(tbl, ()):
+                continue
             rows = sb.table(tbl).select("*").eq("source", SOURCE).eq("ad_number", old).execute().data
             if not rows:
                 continue
@@ -175,24 +212,78 @@ def main():
                 match = {"source": SOURCE, "ad_number": old}
                 for c in extra:
                     match[c] = ro.get(c)
+
+                # ad_saved has a child table (ad_saved_collections) whose FK has
+                # NO on-update-cascade: detach memberships first, reattach after.
+                memberships = []
+                if tbl == "ad_saved":
+                    memberships = (sb.table("ad_saved_collections").select("*")
+                                   .eq("source", SOURCE).eq("ad_number", old)
+                                   .eq("workspace_id", ro.get("workspace_id")).execute().data)
+                    if memberships:
+                        sb.table("ad_saved_collections").delete() \
+                          .eq("source", SOURCE).eq("ad_number", old) \
+                          .eq("workspace_id", ro.get("workspace_id")).execute()
+
                 if dup:
                     sb.table(tbl).delete().match(match).execute()
                     print(f"  [{tbl}] MERGE {old!r}->{target!r} (deleted dup)")
                 else:
                     sb.table(tbl).update({"ad_number": target}).match(match).execute()
                     print(f"  [{tbl}] REPOINT {old!r}->{target!r}")
+
+                # Reattach collection memberships under the target ad_number
+                # (upsert: the target may already sit in the same collection).
+                for mb in memberships:
+                    mb = dict(mb)
+                    mb["ad_number"] = target
+                    try:
+                        sb.table("ad_saved_collections").upsert(
+                            mb, on_conflict="collection_id,ad_number,source").execute()
+                    except Exception as e:
+                        print(f"    membership reattach failed ({e}) — skipped")
                 moved += 1
     print(f"ref moves applied: {moved}")
 
-    # 3) bulk-delete the stale rows (now unreferenced)
+    # 3) bulk-delete the stale rows (now unreferenced). Chunk of 50 keeps each
+    #    statement (with its FK cascades) under the DB statement timeout; on a
+    #    chunk failure fall back to per-row so one bad row can't block 49.
     deleted = 0
+    failed = 0
     dedup = sorted(set(deletes))
-    for i in range(0, len(dedup), 100):
-        chunk = dedup[i:i + 100]
-        sb.table("ads").delete().eq("source", SOURCE).in_("ad_number", chunk).execute()
-        deleted += len(chunk)
-        if deleted % 2000 == 0:
+    for i in range(0, len(dedup), 50):
+        chunk = dedup[i:i + 50]
+        try:
+            sb.table("ads").delete().eq("source", SOURCE).in_("ad_number", chunk).execute()
+            deleted += len(chunk)
+        except Exception as e:
+            print(f"  chunk delete failed ({e}); retrying per-row")
+            for adn in chunk:
+                try:
+                    sb.table("ads").delete().eq("source", SOURCE).eq("ad_number", adn).execute()
+                    deleted += 1
+                except Exception as e2:
+                    failed += 1
+                    print(f"    DELETE FAILED {adn!r}: {e2}")
+        if deleted % 2000 < 50:
             print(f"  deleted {deleted}/{len(dedup)}")
+    if failed:
+        print(f"  WARNING: {failed} rows could not be deleted (kept)")
+
+    # 4) reattach the detached collection memberships under the target numbers.
+    reattached = re_failed = 0
+    for mb in detached:
+        mb = dict(mb)
+        mb["ad_number"] = target_by_old.get(mb["ad_number"], mb["ad_number"])
+        try:
+            sb.table("ad_saved_collections").upsert(
+                mb, on_conflict="collection_id,ad_number,source").execute()
+            reattached += 1
+        except Exception as e:
+            re_failed += 1
+            print(f"  membership reattach failed {mb.get('ad_number')!r}: {e}")
+    if detached:
+        print(f"memberships reattached: {reattached}, failed: {re_failed}")
     print(f"done. renamed {len(renames)}, deleted {deleted}, refs moved {moved}, "
           f"unresolved-kept {len(unresolved)}")
 
