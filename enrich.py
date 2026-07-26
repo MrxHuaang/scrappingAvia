@@ -30,6 +30,7 @@ STATE_OF_DESIGN = {
     "aerocivil_colombia": "Colombia",
     "casa_australia": "Australia",
     "gcaa_uae": "United Arab Emirates",
+    "uk_caa": "United Kingdom",
 }
 
 

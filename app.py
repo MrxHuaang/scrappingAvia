@@ -42,6 +42,7 @@ from scrapers.aerocivil_colombia import search_ads as aerocivil_search
 from scrapers.anac_argentina import search_ads as anac_argentina_search
 from scrapers.casa_australia import search_ads as casa_search
 from scrapers.gcaa_uae import search_ads as gcaa_search
+from scrapers.uk_caa import search_ads as uk_caa_search
 from math import ceil
 from utils import map_product_type, run_with_timeout, VALID_SOURCES, MAX_RESULTS_PER_SOURCE
 
@@ -239,6 +240,7 @@ def _search_supabase(source, keyword="", make="", model="", product_type="",
             "aerocivil_colombia": "AEROCIVIL Colombia",
             "casa_australia": "CASA Australia",
             "gcaa_uae": "GCAA UAE",
+            "uk_caa": "UK CAA",
         }
 
         results = []
@@ -945,6 +947,18 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
             )
         scrapers.append(("gcaa_uae", "GCAA UAE", _gcaa))
 
+    if source == "uk_caa":
+        def _uk_caa():
+            return uk_caa_search(
+                keyword=keyword or None,
+                make=make or None,
+                model=model or None,
+                date_from=date_from or None,
+                date_to=date_to or None,
+                max_results=min(max_results, 200),
+            )
+        scrapers.append(("uk_caa", "UK CAA", _uk_caa))
+
     return scrapers
 
 
@@ -964,7 +978,7 @@ def api_health():
     return jsonify({
         "status": "ok",
         "version": APP_VERSION,
-        "sources": ["federal_register", "easa", "transport_canada", "anac_brazil", "dgac_chile", "aerocivil_colombia", "anac_argentina", "casa_australia", "gcaa_uae"],
+        "sources": ["federal_register", "easa", "transport_canada", "anac_brazil", "dgac_chile", "aerocivil_colombia", "anac_argentina", "casa_australia", "gcaa_uae", "uk_caa"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -1355,6 +1369,7 @@ _SOURCE_PING_URLS = {
     "anac_brazil":      ("ANAC (Brasil)",          "https://sistemas.anac.gov.br"),
     "dgac_chile":       ("DGAC (Chile)",           "https://www.dgac.gob.cl"),
     "anac_argentina":   ("ANAC (Argentina)",       "https://www.argentina.gob.ar"),
+    "uk_caa":           ("UK CAA",                 "https://www.caa.co.uk"),
 }
 
 def _ping_source(key):

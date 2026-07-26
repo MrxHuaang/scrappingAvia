@@ -44,6 +44,7 @@ from scrapers.anac_argentina import search_ads as anac_argentina_search
 from scrapers.aerocivil_colombia import search_ads as aerocivil_search
 from scrapers.casa_australia import search_ads as casa_search
 from scrapers.gcaa_uae import search_ads as gcaa_search
+from scrapers.uk_caa import search_ads as uk_caa_search
 
 load_dotenv()
 
@@ -70,6 +71,7 @@ SOURCE_LABELS = {
     "aerocivil_colombia": "AEROCIVIL Colombia",
     "casa_australia": "CASA Australia",
     "gcaa_uae": "GCAA UAE",
+    "uk_caa": "UK CAA",
 }
 
 ALL_SOURCES = list(SOURCE_LABELS.keys())
@@ -641,6 +643,15 @@ def run_gcaa_uae() -> list[dict]:
     return results
 
 
+def run_uk_caa() -> list[dict]:
+    logger.info("Scraping uk_caa...")
+    # El corpus completo del UK CAA son ~200 documentos entre las cuatro series,
+    # asi que se pide holgado y no hace falta paginar.
+    results = uk_caa_search(max_results=1000)
+    logger.info(f"uk_caa: {len(results)} ADs encontrados")
+    return results
+
+
 RUNNERS = {
     "federal_register": run_federal_register,
     "easa": run_easa,
@@ -651,6 +662,7 @@ RUNNERS = {
     "aerocivil_colombia": run_aerocivil_colombia,
     "casa_australia": run_casa_australia,
     "gcaa_uae": run_gcaa_uae,
+    "uk_caa": run_uk_caa,
 }
 
 

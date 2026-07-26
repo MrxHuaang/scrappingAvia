@@ -19,7 +19,8 @@ DEFAULT_TIMEOUT = 25 if IS_SERVERLESS else 45
 
 VALID_SOURCES = frozenset([
     "federal_register", "easa", "transport_canada", "anac_brazil", "dgac_chile",
-    "aerocivil_colombia", "anac_argentina", "casa_australia", "gcaa_uae", "all"
+    "aerocivil_colombia", "anac_argentina", "casa_australia", "gcaa_uae",
+    "uk_caa", "all"
 ])
 
 
