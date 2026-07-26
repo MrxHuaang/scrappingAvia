@@ -19,6 +19,7 @@ Run as scheduled cron (GitHub Actions) or manually for backfill and testing.
 | `dgac_chile`          | DGAC Chile           | Active        | TBV            |
 | `anac_argentina`      | ANAC Argentina       | Active        | TBV            |
 | `gcaa_uae`            | GCAA UAE             | Active        | TBV            |
+| `uk_caa`              | UK CAA               | Active        | 201            |
 | `aerocivil_colombia`  | AEROCIVIL Colombia   | Blocked       | 0              |
 | `casa_australia`      | CASA Australia       | Blocked (403) | 0              |
 
@@ -110,6 +111,7 @@ scrapers/
   dgac_chile.py              DGAC Chile
   anac_argentina.py          ANAC Argentina
   gcaa_uae.py                GCAA UAE
+  uk_caa.py                  UK CAA ADs + Mandatory Permit Directives
   aerocivil_colombia.py      Blocked; stub kept
   casa_australia.py          Blocked; stub kept
 populate_db.py               Orchestrator + upsert + scrape_runs logger

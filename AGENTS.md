@@ -35,6 +35,7 @@ utils.py            Helpers compartidos
 | `aerocivil_colombia`  | AEROCIVIL Colombia   | sitio inaccesible |
 | `casa_australia`      | CASA Australia       | 403 Forbidden     |
 | `gcaa_uae`            | GCAA UAE             | activo            |
+| `uk_caa`              | UK CAA               | activo            |
 
 ## Esquema de la tabla `ads` en Supabase
 
