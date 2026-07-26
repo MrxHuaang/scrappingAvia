@@ -72,7 +72,16 @@ def classify(ad: dict) -> tuple[str, list[str]]:
 
 
 def fetch_all_ads(client) -> list[dict]:
-    """Descarga todos los registros de la tabla 'ads' en páginas de 1000."""
+    """
+    Descarga todos los registros de la tabla 'ads' en páginas de 1000.
+
+    El .order("id") no es cosmético: Postgres no garantiza un orden estable sin
+    ORDER BY, así que paginar por OFFSET sobre un resultado sin ordenar saltea
+    filas en una página y las repite en otra. El total salía correcto (la suma
+    de páginas da el mismo número de filas) pero el desglose por fuente no: una
+    fuente de 201 ADs se reportaba con 148. Con un orden total y determinista
+    cada fila cae en exactamente una página.
+    """
     all_rows, page, page_size = [], 0, 1000
     while True:
         resp = (
@@ -81,6 +90,7 @@ def fetch_all_ads(client) -> list[dict]:
                 "source_label, ad_number, product_type, status, pdf_link, effective_date,"
                 "unsafe_condition, corrective_action, compliance_time"
             )
+            .order("id")
             .range(page * page_size, (page + 1) * page_size - 1)
             .execute()
         )
