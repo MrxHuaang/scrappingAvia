@@ -163,7 +163,16 @@ def _build_supabase_query(sb, source, keyword, make, model, product_type, date_f
         "product_type, effective_date, status, docket, pdf_link, "
         # Embed self-FK: the AD that supersedes this row (if any), so the UI
         # can flag superseded rows inline without a second round trip.
-        "superseded:ads!ads_superseded_to_fkey(ad_number)"
+        #
+        # Hint by COLUMN name, not constraint name. `ads!ads_superseded_to_fkey`
+        # 400s with "no matches were found" on this PostgREST version for a
+        # self-referencing table — both sides of the join are `ads`, and the
+        # constraint-name hint can't disambiguate that, even though the
+        # constraint genuinely exists (confirmed against pg_constraint). This
+        # silently broke DB-first search for EVERY source: _search_supabase
+        # caught the PGRST200 error, returned [], and _make_db_search_fn's
+        # fallback sent every single query to a live scrape instead.
+        "superseded:superseded_to_ad_id(ad_number)"
     )
 
     if source != "all":
@@ -947,8 +956,8 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
             )
         scrapers.append(("gcaa_uae", "GCAA UAE", _gcaa))
 
-    if source == "uk_caa":
-        def _uk_caa():
+    if source in ("uk_caa", "all"):
+        def _uk_caa_live():
             return uk_caa_search(
                 keyword=keyword or None,
                 make=make or None,
@@ -957,7 +966,13 @@ def _build_scrapers(source, keyword, make, model, product_type, date_from, date_
                 date_to=date_to or None,
                 max_results=min(max_results, 200),
             )
-        scrapers.append(("uk_caa", "UK CAA", _uk_caa))
+        # DB-first: populate_db.py already loads the ~200-doc UK CAA corpus into
+        # Supabase daily. Without this wrapper every search paid the cost of a
+        # live scrape (each doc needs its own detail-page fetch for the PDF
+        # link, ~60s+ for the full corpus) instead of an instant DB read.
+        fn = _make_db_search_fn("uk_caa", keyword, make, model,
+                                product_type, date_from, date_to, max_results, _uk_caa_live)
+        scrapers.append(("uk_caa", "UK CAA", fn))
 
     return scrapers
 
