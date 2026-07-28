@@ -71,21 +71,48 @@ def sb_client():
 
 
 def fetch_rows(sb):
-    rows, page = [], 0
-    cols = "*"
+    """
+    Todas las filas FAA, paginadas por keyset (id > ultimo).
+
+    Con OFFSET, la pagina 20 de 25k filas hace que Postgres recorra y descarte
+    20k filas por request y la consulta muere por statement timeout.
+    """
+    rows, last_id = [], "00000000-0000-0000-0000-000000000000"
     while True:
-        chunk = (sb.table("ads").select(cols).eq("source", SOURCE)
-                 .order("id").range(page * PAGE, page * PAGE + PAGE - 1).execute().data or [])
+        chunk = (sb.table("ads").select("*").eq("source", SOURCE)
+                 .gt("id", last_id).order("id").limit(PAGE).execute().data or [])
         rows.extend(chunk)
         if len(chunk) < PAGE:
             return rows
-        page += 1
+        last_id = chunk[-1]["id"]
 
 
-def move_refs(sb, old: str, target: str) -> int:
+def refs_by_table(sb, ad_numbers: list[str]) -> dict[str, set]:
+    """
+    Que ad_numbers llevan refs de usuario, por tabla.
+
+    Se consulta una vez en lotes: las tablas de usuario son minusculas frente a
+    los ~12k borrados, y preguntar por fila (4 tablas x 12k filas) son ~50k
+    requests seriales.
+    """
+    out: dict[str, set] = {}
+    for tbl, _extra, _merge in USER_TABLES:
+        hit: set = set()
+        for i in range(0, len(ad_numbers), 200):
+            rows = (sb.table(tbl).select("ad_number").eq("source", SOURCE)
+                    .in_("ad_number", ad_numbers[i:i + 200]).execute().data or [])
+            hit.update(r["ad_number"] for r in rows)
+        out[tbl] = hit
+        print(f"  [{tbl}] refs sobre {len(hit)} de {len(ad_numbers)} filas a borrar")
+    return out
+
+
+def move_refs(sb, old: str, target: str, has_refs: dict[str, set]) -> int:
     """Mueve refs de usuario de `old` a `target`; mergea si ya hay una igual."""
     moved = 0
     for tbl, extra, allow_merge in USER_TABLES:
+        if old not in has_refs.get(tbl, ()):
+            continue
         rows = (sb.table(tbl).select("*").eq("source", SOURCE)
                 .eq("ad_number", old).execute().data or [])
         if not rows:
@@ -180,21 +207,37 @@ def main():
         except Exception as e:
             print(f"  rename {r['ad_number']} -> {truth} fallo: {e}")
 
-    moved = deleted = failed = 0
-    for r, truth in deletes + [(m, None) for m in malformed]:
-        if truth:
-            try:
-                moved += move_refs(sb, r["ad_number"], truth)
-            except Exception as e:
-                print(f"  refs {r['ad_number']} -> {truth} fallo: {e}")
+    has_refs = refs_by_table(sb, sorted({r["ad_number"] for r in doomed if r["ad_number"]}))
+
+    moved = 0
+    for r, truth in deletes:
         try:
-            sb.table("ads").delete().eq("id", r["id"]).execute()
-            deleted += 1
+            moved += move_refs(sb, r["ad_number"], truth, has_refs)
         except Exception as e:
-            failed += 1
-            print(f"  DELETE fallo {r['ad_number']}: {e}")
-        if deleted % 1000 == 0 and deleted:
-            print(f"  borradas {deleted}/{len(deletes) + len(malformed)}")
+            print(f"  refs {r['ad_number']} -> {truth} fallo: {e}")
+    print(f"refs movidas: {moved}")
+
+    # Borrado por lotes de ids. Fila por fila son ~12k requests seriales; si un
+    # lote falla (una ref bloqueando el FK) se reintenta fila por fila para que
+    # una mala no arrastre a las otras 49.
+    deleted = failed = 0
+    ids = [r["id"] for r in doomed]
+    for i in range(0, len(ids), 50):
+        chunk = ids[i:i + 50]
+        try:
+            sb.table("ads").delete().in_("id", chunk).execute()
+            deleted += len(chunk)
+        except Exception as e:
+            print(f"  lote fallo ({e}); reintento fila por fila")
+            for one in chunk:
+                try:
+                    sb.table("ads").delete().eq("id", one).execute()
+                    deleted += 1
+                except Exception as e2:
+                    failed += 1
+                    print(f"  DELETE fallo {one}: {e2}")
+        if i % 2000 == 0:
+            print(f"  borradas {deleted}/{len(ids)}")
 
     print(f"listo: {len(renames)} renombradas, {deleted} borradas, {moved} refs movidas, "
           f"{failed} fallos")
