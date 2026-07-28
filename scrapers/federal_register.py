@@ -12,13 +12,19 @@ Docs:     https://www.federalregister.gov/developers/documentation/api/v1
 import json
 import os
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import requests
 
 import enrich
-from utils import extract_make_model, normalize_ad_number
+from utils import (
+    ad_identity_from_docket_ids,
+    extract_make_model,
+    normalize_ad_number,
+)
 
 
 FEDERAL_REGISTER_API = "https://www.federalregister.gov/api/v1/documents.json"
@@ -34,6 +40,9 @@ _FIELDS = [
     "title", "abstract", "document_number", "publication_date",
     "effective_on", "pdf_url", "html_url", "agencies",
     "cfr_references", "action", "type", "raw_text_url",
+    # docket_ids ES la identidad del AD (numero, docket, amendment). Ver
+    # utils.ad_identity_from_docket_ids.
+    "docket_ids", "citation", "correction_of",
 ]
 
 # ---------------------------------------------------------------------------
@@ -47,7 +56,12 @@ _FULLTEXT_CACHE_PATH = os.path.join(
     "outputs", "fr_fulltext_cache.json",
 )
 _fulltext_cache: dict | None = None
-_ft_session: requests.Session | None = None
+# Una Session por hilo: requests.Session no es thread-safe, y el prefetch
+# concurrente comparte el pool de conexiones por hilo.
+_ft_local = threading.local()
+# GovInfo admite 40 req/s; 8 hilos con ~1s de latencia por granulo dejan el
+# backfill completo en minutos en vez de horas (13.5k granulos en serie).
+FULLTEXT_WORKERS = 8
 
 
 def _load_fulltext_cache() -> dict:
@@ -74,13 +88,32 @@ def _save_fulltext_cache() -> None:
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
-# Identidad del AD en el cuerpo del rule. El titulo/abstract de FR API casi
-# nunca traen el numero AD real (2026-13-08); vive en el header regulatorio
-# "[Docket No. FAA-2026-3482; ... AD 2026-13-08]". Lo extraemos del full text
-# (ya lo bajamos para compliance/AMOC) para no depender solo de la fase GovInfo
-# MODS del batch — asi la busqueda en vivo tambien queda reparada.
-# 4 digitos de anio (2024-01-02) o 2 (98-21-09, era pre-2000).
-_FT_AD_RE = re.compile(r"\bAD\s*(\d{2,4}[-–—]\d{2}[-–—]\d{2,4})\b", re.I)
+# Identidad del AD: viene de `docket_ids` (ver utils.ad_identity_from_docket_ids).
+#
+# El full text SOLO se usa como respaldo para los ~100 docs (casi todos 1998)
+# cuyo docket_ids no trae el AD, y el match esta ANCLADO al amendment del
+# header regulatorio: "[Docket No. ...; Amendment 39-10410; AD 98-06-27]".
+# Buscar el primer "AD nnnn-nn-nn" suelto del cuerpo es lo que rompio la base:
+# el rule cita al AD que reemplaza antes de nombrarse.
+_FT_HEADER_AD_RE = re.compile(
+    r"Amendment\s*(?:No\.?\s*)?39[-–—]\d{3,6}\s*[;,]?\s*"
+    r"(?:AD|A\.D\.)?\s*((?:\d{4}|\d{2})[-–—]\d{2}[-–—]\d{2,4}(?:R\d+)?)\b",
+    re.I,
+)
+# Solo para el respaldo anclado por amendment conocido (docket_ids lo trae aun
+# cuando omite el AD).
+def _header_ad_for_amendment(txt: str, amendment: str) -> str | None:
+    if not amendment:
+        return None
+    pat = re.compile(
+        re.escape(amendment).replace(r"\-", "[-–—]")
+        + r"\s*[;,]?\s*(?:AD|A\.D\.)?\s*((?:\d{4}|\d{2})[-–—]\d{2}[-–—]\d{2,4}(?:R\d+)?)\b",
+        re.I,
+    )
+    m = pat.search(txt)
+    return normalize_ad_number(m.group(1)) if m else None
+
+
 _FT_DOCKET_RE = re.compile(
     r"Docket\s*No\.?\s*[:,]?\s*(FAA[-\s]?\d{4}[-–—]\d{1,6})", re.I
 )
@@ -95,37 +128,43 @@ _FT_SUPERSEDE_RE = re.compile(
 )
 
 
-def _fetch_fulltext_fields(doc_number: str, publication_date: str) -> dict:
+def _fetch_fulltext_fields(doc_number: str, publication_date: str,
+                           amendment: str | None = None,
+                           want_ad: bool = False) -> dict:
     """
     Baja el cuerpo COMPLETO del rule desde GovInfo (FR-{date}/granules/{docnum}/htm)
-    y extrae {compliance_time, amoc, ad, docket}. GovInfo se usa porque
+    y extrae {compliance_time, amoc, docket, supersedes}. GovInfo se usa porque
     federalregister.gov bloquea (bot) los endpoints full_text. Cacheado por
     document_number. Requiere GOVINFO_API_KEY (leida en runtime; load_dotenv
     corre tras el import).
 
-    'ad' y 'docket' son la identidad real del AD extraida del header regulatorio.
+    'ad' solo se puebla cuando want_ad=True (docket_ids no trajo el numero) y
+    el match va anclado al `amendment` del header regulatorio. El campo 'ad'
+    del cache viejo se ignora a proposito: venia del primer "AD nnnn-nn-nn"
+    del cuerpo, que suele ser el AD superseded.
     """
     cache = _load_fulltext_cache()
-    # "supersedes" in entry => cache escrito con el esquema nuevo (incluye
-    # supersession). Entradas viejas se re-piden una vez para poblar el campo
-    # nuevo — mismo patron que la migracion previa de ad/docket.
     cached = cache.get(doc_number)
     if cached is not None and "supersedes" in cached:
-        return cached
+        if not want_ad or cached.get("ad_header"):
+            return cached
+        # Entrada vieja sin el respaldo anclado: se re-pide una sola vez.
 
-    result = {"compliance_time": None, "amoc": False, "ad": None, "docket": None, "supersedes": []}
+    result = {"compliance_time": None, "amoc": False, "ad": None, "docket": None,
+              "supersedes": [], "ad_header": None}
     key = os.environ.get("GOVINFO_API_KEY", "").strip()
     if doc_number and publication_date and key:
-        global _ft_session
-        if _ft_session is None:
-            _ft_session = requests.Session()
-            _ft_session.headers.update({"User-Agent": "AD-Scraper/1.0"})
+        session = getattr(_ft_local, "session", None)
+        if session is None:
+            session = requests.Session()
+            session.headers.update({"User-Agent": "AD-Scraper/1.0"})
+            _ft_local.session = session
         url = (
             f"https://api.govinfo.gov/packages/FR-{publication_date}"
             f"/granules/{doc_number}/htm?api_key={key}"
         )
         try:
-            resp = _ft_session.get(url, timeout=40)
+            resp = session.get(url, timeout=40)
             if resp.ok and "request access" not in resp.text[:600].lower():
                 txt = _TAG_RE.sub(" ", resp.text)
                 low = txt.lower()
@@ -134,9 +173,15 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str) -> dict:
                     or "alternative methods of compliance" in low
                 )
                 result["compliance_time"] = enrich.extract_compliance_from_fulltext(txt)
-                m = _FT_AD_RE.search(txt)
-                if m:
-                    result["ad"] = normalize_ad_number(m.group(1))
+                if want_ad:
+                    header_ad = (
+                        _header_ad_for_amendment(txt, amendment or "")
+                        or (lambda m: normalize_ad_number(m.group(1)) if m else None)(
+                            _FT_HEADER_AD_RE.search(txt)
+                        )
+                    )
+                    result["ad"] = header_ad
+                    result["ad_header"] = header_ad
                 m = _FT_DOCKET_RE.search(txt)
                 if m:
                     result["docket"] = (
@@ -154,6 +199,41 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str) -> dict:
     if doc_number:
         cache[doc_number] = result
     return result
+
+
+def _prefetch_fulltext(docs: list[dict]) -> None:
+    """
+    Calienta el cache full-text de una pagina de resultados en paralelo.
+
+    El parseo despues corre en serie y encuentra todo cacheado. En serie, un
+    backfill completo son ~13.5k GETs a GovInfo de ~1s cada uno (horas); con
+    FULLTEXT_WORKERS hilos baja a minutos y sigue muy por debajo del limite de
+    40 req/s de la API.
+    """
+    if not FETCH_FULL_TEXT:
+        return
+    cache = _load_fulltext_cache()
+    pending = []
+    for d in docs:
+        num = (d.get("document_number") or "").strip()
+        if not num:
+            continue
+        ident = ad_identity_from_docket_ids(d.get("docket_ids"))
+        want_ad = not ident["ad"]
+        cached = cache.get(num)
+        if cached is not None and "supersedes" in cached and (not want_ad or cached.get("ad_header")):
+            continue
+        pending.append((num, d.get("publication_date") or "", ident.get("amendment"), want_ad))
+
+    if not pending:
+        return
+    print(f"[Federal Register]   prefetch full-text: {len(pending)} docs "
+          f"({FULLTEXT_WORKERS} hilos)")
+    with ThreadPoolExecutor(max_workers=FULLTEXT_WORKERS) as pool:
+        list(pool.map(
+            lambda a: _fetch_fulltext_fields(a[0], a[1], amendment=a[2], want_ad=a[3]),
+            pending,
+        ))
 
 
 def _request_page(params: dict, retries: int = 3) -> dict | None:
@@ -203,6 +283,7 @@ def _search_year(year: int, max_pages: int = 50) -> list[dict]:
         if not docs:
             break
 
+        _prefetch_fulltext(docs)
         for doc in docs:
             ad = _parse_document(doc)
             if ad:
@@ -218,23 +299,57 @@ def _search_year(year: int, max_pages: int = 50) -> list[dict]:
     return results
 
 
+def _collapse_by_ad_number(rows: list[dict]) -> list[dict]:
+    """
+    Un AD = una fila. Varios documentos FR pueden compartir numero AD: el rule
+    original mas sus "Final rule; correction". El canonico es el rule (nunca la
+    correccion) y, entre varios, el de publicacion mas temprana — el documento
+    que ESTABLECE el AD, que es el PDF que el usuario espera abrir.
+
+    Los demas documentos quedan listados en Related_FR_Docs para no perderlos.
+    Sin este colapso el dedupe last-wins del upsert dejaba ganar a la
+    correccion (llega despues en orden cronologico): asi es como AD 2023-12-03
+    termino apuntando al PDF de una correccion de tres paginas.
+    """
+    by_ad: dict[str, list[dict]] = {}
+    for r in rows:
+        by_ad.setdefault(r["AD_Number"], []).append(r)
+
+    collapsed, multi = [], 0
+    for ad, group in by_ad.items():
+        if len(group) == 1:
+            collapsed.append(group[0])
+            continue
+        multi += 1
+        ordered = sorted(
+            group,
+            key=lambda r: (bool(r.get("Is_Correction")), r.get("Publication_Date") or ""),
+        )
+        canonical, rest = ordered[0], ordered[1:]
+        canonical["Related_FR_Docs"] = [
+            {
+                "doc": r.get("FR_DocNumber"),
+                "published": r.get("Publication_Date"),
+                "status": r.get("Status"),
+                "pdf": r.get("PDF_Link"),
+            }
+            for r in rest
+        ]
+        collapsed.append(canonical)
+
+    if multi:
+        print(f"[Federal Register] {multi} numeros AD con varios documentos FR (colapsados)")
+    return collapsed
+
+
 def search_ads_by_year_range(year_from: int, year_to: int) -> list[dict]:
     """Itera año por año y agrega resultados."""
     all_results = []
     for yr in range(year_from, year_to + 1):
         all_results.extend(_search_year(yr))
         _save_fulltext_cache()  # persistir progreso del cache full-text por anio
-    print(f"[Federal Register] Total {year_from}-{year_to}: {len(all_results)} ADs")
-    # El titulo de FR casi nunca trae el numero AD real; cuando ni title ni
-    # abstract ni full text lo traen, el ad_number cae al FR document_number.
-    # La fase GovInfo MODS lo repara en el merge; este warning da visibilidad.
-    fallbacks = sum(1 for r in all_results if r["AD_Number"] == r.get("FR_DocNumber"))
-    if fallbacks:
-        print(
-            f"[Federal Register] WARNING: {fallbacks}/{len(all_results)} ADs sin numero "
-            f"AD real (usan document_number; se reparan en fase GovInfo MODS)"
-        )
-    return all_results
+    print(f"[Federal Register] Total {year_from}-{year_to}: {len(all_results)} documentos con numero AD")
+    return _collapse_by_ad_number(all_results)
 
 
 def search_ads(keyword=None, make=None, model=None, product_type=None,
@@ -275,6 +390,7 @@ def search_ads(keyword=None, make=None, model=None, product_type=None,
         docs = data.get("results", [])
         if not docs:
             break
+        _prefetch_fulltext(docs)
         for doc in docs:
             ad = _parse_document(doc)
             if ad:
@@ -284,7 +400,7 @@ def search_ads(keyword=None, make=None, model=None, product_type=None,
         page += 1
         time.sleep(0.3)
 
-    return all_results
+    return _collapse_by_ad_number(all_results)
 
 
 def _parse_document(doc) -> dict | None:
@@ -295,35 +411,31 @@ def _parse_document(doc) -> dict | None:
         doc_number = doc.get("document_number", "") or ""
         pub_date = doc.get("publication_date", "") or ""
 
-        # Numero AD real: prioridad title -> abstract -> full text -> (ultimo
-        # recurso) FR document_number. El titulo casi nunca lo trae, por eso el
-        # historico caia directo a document_number (ej "2026-13540"), que NO es
-        # el numero AD ("2026-13-08") y no concuerda con el PDF mostrado.
-        ad_number = ""
-        ad_match = re.search(r"(AD\s*\d{4}[-–]\d{2}[-–]\d{2,4})", title, re.I)
-        if ad_match:
-            ad_number = ad_match.group(1)
-        if not ad_number:
-            ad_match = _FT_AD_RE.search(abstract)
-            if ad_match:
-                ad_number = ad_match.group(1)
+        # Identidad del AD: `docket_ids` del propio documento. Es el header
+        # regulatorio estructurado y cubre ~99% de los RULE (13405/13509).
+        ident = ad_identity_from_docket_ids(doc.get("docket_ids"))
+        ad_number = ident["ad"] or ""
 
-        # Full text: aporta identidad (ad + docket) y compliance/AMOC. Se baja
-        # una sola vez por documento (cacheado por document_number).
+        # Full text: compliance/AMOC/supersession y — solo si docket_ids no
+        # trajo el numero — el respaldo anclado al amendment del header.
         ft = {}
         if FETCH_FULL_TEXT:
-            ft = _fetch_fulltext_fields(doc_number, pub_date)
+            ft = _fetch_fulltext_fields(
+                doc_number, pub_date,
+                amendment=ident.get("amendment"),
+                want_ad=not ad_number,
+            )
             if not ad_number and ft.get("ad"):
                 ad_number = ft["ad"]
 
-        if not ad_number:
-            ad_match = re.search(r"(\d{4}[-–]\d{2}[-–]\d{2,4})", title)
-            ad_number = ad_match.group(1) if ad_match else doc_number
-
         ad_number = normalize_ad_number(ad_number)
-        # Docket real (FAA-2026-3482) si el full text lo trae; si no, el
-        # document_number (la fase GovInfo MODS del batch lo repara igual).
-        docket = ft.get("docket") or doc_number
+        if not ad_number:
+            # Sin numero AD verificable: se descarta. Usar el document_number
+            # como ad_number (comportamiento historico) inventa un AD que no
+            # existe y luego no concuerda con el PDF mostrado.
+            return None
+
+        docket = ident.get("docket") or ft.get("docket") or doc_number
         make, model = extract_make_model(title, abstract)
 
         subject = re.sub(r"^Airworthiness Directives[;:]\s*", "", title, flags=re.I)
@@ -386,6 +498,18 @@ def _parse_document(doc) -> dict | None:
             # docket real FAA-xxxx-xxxx.
             "FR_DocNumber": doc_number,
             "PDF_Link": pdf_link,
+            "Amendment": ident.get("amendment") or "",
+            "Project_Identifier": ident.get("project") or "",
+            "Citation": doc.get("citation") or "",
+            # Correcciones y el rule original comparten numero AD; el colapso
+            # de _collapse_by_ad_number() usa esta bandera para elegir el doc
+            # canonico (el rule, no la correccion).
+            "Is_Correction": status == "Correction",
+            "Correction_Of": (
+                (doc.get("correction_of") or {}).get("document_number")
+                if isinstance(doc.get("correction_of"), dict)
+                else (doc.get("correction_of") or "")
+            ) or "",
         }
 
         # compliance_time + AMOC ya vienen del full text bajado arriba (ft).
