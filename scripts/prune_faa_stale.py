@@ -16,7 +16,10 @@ Reglas:
     usuario a la correcta y se borra la fila.
   * ad_number != verdad y la correcta NO existe   -> se renombra (no se pierde
     el AD).
-  * documento sin AD en el índice, o fila sin documento resoluble -> se REPORTA
+  * documento sin AD en el índice, o fila sin documento resoluble -> segunda
+    pasada: se lee el header del PDF que la fila enlaza. Si su ad_number no
+    aparece en ningún header de ese PDF, la fila no es de ese documento y se
+    borra (o se manda al AD correcto). Si el PDF no se puede leer, se REPORTA
     y se queda. Nunca se borra a ciegas.
 
 Las refs de usuario (ad_saved / ad_reviewed / ad_compliance / ad_notes) llevan
@@ -36,6 +39,7 @@ import re
 import sys
 from collections import defaultdict
 
+import requests
 from dotenv import load_dotenv
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -46,6 +50,7 @@ from supabase import create_client  # noqa: E402
 
 from scripts.fr_identity import INDEX_PATH, load_index  # noqa: E402
 from scripts.fix_faa_identity import fr_docnum  # noqa: E402
+from scripts.verify_faa_pdfs import header_ads  # noqa: E402
 
 SOURCE = "federal_register"
 PAGE = 1000
@@ -175,6 +180,39 @@ def main():
         else:
             renames.append((r, truth))
             present.add(truth)
+
+    # Segunda pasada sobre lo que el indice no puede juzgar (~140 filas): la
+    # verdad se lee del header del PDF que la propia fila enlaza. Un AD que no
+    # aparece en NINGUN header de su PDF no es de ese documento.
+    unverifiable = doc_no_ad + unresolved
+    if unverifiable:
+        session = requests.Session()
+        session.headers.update({"User-Agent": "zephr-prune/1.0"})
+        still, deep_bad = [], 0
+        for r in unverifiable:
+            link, ad = r.get("pdf_link"), (r["ad_number"] or "").upper()
+            if not link:
+                still.append(r)
+                continue
+            try:
+                heads = header_ads(session.get(link, timeout=60).content)
+            except Exception:
+                still.append(r)
+                continue
+            if not heads or ad in heads:
+                still.append(r)
+            else:
+                # El PDF nombra otros ADs, no este. Si alguno de esos ya existe
+                # como fila, esta es la copia con el numero equivocado.
+                target = next((h for h in heads if h in present and h != ad), None)
+                if target:
+                    deletes.append((r, target))
+                else:
+                    malformed.append(r)
+                deep_bad += 1
+        print(f"  verificadas por PDF     : {len(unverifiable)} filas sin verdad en el "
+              f"indice, {deep_bad} desmentidas por su propio PDF")
+        doc_no_ad, unresolved = still, []
 
     print(f"  correctas               : {len(keep)}")
     print(f"  a borrar (dup)          : {len(deletes)}")
