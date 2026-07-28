@@ -141,6 +141,7 @@ _STATUS_MAP = {
     "amendment":           "Revision",
     "amended":             "Revision",
     "corrected":           "Revision",
+    "correction":          "Revision",
     "corrected amendment": "Revision",
     "revision":            "Revision",
     "revised":             "Revision",
@@ -291,7 +292,12 @@ def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
         payload = []
         for r in batch:
             rec = dict(r)
-            rec["raw_data"] = json.dumps(rec["raw_data"], ensure_ascii=False, default=str)
+            # raw_data es jsonb: se guarda como OBJETO. json.dumps() aqui metia
+            # un string JSON dentro del jsonb (doble codificado), y entonces
+            # raw_data->>'FR_DocNumber' devolvia null en SQL.
+            rec["raw_data"] = json.loads(
+                json.dumps(rec["raw_data"], ensure_ascii=False, default=str)
+            )
             rec["last_updated_at"] = datetime.now(timezone.utc).isoformat()
             # Preservar coherencia con superseded_to_ad_id existente.
             if (rec["source"], rec["ad_number"]) in linked:
@@ -471,11 +477,12 @@ def _merge_faa_results(fr_rows: list[dict], govinfo_rows: list[dict]) -> list[di
     como respaldo para filas viejas, en "Docket") y GovInfo expone como
     "GranuleId" (son el mismo identificador del Federal Register).
 
-    En match: la fila FR es la base (mejor Subject/Make/Model via abstract,
-    effective_on real, pdf de federalregister.gov) y GovInfo aporta la
-    identidad correcta: AD_Number real del MODS XML, Docket FAA-xxxx-xxxx
-    y Amendment 39-xxxxx. Esto repara el defecto de FR API, cuyo titulo casi
-    nunca trae el numero AD y cae a document_number como ad_number.
+    IMPORTANTE: GovInfo ya NO aporta el AD_Number. La identidad sale de
+    `docket_ids` de la FR API (utils.ad_identity_from_docket_ids), que es el
+    header regulatorio estructurado. El AD_Number de GovInfo salia del primer
+    "AD nnnn-nn-nn" del MODS XML, que suele ser el AD superseded: pisar la
+    identidad con eso es lo que dejo miles de filas con el numero de otro AD.
+    GovInfo solo completa Docket y Amendment cuando faltan.
 
     Filas sin match pasan tal cual; el dedupe last-wins de upsert_ads()
     queda como red de seguridad.
@@ -494,39 +501,40 @@ def _merge_faa_results(fr_rows: list[dict], govinfo_rows: list[dict]) -> list[di
         granule_id = (grow.get("GranuleId") or "").strip()
         fr_row = fr_by_docnum.get(granule_id)
         if fr_row is not None:
-            fr_row["AD_Number"] = grow["AD_Number"]
-            if grow.get("Docket") and not grow["Docket"].startswith("FR-"):
+            if grow.get("Docket") and not grow["Docket"].startswith("FR-") \
+                    and not (fr_row.get("Docket") or "").upper().startswith("FAA-"):
                 fr_row["Docket"] = grow["Docket"]
-            if grow.get("Amendment"):
+            if grow.get("Amendment") and not fr_row.get("Amendment"):
                 fr_row["Amendment"] = grow["Amendment"]
             merged_count += 1
         else:
             extra_govinfo.append(grow)
 
     logger.info(
-        f"  Merge FAA: {merged_count} filas FR enriquecidas con MODS, "
+        f"  Merge FAA: {merged_count} filas FR completadas con MODS, "
         f"{len(extra_govinfo)} solo-GovInfo, {len(fr_rows) - merged_count} solo-FR"
     )
     return fr_rows + extra_govinfo
 
 
-def run_federal_register(since: str | None = None) -> list[dict]:
+def run_federal_register(since: str | None = None, with_govinfo: bool = False) -> list[dict]:
     """
-    Source 'federal_register' consolida 3 upstreams FAA bajo el mismo source key:
+    Source 'federal_register' consolida upstreams FAA bajo el mismo source key:
       1. DRS (drs.faa.gov)        -> pre-1995 historicos (best-effort)
-      2. FR API (year-split)       -> 1994+ via federalregister.gov (contenido)
-      3. GovInfo API (MODS XML)    -> 1994+ via api.govinfo.gov (identidad:
-         numero AD real, docket FAA-xxxx, amendment 39-xxxxx)
+      2. FR API (year-split)      -> 1994+ via federalregister.gov (contenido
+         E identidad: `docket_ids` trae numero AD, docket y amendment)
+      3. GovInfo API (MODS XML)   -> opcional (--with-govinfo). Ya no aporta
+         identidad; solo completa Docket/Amendment faltantes.
 
-    FR API y GovInfo se fusionan por FR document_number (_merge_faa_results).
     since (YYYY-MM-DD): acota FR API y GovInfo a publicaciones desde esa fecha
     (runs incrementales); DRS no aplica (historicos pre-1995).
     """
-    logger.info("Scraping federal_register (3 fases: DRS + FR + GovInfo MODS)...")
+    logger.info("Scraping federal_register (DRS + FR API%s)..." %
+                (" + GovInfo MODS" if with_govinfo else ""))
     all_results: list[dict] = []
 
     # Fase 1: DRS pre-1995 (best-effort, no falla si Akamai bloquea)
-    logger.info("  [1/3] DRS (drs.faa.gov, pre-1995 historicos)...")
+    logger.info("  [1] DRS (drs.faa.gov, pre-1995 historicos)...")
     try:
         drs_results = drs_search(pre_govinfo_only=True)
         logger.info(f"  DRS: {len(drs_results)} ADs")
@@ -535,7 +543,7 @@ def run_federal_register(since: str | None = None) -> list[dict]:
         logger.warning(f"  DRS fallo (continua pipeline): {e}")
 
     # Fase 2: FR API year-split (1994 -> current)
-    logger.info("  [2/3] Federal Register API (year-split)...")
+    logger.info("  [2] Federal Register API (year-split, identidad via docket_ids)...")
     if since:
         from scrapers.federal_register import search_ads_by_year_range
         # Year-split desde el anio de --since; el filtro fino por fecha lo da
@@ -545,10 +553,16 @@ def run_federal_register(since: str | None = None) -> list[dict]:
         fr_results = fr_search()
     logger.info(f"  FR API: {len(fr_results)} ADs")
 
-    # Fase 3: GovInfo MODS â€” identidad real del AD (numero, docket, amendment).
-    # El titulo de FR API casi nunca trae el numero AD: sin esta fase, los
-    # ad_numbers de FAA quedan como FR document_numbers (defecto historico).
-    logger.info("  [3/3] GovInfo API (MODS XML: numero AD real + docket + amendment)...")
+    # Fase 3 (opcional): GovInfo MODS. Solo completa Docket/Amendment; la
+    # identidad ya viene de docket_ids y NO debe pisarse con el MODS XML.
+    gov_results: list[dict] = []
+    if not with_govinfo:
+        logger.info("  [3] GovInfo MODS: omitido (--with-govinfo para habilitar)")
+        all_results.extend(_merge_faa_results(fr_results, gov_results))
+        logger.info(f"federal_register: {len(all_results)} ADs encontrados (pre-dedupe)")
+        return all_results
+
+    logger.info("  [3] GovInfo API (MODS XML: completa docket + amendment)...")
     try:
         # Mismo span que FR API (desde el 1 de enero del anio de --since) para
         # que el merge cubra los mismos documentos; el cache MODS hace baratos
@@ -695,6 +709,12 @@ def main():
         metavar="YYYY-MM-DD",
         help="Solo federal_register: scrape incremental desde esta fecha de publicacion",
     )
+    parser.add_argument(
+        "--with-govinfo",
+        action="store_true",
+        help="Solo federal_register: corre tambien la fase GovInfo MODS "
+             "(lenta; solo completa docket/amendment, no la identidad)",
+    )
     args = parser.parse_args()
 
     if args.since and not re.match(r"^\d{4}-\d{2}-\d{2}$", args.since):
@@ -726,8 +746,10 @@ def main():
                 logger.error(f"[{source}] Error en --reset: {e}")
 
         try:
-            if source == "federal_register" and args.since:
-                raw_results = run_federal_register(since=args.since)
+            if source == "federal_register":
+                raw_results = run_federal_register(
+                    since=args.since, with_govinfo=args.with_govinfo
+                )
             else:
                 raw_results = RUNNERS[source]()
         except Exception:
