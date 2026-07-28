@@ -529,28 +529,46 @@ def _parse_list_table(soup, source_tag="", make_override=None):
             continue
 
         # --- Extraer link al detalle y al PDF ---
+        # Cada AD publica DOS PDFs bajo textos/: "{id}emd.pdf" (PORTUGUÉS) y
+        # "{id}amd.pdf" (INGLÉS). El listado los emite sin texto de ancla y con
+        # el portugués primero, así que "el primer .pdf" (comportamiento viejo)
+        # guardaba la versión en portugués. Preferimos SIEMPRE la inglesa.
         detail_link = ""
-        pdf_link = ""
+        pdf_en = ""    # versión inglesa (amd.pdf o ancla "english")
+        pdf_pt = ""    # versión portuguesa (emd.pdf o ancla "portuguese")
+        pdf_any = ""   # cualquier otro pdf, como último recurso
         emd_id = ""   # FIXED: capturar el ID Emd= para construir URL de detalle
 
         for cell in cells:
             for a in cell.find_all("a", href=True):
                 href = a["href"]
                 href_full = _resolve_url(href)
+                href_low = href.lower()
                 link_text = a.get_text(strip=True).lower()
 
-                if "detail" in href.lower() or "emd=" in href.lower():
+                if "detail" in href_low or "emd=" in href_low:
                     detail_link = href_full
                     # FIXED: extraer el ID del Emd para poder construir URL limpia
                     emd_match = re.search(r"Emd=(\d+)", href, re.I)
                     if emd_match:
                         emd_id = emd_match.group(1)
-                elif ".pdf" in href.lower() or "pdf" in link_text:
-                    if not pdf_link:
-                        # FIXED: validar que sea URL absoluta. Si es relativa, resolver con base ANAC
-                        pdf_link = href_full
+                elif ".pdf" in href_low or "pdf" in link_text:
+                    # Clasificar por idioma. Regla del sitio: sufijo "amd.pdf" =
+                    # inglés, "emd.pdf" = portugués; el texto de ancla en la
+                    # página de detalle confirma ("ENGLISH"/"PORTUGUESE").
+                    if href_low.endswith("amd.pdf") or "english" in link_text:
+                        if not pdf_en:
+                            pdf_en = href_full
+                    elif href_low.endswith("emd.pdf") or "portug" in link_text:
+                        if not pdf_pt:
+                            pdf_pt = href_full
+                    elif not pdf_any:
+                        pdf_any = href_full
                 elif not detail_link and href_full:
                     detail_link = href_full
+
+        # Preferencia: inglés > portugués > cualquier pdf > página de detalle.
+        pdf_link = pdf_en or pdf_pt or pdf_any
 
         # FIXED: debug para ADs sin pdf_link — nos ayuda a ver qué hrefs hay en la fila
         if not pdf_link and ad_number_raw:
@@ -672,11 +690,23 @@ def get_ad_detail(session, detail_url):
                     elif any(k in label for k in ["model", "modelo"]):
                         detail["Model"] = value
 
-        # Buscar link al PDF
+        # Buscar link al PDF, prefiriendo la versión INGLESA (amd.pdf / ancla
+        # "english") sobre la portuguesa (emd.pdf) — ver _parse_list_table.
+        pdf_en = pdf_pt = pdf_any = ""
         for a in soup.find_all("a", href=True):
-            if ".pdf" in a["href"].lower():
-                detail["PDF_Link"] = _resolve_url(a["href"])
-                break
+            href_low = a["href"].lower()
+            if ".pdf" not in href_low:
+                continue
+            text_low = a.get_text(strip=True).lower()
+            if href_low.endswith("amd.pdf") or "english" in text_low:
+                pdf_en = pdf_en or _resolve_url(a["href"])
+            elif href_low.endswith("emd.pdf") or "portug" in text_low:
+                pdf_pt = pdf_pt or _resolve_url(a["href"])
+            elif not pdf_any:
+                pdf_any = _resolve_url(a["href"])
+        pdf_link = pdf_en or pdf_pt or pdf_any
+        if pdf_link:
+            detail["PDF_Link"] = pdf_link
 
         return detail
     except Exception as e:
