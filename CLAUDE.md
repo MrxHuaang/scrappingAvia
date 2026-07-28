@@ -26,7 +26,7 @@ utils.py            Helpers compartidos
 
 | Source key (BD)       | Label en BD          | Estado scraper    |
 |-----------------------|----------------------|-------------------|
-| `federal_register`    | FAA                  | OK — consolida DRS + FR API year-split + GovInfo MODS (~13-14k ADs) |
+| `federal_register`    | FAA                  | OK — FR API year-split, identidad via `docket_ids` (13.061 ADs) |
 | `transport_canada`    | Transport Canada     | OK — 4735 ADs     |
 | `anac_brazil`         | ANAC Brasil          | OK — 450 ADs      |
 | `easa`                | EASA                 | activo            |
@@ -108,12 +108,12 @@ TOTAL           36062 completos (97.5%)
 Los ~870 TC críticos son ADs superseded: TC solo guarda link al AD original (FAA/EASA)
 y al que los reemplaza, sin PDF propio. No es un bug del scraper.
 
-**Defecto FAA conocido (pendiente de backfill, detectado 2026-06-12):** los 13,465
-ad_numbers de FAA en BD son FR document_numbers (ej. "2016-03689", "E8-7662"),
-NO números AD reales (ej. "2016-14-07"). El título de FR casi nunca trae el número
-AD y el scraper caía a document_number como fallback. Fix implementado vía GovInfo
-MODS (ver sección FAA); para reparar la BD correr:
-`python populate_db.py --source federal_register --reset`
+**Identidad FAA (reparada 2026-07-28):** los ad_numbers de FAA venian del primer
+"AD nnnn-nn-nn" del cuerpo del rule — que es el AD *superseded* — o directamente del
+FR document_number. 6075 de las 10171 filas verificables llevaban el numero de otro
+AD sobre el PDF correcto. Ahora la identidad sale de `docket_ids` (ver seccion FAA);
+la base quedo en 13061 filas, todas con numero de AD bien formado y PDF, y
+`scripts/verify_faa_pdfs.py` las contrasta contra el header del propio PDF.
 
 ## Cómo correr los scrapers
 
@@ -189,47 +189,71 @@ GOVINFO_API_KEY=...           # gratis en https://api.govinfo.gov/signup/
                               # opcional: si falta, fase GovInfo se skipea
 ```
 
-## FAA: 3 fuentes consolidadas bajo `source='federal_register'`
+## FAA: identidad desde `docket_ids` (`source='federal_register'`)
 
-El runner `run_federal_register()` ejecuta en orden:
+El numero AD de la FAA sale de **`docket_ids`** de la FR API: el header
+regulatorio del documento, ya estructurado.
 
-1. **DRS** (`scrapers/faa_drs.py`) — drs.faa.gov via Playwright. Pre-1995
-   historicos. Best-effort: si Akamai bloquea o playwright no esta instalado,
-   retorna `[]` sin fallar el pipeline. (En la practica casi siempre retorna 0.)
-2. **FR API** (`scrapers/federal_register.py`) — federalregister.gov con
-   year-split (cap 10k por query se evita iterando 1994→presente). Aporta el
-   CONTENIDO: subject/make/model del abstract, effective_on, pdf publico.
-   OJO: su ad_number es casi siempre el FR document_number (el titulo no trae
-   el numero AD real) — lo corrige la fase 3.
-3. **GovInfo MODS** (`scrapers/faa_govinfo.py`) — RE-HABILITADO (2026-06-12).
-   Aporta la IDENTIDAD: por cada granulo RULE con "Airworthiness" en el titulo
-   se fetchea el MODS XML (`/packages/{pkgId}/granules/{granId}/mods`) y se
-   extrae via regex:
-   - `AD 2024-01-02` → ad_number real (tambien formato viejo `AD 98-21-09`)
-   - `Docket No. FAA-2024-0027` (o legacy `98-NM-123-AD`)
-   - `Amendment 39-22653`
+```json
+["Docket No. FAA-2023-0927", "Project Identifier MCAI-2023-00013-T",
+ "Amendment 39-22461", "AD 2023-12-03"]
+```
 
-   Granulos sin numero AD en MODS ni titulo se DESCARTAN (nunca granuleId como
-   ad_number — eso era el bug que obligo a deshabilitarlo).
+`utils.ad_identity_from_docket_ids()` devuelve `{ad, docket, amendment, project}`
+y cubre 13405 de los 13509 RULE (99%), incluidas las formas legadas de 1995-1999
+(`"Amendment 39-9206, AD 95-09-02"`, `"AD 95-01- 07"`, `"AD 98-18-12-AD"`).
 
-   **Merge** (`_merge_faa_results()` en populate_db.py): join por FR document
-   number (FR API lo guarda en `Docket`; GovInfo lo expone como `GranuleId`).
-   En match, la fila FR es base y GovInfo sobreescribe AD_Number/Docket y agrega
-   Amendment. No-matcheados pasan tal cual.
+> **NUNCA** minar el numero AD del cuerpo del rule ni del MODS XML con
+> "el primer `AD nnnn-nn-nn` del texto". El rule cita al AD que **reemplaza**
+> antes de nombrarse, asi que ese match devuelve otro AD. Ese fue el bug de
+> 2026-07-28: la ficha de AD 2023-12-03 mostraba el PDF correcto pero, en otras
+> miles de filas, el numero pertenecia a un AD distinto (6075 de 10171 filas
+> verificables estaban mal). Si `docket_ids` no trae el AD, el respaldo va
+> **anclado al amendment** del header (`_header_ad_for_amendment`), y si tampoco
+> aparece, el documento se **descarta**: inventar un ad_number con el
+> document_number es peor que no tener la fila.
 
-   **Cache MODS** (`outputs/govinfo_mods_cache.json`, gitignored): granuleId →
-   {ad, docket, amend}, incluye negativos. Primer backfill ≈ 8k listings + 14k
-   fetches MODS; a ~0.4s/request medidos (con Session reuse) son ~2-2.5 horas.
-   Re-runs posteriores solo pagan los listings (~1 hora). Rate limit GovInfo:
-   36,000 req/hr por key — no es el cuello de botella, la latencia HTTP sí.
+**Un AD = una fila.** Un rule y sus "Final rule; correction" comparten numero
+AD. El canonico es el rule (no la correccion) y, entre varios, el de publicacion
+mas temprana: `_collapse_by_ad_number()`. Los demas documentos quedan en
+`raw_data.Related_FR_Docs`. Sin eso el dedupe last-wins dejaba ganar a la
+correccion, que llega despues en orden cronologico.
 
-Dedupe por `(source, ad_number)` con normalizacion ASCII en `normalize_ad_number()`
-(utils.py).
+### Fases del runner
+
+`run_federal_register()`:
+
+1. **DRS** (`scrapers/faa_drs.py`) — drs.faa.gov via Playwright, pre-1995.
+   Best-effort: si Akamai bloquea o falta playwright, retorna `[]`. En la
+   practica retorna 0.
+2. **FR API** (`scrapers/federal_register.py`) — year-split 1994→presente (evita
+   el cap de 10k por query). Aporta identidad Y contenido. El full text de
+   GovInfo se sigue bajando para `compliance_time`, AMOC y supersession, con
+   **prefetch concurrente** (`FULLTEXT_WORKERS`, 8 hilos): en serie son ~13.5k
+   GETs de ~1s (horas), con prefetch ~10 min. Cache en
+   `outputs/fr_fulltext_cache.json`.
+3. **GovInfo MODS** (`scrapers/faa_govinfo.py`) — **opcional**, `--with-govinfo`.
+   Ya NO aporta identidad (su regex tiene el mismo defecto); solo completa
+   `Docket`/`Amendment` faltantes. Sin el flag no se corre.
+
+Dedupe por `(source, ad_number)` con normalizacion ASCII en
+`normalize_ad_number()` (utils.py).
+
+### Verificar y reparar la identidad
+
+```bash
+python scripts/fr_identity.py                 # indice FR -> outputs/fr_identity.json
+python scripts/fix_faa_identity.py --audit    # cuantas filas tienen el numero de otro AD
+python populate_db.py --source federal_register
+python scripts/prune_faa_stale.py             # plan; --execute para borrar las viejas
+python scripts/verify_faa_pdfs.py --sample 40 # el PDF de cada fila declara SU AD
+python scripts/test_faa_identity.py           # self-check sin red ni DB
+```
 
 ### Run incremental
 
 ```bash
-# Solo publicaciones desde una fecha (year-split desde ese anio + GovInfo MODS)
+# Solo publicaciones desde una fecha (year-split desde ese anio)
 python populate_db.py --source federal_register --since 2026-01-01
 ```
 
