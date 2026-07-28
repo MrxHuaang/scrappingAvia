@@ -94,6 +94,66 @@ def normalize_ad_number(raw: str) -> str:
 
 
 # ------------------------------------------------------------------
+# Identidad del AD desde el header regulatorio del Federal Register.
+#
+# La FR API expone ese header como array estructurado `docket_ids`:
+#   ["Docket No. FAA-2023-0927", "Project Identifier MCAI-2023-00013-T",
+#    "Amendment 39-22461", "AD 2023-12-03"]
+#
+# Es la unica fuente confiable del numero AD. Minarlo del cuerpo del rule
+# ("primer AD nnnn-nn-nn del texto") produce el numero del AD *superseded*,
+# porque el rule cita al que reemplaza antes de nombrarse: asi la fila quedaba
+# con el numero de otro AD sobre el PDF correcto.
+#
+# Formas legadas toleradas (1995-1999): el AD viaja pegado al amendment
+# ("Amendment 39-9206, AD 95-09-02") y con espacios internos ("AD 95-01- 07").
+# ------------------------------------------------------------------
+# El sufijo "-AD" aparece en entradas legadas ("AD 98-18-12-AD"): se descarta.
+_AD_NUM_LOOSE = r"(?:\d{4}|\d{2})\s*-\s*\d{2}\s*-\s*\d{2,4}(?:\s*R\s*\d+)?(?:\s*-\s*AD\b)?"
+# "AD 2023-12-03" / "A.D. 95-09-02"
+_DOCKET_ID_AD_RE = re.compile(rf"\bA\.?\s?D\.?\s*({_AD_NUM_LOOSE})(?![-\d])", re.I)
+# Entrada que es SOLO el numero ("2023-12-03"): la FR API a veces omite el
+# prefijo, y normalize_ad_number() lo quita cuando esta.
+_DOCKET_ID_AD_BARE_RE = re.compile(rf"^({_AD_NUM_LOOSE})$")
+_DOCKET_ID_DOCKET_RE = re.compile(r"Docket\s*(?:No\.?|Number)?\s*[:,]?\s*(.+)", re.I)
+_DOCKET_ID_AMEND_RE = re.compile(r"Amendment\s*(?:No\.?\s*)?(39\s*-\s*\d{3,6})", re.I)
+_DOCKET_ID_PROJECT_RE = re.compile(r"Project\s*Identifier\s*[:,]?\s*([\w\-]+)", re.I)
+
+
+def ad_identity_from_docket_ids(docket_ids) -> dict:
+    """
+    {ad, docket, amendment, project} desde el array `docket_ids` de la FR API.
+    Valores ausentes -> None. `ad` viene normalizado y sin prefijo ("2023-12-03").
+    """
+    out = {"ad": None, "docket": None, "amendment": None, "project": None}
+    for raw in docket_ids or []:
+        s = str(raw or "").replace("–", "-").replace("—", "-")
+        s = re.sub(r"\s+", " ", s).strip().rstrip(";,.")
+        if not s:
+            continue
+        m = _DOCKET_ID_AD_RE.search(s) or _DOCKET_ID_AD_BARE_RE.match(s)
+        if m and not out["ad"]:
+            num = re.sub(r"\s+", "", m.group(1)).upper()
+            out["ad"] = re.sub(r"-AD$", "", num)
+        m = _DOCKET_ID_AMEND_RE.search(s)
+        if m and not out["amendment"]:
+            out["amendment"] = re.sub(r"\s+", "", m.group(1))
+        m = _DOCKET_ID_PROJECT_RE.search(s)
+        if m and not out["project"]:
+            out["project"] = m.group(1).strip()
+            continue
+        m = _DOCKET_ID_DOCKET_RE.search(s)
+        if m and not out["docket"]:
+            # "Docket No. FAA-2023-0927" -> FAA-2023-0927; corta el amendment
+            # cuando ambos comparten la misma entrada.
+            docket = re.split(r"[;,]|\bAmendment\b", m.group(1), maxsplit=1)[0]
+            docket = docket.strip().rstrip(";,.").upper()
+            if docket:
+                out["docket"] = docket
+    return out
+
+
+# ------------------------------------------------------------------
 # Patrones de numero de AD por autoridad (compartidos por scrapers y
 # scripts de supersession/equivalents). Lookarounds anti-colision para
 # no matchear dentro de dockets (FAA-2025-1364), fechas o SB numbers.
