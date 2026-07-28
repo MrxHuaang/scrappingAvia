@@ -78,7 +78,11 @@ SYSTEM_PROMPT = (
     "Rules: extract the information AS STATED in the document. ALWAYS write "
     "every text field in ENGLISH — if the source document is in Spanish or "
     "Portuguese, translate the extracted content to English. Never output "
-    "Spanish or Portuguese text. Be concise (max ~300 chars per text field). "
+    "Spanish or Portuguese text. Be concise (max ~300 chars per text field), "
+    "but ALWAYS write complete sentences — never cut a word or sentence in "
+    "half. If the full detail doesn't fit in ~300 chars, summarize it shorter "
+    "rather than truncating mid-word; every text field must end with proper "
+    "punctuation (a period), never mid-word. "
     "If a value is not present in the document, use null. NEVER invent data. "
     "published_date must be YYYY-MM-DD or null. "
     "product_type must be exactly one of: Aircraft, Engine, Propeller, "
@@ -188,6 +192,11 @@ def _post_chat(endpoint, model, api_key, system, user, session, json_mode=True):
             {"role": "user", "content": user},
         ],
         "temperature": 0,
+        # Sin esto, el endpoint OpenAI-compatible de Ollama aplica su propio
+        # default (a veces muy bajo, ~128 tokens) y corta el JSON de salida a
+        # mitad de una palabra/oracion antes de terminar — la causa real de
+        # los textos truncados guardados en la DB, no el limite de _clean_text.
+        "max_tokens": 2048,
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
@@ -199,23 +208,58 @@ def _post_chat(endpoint, model, api_key, system, user, session, json_mode=True):
         json=payload, headers=headers, timeout=180,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    body = resp.json()
+    choice = body["choices"][0]
+    if choice.get("finish_reason") == "length":
+        logger.warning("  respuesta cortada por limite de max_tokens (finish_reason=length)")
+    return choice["message"]["content"]
+
+
+def _looks_incomplete(text, min_len: int = 40) -> bool:
+    """Heuristica independiente de longitud fija: un campo descriptivo que no
+    termina en puntuacion de cierre y tiene tamano razonable probablemente se
+    corto a mitad de oracion/palabra en la generacion (no-determinismo del
+    LLM a temperatura 0 en GPU: la misma consulta puede salir completa una vez
+    y cortada otra)."""
+    if not isinstance(text, str):
+        return False
+    t = text.rstrip()
+    if len(t) < min_len:
+        return False
+    return not re.search(r'[.!?…)"”\']\s*$', t)
+
+
+_RETRYABLE_FIELDS = ("unsafe_condition", "corrective_action")
 
 
 def call_llm(endpoint: str, model: str, api_key: str | None, doc_text: str,
-             meta: dict, session: requests.Session) -> dict | None:
+             meta: dict, session: requests.Session, max_retries: int = 2) -> dict | None:
     user = (
         f"AD number: {meta.get('ad_number')}\n"
         f"Source: {meta.get('source_label')}\n"
         f"Subject: {meta.get('subject') or ''}\n\n"
         f"--- DOCUMENT TEXT ---\n{doc_text[:MAX_PDF_CHARS]}"
     )
-    try:
-        content = _post_chat(endpoint, model, api_key, SYSTEM_PROMPT, user, session)
-        return _parse_json_loose(content)
-    except Exception as e:
-        logger.warning(f"  LLM fallo: {e}")
-        return None
+    last_out = None
+    for attempt in range(max_retries + 1):
+        try:
+            # json_mode=False: el modo json_object de Ollama fuerza decodificacion
+            # con gramatica; sin ella el modelo genera libre y confiamos en
+            # _parse_json_loose para recuperar el JSON del texto.
+            content = _post_chat(endpoint, model, api_key, SYSTEM_PROMPT, user, session, json_mode=False)
+            out = _parse_json_loose(content)
+        except Exception as e:
+            logger.warning(f"  LLM fallo: {e}")
+            out = None
+        if out is None:
+            continue
+        last_out = out
+        incomplete = [f for f in _RETRYABLE_FIELDS if _looks_incomplete(out.get(f))]
+        if not incomplete:
+            return out
+        if attempt < max_retries:
+            logger.info(f"  {incomplete} vino incompleto, reintentando ({attempt + 1}/{max_retries})...")
+    return last_out
 
 
 # ---------------------------------------------------------------------------
@@ -304,11 +348,39 @@ def _parse_json_loose(content: str) -> dict | None:
 # ---------------------------------------------------------------------------
 # Normalizacion de la salida del LLM -> columnas
 # ---------------------------------------------------------------------------
-def _clean_text(v) -> str | None:
+MAX_FIELD_CHARS = 700  # tope de seguridad; el prompt ya pide ~300, esto solo cubre casos raros
+
+
+def _clean_text(v, max_chars: int = MAX_FIELD_CHARS) -> str | None:
     if not isinstance(v, str):
         return None
     s = v.strip()
-    return s[:500] if s and s.lower() not in ("null", "none", "n/a", "") else None
+    if not s or s.lower() in ("null", "none", "n/a"):
+        return None
+    if len(s) <= max_chars:
+        return s
+    # Nunca cortar a mitad de palabra/oracion: preferir el ultimo punto de
+    # oracion dentro del limite; si no hay uno razonablemente cerca, cortar
+    # en el ultimo espacio (nunca a mitad de una palabra).
+    cut = s[:max_chars]
+    last_end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    if last_end >= max_chars * 0.5:
+        return cut[: last_end + 1].strip()
+    last_space = cut.rfind(" ")
+    if last_space > 0:
+        return cut[:last_space].rstrip(",;: ") + "…"
+    return cut + "…"
+
+
+def _looks_truncated(text, old_cap: int = 500, tolerance: int = 30) -> bool:
+    """Detecta texto cortado a mitad de palabra por el bug viejo de _clean_text
+    (corte duro en el caracter 500, sin mirar si terminaba en puntuacion)."""
+    if not isinstance(text, str):
+        return False
+    t = text.rstrip()
+    if len(t) < old_cap - tolerance:
+        return False
+    return not re.search(r'[.!?…)"”\']\s*$', t)
 
 
 def _clean_date(v) -> str | None:
@@ -323,11 +395,14 @@ def build_update(row: dict, out: dict) -> dict:
     upd = {}
     if row.get("unsafe_condition") is None:
         v = _clean_text(out.get("unsafe_condition"))
-        if v:
+        # nunca guardar un corte a mitad de oracion, aunque haya sobrevivido
+        # los reintentos de call_llm (la generacion es no-determinista) —
+        # mejor dejarlo NULL para que una corrida futura lo intente de nuevo.
+        if v and not _looks_incomplete(v):
             upd["unsafe_condition"] = v
     if row.get("corrective_action") is None:
         v = _clean_text(out.get("corrective_action"))
-        if v:
+        if v and not _looks_incomplete(v):
             upd["corrective_action"] = v
     if row.get("compliance_time") is None:
         v = _clean_text(out.get("compliance_time"))
@@ -416,6 +491,101 @@ def run_retranslate(supabase, session, args):
     logger.info(f"=== FIN retranslate: {stats} ===")
 
 
+_TRUNCATABLE_FIELDS = ("unsafe_condition", "corrective_action", "compliance_time")
+
+
+def run_fix_truncated(supabase, session, args):
+    """Encuentra SOLO las filas con texto cortado a mitad de palabra (bug viejo
+    del corte duro a 500 caracteres) y las re-extrae desde el PDF para
+    completarlas — no relee ni retoca el resto de la base."""
+    stats = {"seen": 0, "flagged": 0, "fixed": 0, "no_pdf": 0, "fail": 0}
+    offset, page = 0, 1000
+    cols = ("id,source_label,ad_number,subject,pdf_link,raw_data,"
+            "unsafe_condition,corrective_action,compliance_time")
+    while True:
+        q = supabase.table("ads").select(cols)
+        if args.source:
+            q = q.eq("source_label", args.source)
+        rows = q.range(offset, offset + page - 1).execute().data or []
+        if not rows:
+            break
+        for row in rows:
+            stats["seen"] += 1
+            bad_fields = [f for f in _TRUNCATABLE_FIELDS if _looks_truncated(row.get(f))]
+            if not bad_fields:
+                continue
+            stats["flagged"] += 1
+            ad = row.get("ad_number")
+
+            if not row.get("pdf_link"):
+                stats["no_pdf"] += 1
+                continue
+            pdf = download_pdf(row["pdf_link"], session)
+            doc_text = extract_text(pdf) if pdf else ""
+            if len(doc_text) < MIN_TEXT_CHARS and row.get("subject"):
+                doc_text = (doc_text + "\n" + row["subject"]).strip()
+            if len(doc_text) < MIN_TEXT_CHARS:
+                stats["fail"] += 1
+                logger.info(f"{ad}: cortado pero sin texto de PDF disponible -> skip")
+                continue
+
+            # call_llm ya reintenta internamente si unsafe/corrective salen
+            # incompletos, pero la generacion del LLM es no-determinista
+            # (temperatura 0 en GPU no garantiza el mismo resultado en cada
+            # llamada) — un intento extra a este nivel es barato y reduce
+            # aun mas la chance de guardar un corte.
+            out = None
+            for outer_attempt in range(2):
+                candidate = call_llm(args.endpoint, args.model, args.api_key or None, doc_text, row, session)
+                if candidate is None:
+                    continue
+                out = candidate
+                still_bad = [f for f in bad_fields if _looks_incomplete(candidate.get(f))]
+                if not still_bad:
+                    break
+                logger.info(f"{ad}: {still_bad} seguia incompleto, reintento externo {outer_attempt + 1}/2")
+            if out is None:
+                stats["fail"] += 1
+                continue
+            out = translate_fields(args.endpoint, args.model, args.api_key or None, out, session)
+
+            upd = {}
+            for f in bad_fields:
+                v = _clean_text(out.get(f))
+                # _looks_incomplete detecta cualquier corte a mitad de oracion
+                # (no solo el patron viejo de ~500 chars) — es el filtro correcto
+                # para decidir si el valor nuevo es seguro de guardar.
+                if v and not _looks_incomplete(v):
+                    upd[f] = v
+            if not upd:
+                stats["fail"] += 1
+                logger.info(f"{ad}: seguia cortado tras reintentar -> skip")
+                continue
+            upd["last_updated_at"] = datetime.now(timezone.utc).isoformat()
+
+            if args.dry_run:
+                # ojo: preview de 80 chars solo para no saturar el log — el
+                # valor real que se guardaria esta completo, esto es SOLO display.
+                logger.info(f"{ad} DRY fix -> {list(upd.keys())}: "
+                            f"{json.dumps({k: str(v)[:80] + ('…[preview]' if len(str(v)) > 80 else '') for k, v in upd.items() if k != 'last_updated_at'}, ensure_ascii=False)}")
+            else:
+                try:
+                    supabase.table("ads").update(upd).eq("id", row["id"]).execute()
+                    stats["fixed"] += 1
+                    logger.info(f"{ad}: reparado {list(upd.keys())}")
+                except Exception as e:
+                    logger.warning(f"{ad}: update fallo: {e}")
+                    stats["fail"] += 1
+
+            if args.limit and stats["fixed"] >= args.limit:
+                logger.info(f"=== FIN fix-truncated (limit): {stats} ===")
+                return
+        if len(rows) < page:
+            break
+        offset += page
+    logger.info(f"=== FIN fix-truncated: {stats} ===")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -435,12 +605,18 @@ def main():
                     help="si PDF falla o retorna HTML, usar solo el subject como texto fuente")
     ap.add_argument("--retranslate", action="store_true",
                     help="no extrae; busca campos ya guardados en PT/ES y los traduce a ingles")
+    ap.add_argument("--fix-truncated", action="store_true",
+                    help="repara SOLO filas con texto cortado a mitad de palabra (bug del corte a 500 chars)")
     args = ap.parse_args()
 
     PDF_CACHE_DIR = args.pdf_cache
 
     supabase = get_supabase()
     session = requests.Session()
+
+    if args.fix_truncated:
+        run_fix_truncated(supabase, session, args)
+        return
 
     if args.retranslate:
         run_retranslate(supabase, session, args)
@@ -470,7 +646,18 @@ def main():
                     logger.info(f"[{stats['seen']}] {ad}: PDF sin texto -> skip")
                     continue
 
-        out = call_llm(args.endpoint, args.model, args.api_key or None, doc_text, row, session)
+        # call_llm ya reintenta internamente si unsafe/corrective salen
+        # incompletos; un intento extra aqui es barato (la generacion del LLM
+        # es no-determinista a temperatura 0 en GPU) y reduce aun mas la
+        # chance de guardar un campo cortado a mitad de oracion.
+        out = None
+        for _outer_attempt in range(2):
+            candidate = call_llm(args.endpoint, args.model, args.api_key or None, doc_text, row, session)
+            if candidate is None:
+                continue
+            out = candidate
+            if not any(_looks_incomplete(candidate.get(f)) for f in _RETRYABLE_FIELDS):
+                break
         if out is None:
             stats["llm_fail"] += 1
             continue
