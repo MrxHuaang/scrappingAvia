@@ -2,8 +2,12 @@
 Scraper para CASA Australia — Airworthiness Directives.
 URL: https://www.casa.gov.au/aircraft/airworthiness/airworthiness-directives
 
-CASA bloquea scraping automatizado (403 Forbidden en todas las URLs).
-Este scraper intenta múltiples endpoints con Session y headers de navegador real.
+DESHABILITADO del run diario (ver populate_db.DISABLED_SOURCES), verificado
+2026-07-28: bloqueo a nivel de RED, no HTTP — las 6 URLs candidatas dan
+timeout/ConnectionError, no llegan a completar el handshake ni a servir un
+403 explicito. Headers de navegador real no cambian nada. Necesita un browser
+real (y probablemente aun asi un challenge JS/Cloudflare que un headless
+simple tampoco resuelva) — no es un fix de parsing.
 """
 
 import re

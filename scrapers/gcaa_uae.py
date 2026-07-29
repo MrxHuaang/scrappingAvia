@@ -2,9 +2,14 @@
 Scraper para GCAA UAE — Airworthiness Directives.
 URL: https://www.gcaa.gov.ae/en/epublication/pages/airworthinessdirectives.aspx
 
-GCAA usa un formulario ASP.NET con ViewState / EventValidation.
-El sitio bloquea acceso automatizado (403 Forbidden).
-Este scraper usa Session con headers de navegador real.
+DESHABILITADO del run diario (ver populate_db.DISABLED_SOURCES), verificado
+2026-07-28: el sitio NO bloquea la request (200, ~1.3MB de HTML) — el defecto
+real es que el listado de ADs vive detras de un postback ASP.NET AJAX
+(UpdatePanel/ScriptManager, __VIEWSTATE presente); un GET liso solo trae el
+shell del formulario, sin ninguna fila de datos. De los tres scrapers
+deshabilitados es el UNICO sin WAF/bloqueo de red de por medio — arreglable
+con Playwright (ejecutar el postback, esperar el grid, leer el DOM resultante)
+sin pelear ningun bot-challenge.
 """
 
 import re

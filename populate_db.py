@@ -77,6 +77,29 @@ SOURCE_LABELS = {
 ALL_SOURCES = list(SOURCE_LABELS.keys())
 
 # ---------------------------------------------------------------------------
+# Fuentes deshabilitadas del run diario (verificado en vivo 2026-07-28; los
+# comentarios de cada scraper ya lo sospechaban, esto lo confirma):
+#   - aerocivil_colombia: el sitio se mudo a SharePoint. El WAF devuelve 403 a
+#     CUALQUIER request simple, headers de navegador real incluidos; la propia
+#     REST API de SharePoint tambien 403. Necesita browser real (Playwright).
+#   - casa_australia: bloqueo a nivel de red — las 6 URLs candidatas dan
+#     timeout o ConnectionError, ni siquiera llegan a servir HTML. Probable
+#     bloqueo por IP/datacenter o challenge JS que nunca responde a un GET liso.
+#   - gcaa_uae: el sitio SI responde (200, ~1.3MB) y no esta bloqueado — pero
+#     el listado de ADs vive detras de un postback ASP.NET AJAX
+#     (UpdatePanel/ScriptManager); el HTML inicial no trae ninguna fila de
+#     datos. Es el unico de los tres arreglable sin pelear un WAF: necesita
+#     Playwright para ejecutar el postback, no un fix de regex.
+#
+# El cron diario (`python populate_db.py`, sin --source) las salta para no
+# reportar "completed, 0 ADs" cada dia como si fuera cobertura real. Siguen
+# corribles a mano (`--source gcaa_uae`) para debug o cuando se les ponga
+# Playwright.
+# ---------------------------------------------------------------------------
+DISABLED_SOURCES = {"aerocivil_colombia", "casa_australia", "gcaa_uae"}
+DAILY_SOURCES = [s for s in ALL_SOURCES if s not in DISABLED_SOURCES]
+
+# ---------------------------------------------------------------------------
 # Supabase client
 # ---------------------------------------------------------------------------
 def get_supabase_client():
@@ -723,7 +746,8 @@ def main():
         "--source",
         choices=ALL_SOURCES,
         default=None,
-        help="Fuente a ejecutar (por defecto: todas)",
+        help="Fuente a ejecutar. Sin este flag corre DAILY_SOURCES (todas "
+             "menos las deshabilitadas: " + ", ".join(sorted(DISABLED_SOURCES)) + ")",
     )
     parser.add_argument(
         "--dry-run",
@@ -752,7 +776,14 @@ def main():
     if args.since and not re.match(r"^\d{4}-\d{2}-\d{2}$", args.since):
         parser.error("--since debe tener formato YYYY-MM-DD")
 
-    sources_to_run = [args.source] if args.source else ALL_SOURCES
+    if args.source:
+        sources_to_run = [args.source]
+    else:
+        sources_to_run = DAILY_SOURCES
+        logger.info(
+            f"Fuentes deshabilitadas del run diario (ver DISABLED_SOURCES): "
+            f"{', '.join(sorted(DISABLED_SOURCES))}"
+        )
 
     supabase = None
     if not args.dry_run:

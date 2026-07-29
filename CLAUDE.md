@@ -32,10 +32,17 @@ utils.py            Helpers compartidos
 | `easa`                | EASA                 | activo            |
 | `dgac_chile`          | DGAC Chile           | activo            |
 | `anac_argentina`      | ANAC Argentina       | activo            |
-| `aerocivil_colombia`  | AEROCIVIL Colombia   | sitio inaccesible |
-| `casa_australia`      | CASA Australia       | 403 Forbidden     |
-| `gcaa_uae`            | GCAA UAE             | activo            |
+| `aerocivil_colombia`  | AEROCIVIL Colombia   | **deshabilitado del cron** — WAF 403 (sitio se mudo a SharePoint) |
+| `casa_australia`      | CASA Australia       | **deshabilitado del cron** — bloqueo de red (timeout, ni 403 explicito) |
+| `gcaa_uae`            | GCAA UAE             | **deshabilitado del cron** — sitio OK (200), pero el listado esta detras de un postback ASP.NET AJAX que un GET liso no dispara |
 | `uk_caa`              | UK CAA               | activo            |
+
+**Fuentes muertas (2026-07-28).** Las tres de arriba llevaban >1 mes devolviendo
+0 ADs cada corrida diaria, marcadas `completed` sin error — cobertura falsa.
+`populate_db.DISABLED_SOURCES` las saca del run sin `--source` (el cron real);
+siguen invocables a mano (`--source gcaa_uae`) para debug. Ninguna es un fix de
+parsing: las tres necesitan Playwright (browser real). GCAA es la unica sin WAF
+de por medio — la mas facil de las tres si alguien retoma esto.
 
 ## Esquema de la tabla `ads` en Supabase
 

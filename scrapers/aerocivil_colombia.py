@@ -2,15 +2,28 @@
 Scraper para AEROCIVIL Colombia — Directivas de Aeronavegabilidad.
 URL base: https://www.aerocivil.gov.co
 
-El sitio de AEROCIVIL bloquea scraping automatizado (403 Forbidden / timeouts).
-Este scraper usa Session con headers de navegador e intenta múltiples URLs.
+DESHABILITADO del run diario (ver populate_db.DISABLED_SOURCES), verificado
+2026-07-28: dos de las cuatro URLs candidatas son 404 disfrazados de 200 (el
+sitio devuelve su pagina de error con status 200); las otras dos SI cargan
+pero son navegacion/contenido administrativo, no Directivas de Aeronavegabilidad
+— el listado real se mudo a SharePoint
+(.../certificacion-y-licenciamiento/directivas de aeronavegabilidad/Forms/AllItems.aspx),
+que el WAF del sitio bloquea con 403 ante CUALQUIER request simple (headers de
+navegador real incluidos; la REST API de SharePoint tambien 403). Necesita
+browser real (Playwright) para pasar el WAF, y aun asi no esta garantizado.
 """
 
 import re
 import requests
 from bs4 import BeautifulSoup
 
+# La primera es la ubicacion REAL del listado (SharePoint, bloqueada por WAF
+# hoy — ver docstring); las demas son intentos historicos que ya no sirven
+# (404 disfrazado de 200, o contenido administrativo sin relacion con DAs).
+# Se dejan para no perder el rastro si algun dia el WAF deja pasar un GET.
 AEROCIVIL_URLS = [
+    "https://www.aerocivil.gov.co/autoridad-de-la-aviacion-civil/certificacion-y-licenciamiento/"
+    "directivas%20de%20aeronavegabilidad/forms/allitems.aspx",
     "https://www.aerocivil.gov.co/autoridad/autoridad-tecnica/aeronavegabilidad/directivas-de-aeronavegabilidad",
     "https://www.aerocivil.gov.co/normatividad/normas-de-aeronavegabilidad",
     "https://www.aerocivil.gov.co/normatividad/16-directiva",
