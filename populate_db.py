@@ -214,6 +214,44 @@ def normalize(row: dict, source_key: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Dedup en memoria por (source, ad_number)
+# ---------------------------------------------------------------------------
+# Campos cuya presencia hace a una fila mas completa/confiable que otra con el
+# mismo (source, ad_number). pdf_link pesa mas que el resto junto: una fila sin
+# documento es estrictamente peor que cualquiera que lo tenga, sin importar que
+# tan lleno este el resto.
+_DEDUP_FIELDS = (
+    "subject", "make", "model", "product_type", "effective_date",
+    "docket", "unsafe_condition", "corrective_action", "compliance_time",
+)
+
+
+def _completeness_score(row: dict) -> tuple[int, int]:
+    """(tiene_pdf, campos_no_vacios) â€” mayor es mejor."""
+    has_pdf = 1 if row.get("pdf_link") else 0
+    filled = sum(1 for f in _DEDUP_FIELDS if row.get(f))
+    return (has_pdf, filled)
+
+
+def _dedup_rows(rows: list[dict]) -> list[dict]:
+    """
+    Un (source, ad_number) puede repetirse dentro de UN mismo scrape (ej.
+    Transport Canada devuelve el mismo AD por cada modelo al que aplica). Se
+    queda la fila mas completa, no la ultima vista: last-wins puramente
+    posicional es el mismo defecto que dejo a AD FAA 2023-12-03 con el PDF de
+    su propia correccion en vez del rule â€” aqui pasa un nivel mas arriba, entre
+    filas de un mismo scraper en vez de entre documentos FR.
+    """
+    best: dict[tuple, dict] = {}
+    for r in rows:
+        key = (r["source"], r["ad_number"])
+        prev = best.get(key)
+        if prev is None or _completeness_score(r) > _completeness_score(prev):
+            best[key] = r
+    return list(best.values())
+
+
+# ---------------------------------------------------------------------------
 # Upsert
 # ---------------------------------------------------------------------------
 def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
@@ -225,13 +263,7 @@ def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
     if not rows:
         return 0, 0
 
-    # Deduplicar en memoria por (source, ad_number) â€” Ãºltimo gana
-    # Necesario para TC que retorna el mismo AD bajo mÃºltiples modelos
-    deduped: dict[tuple, dict] = {}
-    for r in rows:
-        key = (r["source"], r["ad_number"])
-        deduped[key] = r
-    rows = list(deduped.values())
+    rows = _dedup_rows(rows)
     logger.info(f"Filas tras dedup: {len(rows)}")
 
     # Verificar cuales ya existen para contar new vs updated
