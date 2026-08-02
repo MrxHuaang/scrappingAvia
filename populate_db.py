@@ -292,19 +292,30 @@ def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
     # Verificar cuales ya existen para contar new vs updated
     source_vals = list({r["source"] for r in rows})
 
+    # Se pagina porque PostgREST limita a 1000 filas por respuesta: sin esto,
+    # con >1000 filas ya en BD casi todo se contaba como "nuevo" y los campos
+    # ads_new/ads_updated de scrape_runs (el panel de salud) quedaban falseados.
+    existing: set[tuple] = set()
     try:
-        existing_resp = (
-            supabase.table("ads")
-            .select("source, ad_number")
-            .in_("source", source_vals)
-            .execute()
-        )
-        existing = {
-            (rec["source"], rec["ad_number"])
-            for rec in (existing_resp.data or [])
-        }
+        page = 0
+        PAGE = 1000
+        while True:
+            existing_resp = (
+                supabase.table("ads")
+                .select("source, ad_number")
+                .in_("source", source_vals)
+                .order("id")
+                .range(page * PAGE, page * PAGE + PAGE - 1)
+                .execute()
+            )
+            chunk = existing_resp.data or []
+            for rec in chunk:
+                existing.add((rec["source"], rec["ad_number"]))
+            if len(chunk) < PAGE:
+                break
+            page += 1
     except Exception as e:
-        logger.warning(f"No se pudo pre-verificar existentes: {e}")
+        _record_write_error(f"No se pudo pre-verificar existentes (ads_new/updated falseados): {e}")
         existing = set()
 
     # 'linked' = pares (source, ad_number) que ya tienen un enlace de
@@ -323,6 +334,7 @@ def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
                 .select("source, ad_number")
                 .in_("source", source_vals)
                 .not_.is_("superseded_to_ad_id", "null")
+                .order("id")
                 .range(page * PAGE, page * PAGE + PAGE - 1)
                 .execute()
             )
@@ -334,7 +346,7 @@ def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
             page += 1
         logger.info(f"ADs con enlace de supersedencia (status forzado): {len(linked)}")
     except Exception as e:
-        logger.warning(f"No se pudo pre-verificar superseded links: {e}")
+        _record_write_error(f"No se pudo pre-verificar superseded links: {e}")
         linked = set()
 
     ads_new = sum(1 for r in rows if (r["source"], r["ad_number"]) not in existing)
@@ -368,6 +380,22 @@ def upsert_ads(supabase, rows: list[dict]) -> tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
+# Write-error accounting
+#
+# A run that lost data must never report itself as 'completed': every failed
+# write (and every failed pre-read that falsifies the health counters) is
+# recorded here, forces scrape_runs.status='error' for its source, and makes
+# the process exit non-zero so GitHub Actions shows red.
+# ---------------------------------------------------------------------------
+_write_errors: list[str] = []
+
+
+def _record_write_error(msg: str) -> None:
+    _write_errors.append(msg)
+    logger.error(msg)
+
+
+# ---------------------------------------------------------------------------
 # Relations: ad_applicability, ad_service_bulletins, supersession
 # ---------------------------------------------------------------------------
 def _fetch_ad_ids(supabase, source: str, ad_numbers: list[str]) -> dict[str, str]:
@@ -388,7 +416,7 @@ def _fetch_ad_ids(supabase, source: str, ad_numbers: list[str]) -> dict[str, str
             for rec in resp.data or []:
                 ids[rec["ad_number"]] = rec["id"]
         except Exception as e:
-            logger.warning(f"  relations: no se pudieron leer ids ({source}): {e}")
+            _record_write_error(f"  relations: no se pudieron leer ids ({source}): {e}")
     return ids
 
 
@@ -464,12 +492,12 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
         try:
             supabase.table("ad_applicability").delete().in_("ad_id", chunk).execute()
         except Exception as e:
-            logger.warning(f"  applicability: delete fallo: {e}")
+            _record_write_error(f"  applicability: delete fallo: {e}")
     for i in range(0, len(applic_rows), 500):
         try:
             supabase.table("ad_applicability").insert(applic_rows[i : i + 500]).execute()
         except Exception as e:
-            logger.warning(f"  applicability: insert fallo: {e}")
+            _record_write_error(f"  applicability: insert fallo: {e}")
 
     # ad_service_bulletins: upsert on (ad_id, sb_number)
     for i in range(0, len(sb_rows), 500):
@@ -478,7 +506,7 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                 sb_rows[i : i + 500], on_conflict="ad_id,sb_number"
             ).execute()
         except Exception as e:
-            logger.warning(f"  service_bulletins: upsert fallo: {e}")
+            _record_write_error(f"  service_bulletins: upsert fallo: {e}")
 
     # supersession: resolve the superseding AD number -> its ads.id.
     # Must also set status='Superseded' to satisfy ads_superseded_coherence_chk.
@@ -493,7 +521,7 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                         {"superseded_to_ad_id": tgt, "status": "Superseded"}
                     ).eq("id", ad_id).execute()
                 except Exception as e:
-                    logger.warning(f"  supersede: update fallo {ad_id}: {e}")
+                    _record_write_error(f"  supersede: update fallo {ad_id}: {e}")
 
     logger.info(
         f"[{source}] relaciones: {len(applic_rows)} applicability, "
@@ -518,7 +546,7 @@ def save_scrape_run(supabase, source: str, ads_found: int, ads_new: int,
             "finished_at": datetime.now(timezone.utc).isoformat(),
         }).execute()
     except Exception as e:
-        logger.warning(f"No se pudo guardar scrape_run para {source}: {e}")
+        _record_write_error(f"No se pudo guardar scrape_run para {source}: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -798,6 +826,7 @@ def main():
         started_at = datetime.now(timezone.utc)
         error_msg = None
         raw_results = []
+        write_errors_before = len(_write_errors)
 
         if args.reset and supabase and not args.dry_run:
             logger.warning(f"[{source}] --reset: borrando filas existentes...")
@@ -806,7 +835,11 @@ def main():
                 deleted = supabase.table("ads").delete().eq("source", source).execute()
                 logger.info(f"[{source}] Borradas {len(deleted.data or [])} filas")
             except Exception as e:
+                # Un reset fallido significa que se upserteara sobre datos que se
+                # creian borrados: la corrida no puede reportarse limpia.
+                error_msg = f"--reset fallo: {e}"
                 logger.error(f"[{source}] Error en --reset: {e}")
+                total_errors += 1
 
         try:
             if source == "federal_register":
@@ -846,11 +879,22 @@ def main():
                 try:
                     populate_relations(supabase, source, normalized)
                 except Exception as rel_err:
-                    logger.warning(f"[{source}] relaciones fallaron (ads OK): {rel_err}")
+                    _record_write_error(f"[{source}] relaciones fallaron (ads OK): {rel_err}")
             except Exception:
                 error_msg = traceback.format_exc()
                 logger.error(f"[{source}] ERROR durante upsert:\n{error_msg}")
                 total_errors += 1
+
+        # Escrituras parciales fallidas (applicability, SBs, supersession, o
+        # pre-checks que falsean los contadores) degradan la corrida entera:
+        # scrape_runs.status='error' y exit code != 0.
+        source_write_errors = _write_errors[write_errors_before:]
+        if source_write_errors and not error_msg:
+            error_msg = (
+                f"{len(source_write_errors)} escrituras fallidas: "
+                + " | ".join(source_write_errors[:5])
+            )[:2000]
+            total_errors += 1
 
         total_new += ads_new
         total_updated += ads_updated
@@ -873,10 +917,11 @@ def main():
         f"  ADs nuevos         : {total_new}\n"
         f"  ADs actualizados   : {total_updated}\n"
         f"  Fuentes con error  : {total_errors}\n"
+        f"  Escrituras fallidas: {len(_write_errors)}\n"
         f"{'='*50}"
     )
 
-    if total_errors:
+    if total_errors or _write_errors:
         sys.exit(1)
 
 
