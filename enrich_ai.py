@@ -104,8 +104,16 @@ def get_supabase():
 
 
 def fetch_pending(supabase, source: str | None, page_size: int = 1000):
-    """Genera filas con algun campo objetivo NULL y con pdf_link, paginando."""
-    offset = 0
+    """Genera filas con algun campo objetivo NULL y con pdf_link.
+
+    Keyset pagination (cursor por id, con ORDER BY estable) en vez de
+    offset: este bucle ESCRIBE en las mismas filas que esta filtrando
+    (llena los campos NULL), asi que el conjunto se encoge mientras se
+    recorre y un offset creciente saltaba filas pendientes garantizadamente.
+    Con el cursor por id, cada fila se visita exactamente una vez aunque
+    el filtro deje de matchearla despues de procesada.
+    """
+    last_id = ""
     cols = "id,source,source_label,ad_number,subject,pdf_link,raw_data," + ",".join(TARGET_FIELDS) + ",amoc_available"
     while True:
         q = supabase.table("ads").select(cols).not_.is_("pdf_link", "null")
@@ -115,14 +123,16 @@ def fetch_pending(supabase, source: str | None, page_size: int = 1000):
         )
         if source:
             q = q.eq("source_label", source)
-        rows = q.range(offset, offset + page_size - 1).execute().data or []
+        if last_id:
+            q = q.gt("id", last_id)
+        rows = q.order("id").limit(page_size).execute().data or []
         if not rows:
             return
         for r in rows:
             yield r
+        last_id = rows[-1]["id"]
         if len(rows) < page_size:
             return
-        offset += page_size
 
 
 # ---------------------------------------------------------------------------
@@ -443,15 +453,19 @@ _TEXT_FIELDS = ("subject", "unsafe_condition", "corrective_action", "compliance_
 def run_retranslate(supabase, session, args):
     """Recorre filas con texto ya guardado; donde se vea PT/ES, traduce a ingles
     y sobrescribe. Solo llama al LLM en las filas marcadas (las inglesas se saltan)."""
-    stats = {"seen": 0, "fixed": 0, "skipped_en": 0, "fail": 0}
-    offset, page = 0, 1000
+    stats = {"seen": 0, "fixed": 0, "skipped_en": 0, "fail": 0, "update_fail": 0}
+    # Keyset por id (ORDER BY estable): el bucle escribe en las filas que
+    # recorre y un offset sin orden salta o repite filas.
+    last_id, page = "", 1000
     while True:
         q = supabase.table("ads").select(
             "id,source_label,ad_number,subject,unsafe_condition,corrective_action,compliance_time"
         )
         if args.source:
             q = q.eq("source_label", args.source)
-        rows = q.range(offset, offset + page - 1).execute().data or []
+        if last_id:
+            q = q.gt("id", last_id)
+        rows = q.order("id").limit(page).execute().data or []
         if not rows:
             break
         for row in rows:
@@ -480,15 +494,17 @@ def run_retranslate(supabase, session, args):
                     stats["fixed"] += 1
                     logger.info(f"{ad}: traducido {list(upd.keys())}")
                 except Exception as e:
-                    logger.warning(f"{ad}: update fallo: {e}")
+                    logger.error(f"{ad}: update fallo: {e}")
                     stats["fail"] += 1
+                    stats["update_fail"] += 1
             if args.limit and stats["fixed"] >= args.limit:
                 logger.info(f"=== FIN retranslate (limit): {stats} ===")
-                return
+                return stats
+        last_id = rows[-1]["id"]
         if len(rows) < page:
             break
-        offset += page
     logger.info(f"=== FIN retranslate: {stats} ===")
+    return stats
 
 
 _TRUNCATABLE_FIELDS = ("unsafe_condition", "corrective_action", "compliance_time")
@@ -498,15 +514,18 @@ def run_fix_truncated(supabase, session, args):
     """Encuentra SOLO las filas con texto cortado a mitad de palabra (bug viejo
     del corte duro a 500 caracteres) y las re-extrae desde el PDF para
     completarlas — no relee ni retoca el resto de la base."""
-    stats = {"seen": 0, "flagged": 0, "fixed": 0, "no_pdf": 0, "fail": 0}
-    offset, page = 0, 1000
+    stats = {"seen": 0, "flagged": 0, "fixed": 0, "no_pdf": 0, "fail": 0, "update_fail": 0}
+    # Keyset por id (ORDER BY estable): ver run_retranslate.
+    last_id, page = "", 1000
     cols = ("id,source_label,ad_number,subject,pdf_link,raw_data,"
             "unsafe_condition,corrective_action,compliance_time")
     while True:
         q = supabase.table("ads").select(cols)
         if args.source:
             q = q.eq("source_label", args.source)
-        rows = q.range(offset, offset + page - 1).execute().data or []
+        if last_id:
+            q = q.gt("id", last_id)
+        rows = q.order("id").limit(page).execute().data or []
         if not rows:
             break
         for row in rows:
@@ -574,16 +593,18 @@ def run_fix_truncated(supabase, session, args):
                     stats["fixed"] += 1
                     logger.info(f"{ad}: reparado {list(upd.keys())}")
                 except Exception as e:
-                    logger.warning(f"{ad}: update fallo: {e}")
+                    logger.error(f"{ad}: update fallo: {e}")
                     stats["fail"] += 1
+                    stats["update_fail"] += 1
 
             if args.limit and stats["fixed"] >= args.limit:
                 logger.info(f"=== FIN fix-truncated (limit): {stats} ===")
-                return
+                return stats
+        last_id = rows[-1]["id"]
         if len(rows) < page:
             break
-        offset += page
     logger.info(f"=== FIN fix-truncated: {stats} ===")
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -614,15 +635,17 @@ def main():
     supabase = get_supabase()
     session = requests.Session()
 
+    # Un update fallido no puede terminar en exit 0: GitHub Actions y cualquier
+    # orquestador deben ver rojo cuando se perdieron escrituras.
     if args.fix_truncated:
-        run_fix_truncated(supabase, session, args)
-        return
+        end_stats = run_fix_truncated(supabase, session, args)
+        sys.exit(1 if end_stats.get("update_fail") else 0)
 
     if args.retranslate:
-        run_retranslate(supabase, session, args)
-        return
+        end_stats = run_retranslate(supabase, session, args)
+        sys.exit(1 if end_stats.get("update_fail") else 0)
 
-    stats = {"seen": 0, "updated": 0, "skipped_scanned": 0, "no_pdf": 0, "llm_fail": 0, "no_change": 0}
+    stats = {"seen": 0, "updated": 0, "skipped_scanned": 0, "no_pdf": 0, "llm_fail": 0, "no_change": 0, "update_fail": 0}
     for row in fetch_pending(supabase, args.source):
         if args.limit and stats["seen"] >= args.limit:
             break
@@ -691,12 +714,15 @@ def main():
                 stats["updated"] += 1
                 logger.info(f"[{stats['seen']}] {ad}: +{list(upd.keys())}")
             except Exception as e:
-                logger.warning(f"[{stats['seen']}] {ad}: update fallo: {e}")
+                logger.error(f"[{stats['seen']}] {ad}: update fallo: {e}")
+                stats["update_fail"] += 1
 
         if stats["seen"] % 50 == 0:
             logger.info(f"--- progreso: {stats} ---")
 
     logger.info(f"=== FIN: {stats} ===")
+    if stats["update_fail"]:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
