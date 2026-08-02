@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "hardening/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Import check (every scraper and entry point)
+        run: |
+          python - <<'EOF'
+          import importlib
+          mods = [
+              "scrapers.easa", "scrapers.federal_register", "scrapers.transport_canada",
+              "scrapers.anac_brazil", "scrapers.uk_caa", "scrapers.faa_govinfo",
+              "scrapers.anac_argentina", "scrapers.dgac_chile", "scrapers.gcaa_uae",
+              "scrapers.casa_australia", "scrapers.aerocivil_colombia",
+              "enrich", "utils", "populate_db",
+          ]
+          for m in mods:
+              importlib.import_module(m)
+          print(f"{len(mods)} modules import cleanly")
+          EOF
+
+      - name: Self-checks (no network, no DB)
+        run: |
+          python scripts/test_upsert_dedup.py
+          python scripts/test_faa_identity.py
+
+      # Audits the requirement ranges for now; Fase 3 introduces a lockfile and
+      # this step switches to auditing that instead.
+      - name: pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
