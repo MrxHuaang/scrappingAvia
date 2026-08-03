@@ -96,7 +96,14 @@ Si no configuras `SUPABASE_URL` y `SUPABASE_ANON_KEY`, la app muestra un banner 
 
 ## Setup de base de datos
 
-Ejecuta este SQL en **Supabase > SQL Editor > New query**:
+**El esquema real vive en las migraciones del repo frontend**
+([Ad-Scrapper](https://github.com/MrxHuaang/Ad-Scrapper), `supabase/migrations/`),
+que se aplican con `supabase db push` — **nunca ejecutes DDL por el SQL Editor**
+(regla del runbook de reconciliación del ledger). La tabla `profiles` de
+producción ya existe con RLS y políticas seguras.
+
+Si montas un proyecto Supabase desde cero SIN el repo frontend, la forma
+mínima segura es:
 
 ```sql
 CREATE TABLE IF NOT EXISTS profiles (
@@ -112,12 +119,19 @@ ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users can read own profile"
   ON profiles FOR SELECT
+  TO authenticated
   USING (auth.uid() = id);
-
-CREATE POLICY "Service role can manage profiles"
-  ON profiles FOR ALL
-  USING (true);
 ```
+
+> ⚠️ Una versión anterior de este documento incluía
+> `CREATE POLICY ... FOR ALL USING (true)` "para el service role". Esa
+> política es **insegura y no debe usarse jamás**: sin `TO service_role`
+> aplica a *todos* los roles, así que cualquier usuario con la anon key
+> podría escribir su propio plan (auto-upgrade gratis). Nunca estuvo aplicada
+> en producción. El service role **bypasea RLS por diseño** — no necesita
+> ninguna política; basta con no crear políticas de escritura para los roles
+> de la API. Si algún día se necesita una política explícita, debe llevar
+> `TO service_role` y su `WITH CHECK`.
 
 > La tabla `profiles` almacena el plan del usuario y los IDs de Stripe. La app la consulta en cada login para determinar el plan activo.
 
@@ -131,11 +145,17 @@ CREATE POLICY "Service role can manage profiles"
    - **Products > Add product** > "Zephr Professional" > $29/mes > recurring.
    - Copia el **Price ID** (empieza con `price_`).
    - Repite para "Zephr Team" > $99/mes.
-4. Configura el webhook:
+4. Configura el webhook — **el webhook canónico vive en el frontend Next.js,
+   no en Flask** (el endpoint Flask `/api/stripe/webhook` devuelve 410 Gone
+   para evitar procesar eventos duplicados):
    - **Developers > Webhooks > Add endpoint**.
-   - URL: `https://scrapping-avia.vercel.app/api/stripe/webhook`
-   - Eventos a escuchar: `checkout.session.completed`, `customer.subscription.deleted`
-   - Copia el **Webhook signing secret** (`whsec_...`).
+   - URL: `https://ad-scrapper.vercel.app/api/stripe/webhook`
+   - Eventos: los que consume `syncSubscriptionState` en el frontend
+     (`checkout.session.completed`, `customer.subscription.updated`,
+     `customer.subscription.deleted`, `invoice.payment_failed`, ...) — ver
+     `docs/billing-lifecycle.md` del repo Ad-Scrapper.
+   - Copia el **Webhook signing secret** (`whsec_...`) y configúralo en el
+     proyecto de Vercel del FRONTEND.
 5. Agrega las variables de entorno en Vercel (o `.env` local):
 
 ```
@@ -144,7 +164,7 @@ STRIPE_PUBLISHABLE_KEY=pk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 STRIPE_PRO_PRICE_ID=price_...
 STRIPE_TEAM_PRICE_ID=price_...
-BASE_URL=https://scrapping-avia.vercel.app
+BASE_URL=https://scrapping-avia.vercel.app   # en local: http://localhost:5000 (ver .env.example)
 ```
 
 6. Redeploy en Vercel.
@@ -156,7 +176,7 @@ BASE_URL=https://scrapping-avia.vercel.app
 |------|--------|-------------|
 | `/api/stripe/config` | GET | Devuelve publishable key y planes |
 | `/api/stripe/create-checkout-session` | POST | Crea sesión de checkout (requiere auth) |
-| `/api/stripe/webhook` | POST | Webhook de Stripe (sin auth) |
+| `/api/stripe/webhook` | POST | **Deprecado** — 410 Gone (el canonico vive en Next.js) |
 | `/payment/success` | GET | Página de pago exitoso |
 | `/payment/cancel` | GET | Página de pago cancelado |
 
