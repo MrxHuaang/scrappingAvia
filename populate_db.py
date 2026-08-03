@@ -524,18 +524,45 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
 
     # supersession: resolve the superseding AD number -> its ads.id.
     # Must also set status='Superseded' to satisfy ads_superseded_coherence_chk.
+    # Batched: one read pass skips rows already pointing at the right target
+    # (no nightly dead tuples for a no-op), then one PATCH per distinct target
+    # with `.in_(id, ...)` instead of one round-trip per row.
     if supersede_updates:
         target_numbers = [n for _, n in supersede_updates]
         target_ids = _fetch_ad_ids(supabase, source, target_numbers)
-        for ad_id, target_num in supersede_updates:
-            tgt = target_ids.get(target_num)
-            if tgt and tgt != ad_id:
+        pairs = {  # old ads.id -> superseding ads.id (last declaration wins)
+            ad_id: target_ids[target_num]
+            for ad_id, target_num in supersede_updates
+            if target_ids.get(target_num) and target_ids[target_num] != ad_id
+        }
+        BATCH = 300
+        old_ids = list(pairs)
+        for i in range(0, len(old_ids), BATCH):
+            chunk = old_ids[i : i + BATCH]
+            try:
+                resp = (
+                    supabase.table("ads")
+                    .select("id, superseded_to_ad_id, status")
+                    .in_("id", chunk)
+                    .execute()
+                )
+                for rec in resp.data or []:
+                    if (rec.get("superseded_to_ad_id") == pairs.get(rec["id"])
+                            and rec.get("status") == "Superseded"):
+                        pairs.pop(rec["id"], None)
+            except Exception as e:
+                _record_write_error(f"  supersede: pre-lectura fallo: {e}")
+        by_target: dict[str, list[str]] = {}
+        for ad_id, tgt in pairs.items():
+            by_target.setdefault(tgt, []).append(ad_id)
+        for tgt, ids in by_target.items():
+            for i in range(0, len(ids), BATCH):
                 try:
                     supabase.table("ads").update(
                         {"superseded_to_ad_id": tgt, "status": "Superseded"}
-                    ).eq("id", ad_id).execute()
+                    ).in_("id", ids[i : i + BATCH]).execute()
                 except Exception as e:
-                    _record_write_error(f"  supersede: update fallo {ad_id}: {e}")
+                    _record_write_error(f"  supersede: update fallo target {tgt}: {e}")
 
     logger.info(
         f"[{source}] relaciones: {sum(len(v) for v in applic_by_ad.values())} applicability "
