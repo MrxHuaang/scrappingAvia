@@ -156,63 +156,18 @@ DB_BACKED_SOURCES = frozenset([
 # ------------------------------------------------------------------
 _SUPABASE_PAGE_SIZE = 1000  # PostgREST max rows per request
 
-def _build_supabase_query(sb, source, keyword, make, model, product_type, date_from, date_to):
-    """Construye el query base de Supabase (sin limit/range)."""
-    q = sb.table("ads").select(
-        "source, source_label, ad_number, subject, make, model, "
-        "product_type, effective_date, status, docket, pdf_link, "
-        # Embed self-FK: the AD that supersedes this row (if any), so the UI
-        # can flag superseded rows inline without a second round trip.
-        #
-        # Hint by COLUMN name, not constraint name. `ads!ads_superseded_to_fkey`
-        # 400s with "no matches were found" on this PostgREST version for a
-        # self-referencing table — both sides of the join are `ads`, and the
-        # constraint-name hint can't disambiguate that, even though the
-        # constraint genuinely exists (confirmed against pg_constraint). This
-        # silently broke DB-first search for EVERY source: _search_supabase
-        # caught the PGRST200 error, returned [], and _make_db_search_fn's
-        # fallback sent every single query to a live scrape instead.
-        "superseded:superseded_to_ad_id(ad_number)"
-    )
-
-    if source != "all":
-        q = q.eq("source", source)
-
-    search_term = keyword or ""
-    if search_term:
-        q = q.or_(
-            f"ad_number.ilike.%{search_term}%,"
-            f"subject.ilike.%{search_term}%,"
-            f"make.ilike.%{search_term}%,"
-            f"model.ilike.%{search_term}%"
-        )
-
-    if make and make != keyword:
-        q = q.ilike("make", f"%{make}%")
-
-    if model:
-        q = q.or_(
-            f"model.ilike.%{model}%,"
-            f"subject.ilike.%{model}%"
-        )
-
-    if product_type:
-        q = q.ilike("product_type", f"%{product_type}%")
-
-    if date_from:
-        q = q.gte("effective_date", date_from)
-    if date_to:
-        q = q.lte("effective_date", date_to)
-
-    q = q.order("effective_date", desc=True)
-    return q
-
-
 def _search_supabase(source, keyword="", make="", model="", product_type="",
                      date_from="", date_to="", max_results=10000):
     """
-    Busca ADs en la tabla 'ads' de Supabase.
-    Usa paginación para superar el límite de 1000 rows de PostgREST.
+    Busca ADs en la tabla 'ads' de Supabase vía la RPC parametrizada `search_ads`.
+
+    El input del usuario viaja como bind parameters — nunca se interpola en la
+    gramática de filtros de PostgREST (eso permitía inyectar filtros arbitrarios
+    con la service key). Contrato de la RPC (migración 20260803001500 en
+    ad-scrapper): `%`/`_`/`\\` son literales, orden determinista
+    (effective_date DESC, id DESC), p_limit <= 1000, filtros de texto <= 200
+    chars (más largos → 22023, que aquí se reporta como error y retorna []).
+    La RPC resuelve el self-join de supersesión y devuelve `superseded_by`.
     Retorna lista de dicts con el mismo formato que los scrapers.
     """
     sb = get_supabase_admin()
@@ -225,10 +180,18 @@ def _search_supabase(source, keyword="", make="", model="", product_type="",
 
         while offset < max_results:
             batch_size = min(_SUPABASE_PAGE_SIZE, max_results - offset)
-            q = _build_supabase_query(sb, source, keyword, make, model, product_type, date_from, date_to)
-            q = q.range(offset, offset + batch_size - 1)
-
-            resp = q.execute()
+            resp = sb.rpc("search_ads", {
+                "p_source": source or "all",
+                "p_term": keyword or "",
+                # El término ya matchea make; repetirlo como filtro AND lo restringiría.
+                "p_make": make if (make and make != keyword) else "",
+                "p_model": model or "",
+                "p_product_type": product_type or "",
+                "p_date_from": date_from or None,
+                "p_date_to": date_to or None,
+                "p_limit": batch_size,
+                "p_offset": offset,
+            }).execute()
             rows = resp.data or []
             all_rows.extend(rows)
 
@@ -265,7 +228,7 @@ def _search_supabase(source, keyword="", make="", model="", product_type="",
                 "Product_Type": row.get("product_type", "") or "",
                 "Docket": row.get("docket", "") or "",
                 "PDF_Link": row.get("pdf_link", "") or "",
-                "Superseded_By": (row.get("superseded") or {}).get("ad_number", "") or "",
+                "Superseded_By": row.get("superseded_by", "") or "",
             })
 
         logger.info(f"[DB] {source}: {len(results)} resultados desde Supabase")
