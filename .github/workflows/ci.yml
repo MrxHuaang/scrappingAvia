@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: read
+  # gitleaks-action reads GET /repos/{o}/{r}/pulls/{n}/commits on pull_request
+  # events; without this it fails with 403 "Resource not accessible by
+  # integration" while push runs stay green.
+  pull-requests: read
 
 jobs:
   test:
