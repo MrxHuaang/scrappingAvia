@@ -115,6 +115,8 @@
         lastSearchMs: null,
         lastSearchTerm: '',
         lastErrors: [],
+        // fuente -> total real que caso en la BD (o null si no se sabe)
+        truncatedSources: new Map(),
         lastParams: null,
         sourceCounts: {},
         streamAbort: null,
@@ -484,6 +486,7 @@
         state.sortField = '_relevance';
         state.sortOrder = 'desc';
         state.lastErrors = [];
+        state.truncatedSources.clear();
         state.results = [];
         state.filteredResults = null;
         state.sourceCounts = {};
@@ -569,18 +572,16 @@
 
                         if (srcError) { state.lastErrors.push(srcError); showToast(srcError, 'error'); }
 
-                        // El stream trae la señal de truncado por fuente. Sin
-                        // consumirla el usuario recibe una lista recortada que
-                        // parece completa — el defecto que D-7 vino a cerrar.
+                        // El stream trae la señal de truncado por fuente. Se
+                        // guarda en el estado, no solo se avisa: un toast dura
+                        // 4s y despues la lista vuelve a parecer completa.
                         if (event.truncated) {
-                            // en-US fijo: la UI es English only y el locale del
-                            // navegador renderizaría "4.297" dentro de copy en inglés.
-                            const matched = typeof event.total_matched === 'number'
-                                ? event.total_matched.toLocaleString('en-US')
-                                : 'more';
-                            const notice = `${event.source}: showing the most recent matches only — ${matched} ADs match this search. Narrow it to see the rest.`;
-                            state.lastErrors.push(notice);
-                            showToast(notice, 'warning');
+                            state.truncatedSources.set(
+                                event.source,
+                                typeof event.total_matched === 'number' ? event.total_matched : null,
+                            );
+                            showToast(truncationNotice(event.source, state.truncatedSources.get(event.source)), 'warning');
+                            state._lastRenderKey = null;
                         }
 
                         state.lastResultCount = state.results.length;
@@ -636,6 +637,7 @@
         state.sortField = '_relevance';
         state.sortOrder = 'desc';
         state.lastErrors = [];
+        state.truncatedSources.clear();
         state.results = [];
         state.filteredResults = null;
         state.sourceCounts = {};
@@ -818,7 +820,8 @@
         if (dom.inputDateTo) dom.inputDateTo.value = '';
         state.results = []; state.filteredResults = null; state.currentPage = 1;
         state.activeManufacturerKey = null; state.activeManufacturerModels = null;
-        state.lastErrors = []; state.sourceCounts = {}; state.lastParams = null;
+        state.lastErrors = [];
+        state.truncatedSources.clear(); state.sourceCounts = {}; state.lastParams = null;
         state.quickFilter = ''; state.ataFilter = ''; state._lastRenderKey = null; state.searching = false;
         if (dom.quickFilter) dom.quickFilter.value = '';
         if (dom.ataSelect) dom.ataSelect.value = '';
@@ -988,6 +991,8 @@
             badge.title = 'Resultados limitados a 200 por fuente en este modo';
             dom.resultsCount.parentNode.appendChild(badge);
         }
+
+        renderTruncationBanner();
 
         if (state.viewMode === 'table') renderTable(pageResults);
         else renderCards(pageResults);
@@ -1651,6 +1656,34 @@
         if (type === 'searching') dom.statusIndicator.classList.add('searching');
         if (type === 'error') dom.statusIndicator.classList.add('error');
     }
+
+    // La UI de este backend esta en espanol y formatea con es-ES (ver
+    // resultsCount): el aviso de truncado usa lo mismo. El de Zephr (Next.js) va
+    // en ingles con en-US porque ese producto es English only — son dos
+    // interfaces distintas, no una inconsistencia.
+    function truncationNotice(source, total) {
+        const n = typeof total === 'number' ? total.toLocaleString('es-ES') : null;
+        return n
+            ? `${source}: mostrando solo los mas recientes — hay ${n} ADs que coinciden. Afina la busqueda para verlos todos.`
+            : `${source}: resultados incompletos. Afina la busqueda para verlos todos.`;
+    }
+
+    function renderTruncationBanner() {
+        const host = dom.resultsCount && dom.resultsCount.parentNode;
+        if (!host) return;
+        const existing = host.querySelector('.truncation-notice');
+        if (existing) existing.remove();
+        if (state.truncatedSources.size === 0) return;
+
+        const banner = document.createElement('div');
+        banner.className = 'truncation-notice';
+        banner.setAttribute('role', 'status');
+        const parts = [];
+        state.truncatedSources.forEach((total, source) => parts.push(truncationNotice(source, total)));
+        banner.textContent = parts.join(' ');
+        host.appendChild(banner);
+    }
+
     function showToast(message, type = 'info') {
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
