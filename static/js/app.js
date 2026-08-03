@@ -569,6 +569,20 @@
 
                         if (srcError) { state.lastErrors.push(srcError); showToast(srcError, 'error'); }
 
+                        // El stream trae la señal de truncado por fuente. Sin
+                        // consumirla el usuario recibe una lista recortada que
+                        // parece completa — el defecto que D-7 vino a cerrar.
+                        if (event.truncated) {
+                            // en-US fijo: la UI es English only y el locale del
+                            // navegador renderizaría "4.297" dentro de copy en inglés.
+                            const matched = typeof event.total_matched === 'number'
+                                ? event.total_matched.toLocaleString('en-US')
+                                : 'more';
+                            const notice = `${event.source}: showing the most recent matches only — ${matched} ADs match this search. Narrow it to see the rest.`;
+                            state.lastErrors.push(notice);
+                            showToast(notice, 'warning');
+                        }
+
                         state.lastResultCount = state.results.length;
                         state.lastSearchMs = Math.round(performance.now() - t0);
                         state._lastRenderKey = null;
@@ -1644,6 +1658,9 @@
             success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>',
             error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
             info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+            // Truncation is not an error and not neutral information: the list
+            // on screen is incomplete. It gets its own weight.
+            warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
         };
         toast.innerHTML = `<div class="toast-icon">${icons[type]||icons.info}</div><span class="toast-message">${esc(message)}</span>`;
         dom.toastContainer.appendChild(toast);
