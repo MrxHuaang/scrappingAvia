@@ -349,10 +349,78 @@ def build_shared_sb_rows(sb, limit, stats, samples, reference_pairs: set):
     return out
 
 
+STAGE_CHUNK = 2000
+# Cota inferior del swap: un lote con menos del 70% de las filas vivas del metodo
+# se rechaza (algo se rompio aguas arriba). Con la tabla vacia no aplica.
+MIN_RATIO = 0.7
+
+
+def canonical_checksum(rows: list[dict]) -> str:
+    """
+    Canonicalizacion COMPARTIDA con public.ad_equivalents_checksum_rows (SQL).
+    Filas ordenadas por la clave natural; cada fila son los 5 campos en orden
+    fijo con prefijo de longitud en bytes (`<n>:<valor>`) unidos por '|'; filas
+    unidas por '\\n'; UTF-8; SHA-256 hex. El prefijo de longitud es lo que hace
+    inofensivo un '|' o un salto de linea dentro de una nota.
+    Vector de prueba fijo en scripts/test_equivalents_checksum.py.
+    """
+    def field(v: str) -> str:
+        return f"{len(v.encode('utf-8'))}:{v}"
+
+    lines = []
+    for r in rows:
+        lines.append((
+            (str(r["ad_id"]), str(r["equivalent_source"]), str(r["equivalent_ad_number"])),
+            "|".join([
+                field(str(r["ad_id"])),
+                field(str(r["equivalent_source"])),
+                field(str(r["equivalent_ad_number"])),
+                field(str(r.get("match_level") or "candidate")),
+                field(str(r.get("note") or "")),
+            ]),
+        ))
+    # El ORDER BY de Postgres sobre el sort_key (campos unidos por chr(31)) y el
+    # sort de Python sobre la tupla coinciden porque chr(31) es menor que
+    # cualquier caracter imprimible: la comparacion nunca cruza el separador.
+    lines.sort(key=lambda t: "\x1f".join(t[0]))
+    payload = "\n".join(line for _, line in lines)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def replace_method_rows(sb, method: str, rows: list[dict]):
-    sb.table("ad_equivalents").delete().eq("method", method).execute()
-    for i in range(0, len(rows), 500):
-        sb.table("ad_equivalents").insert(rows[i : i + 500]).execute()
+    """
+    Swap por staging con generacion y fencing (INT-4). El delete+insert vive
+    dentro de commit_ad_equivalents, en una sola transaccion validada por conteo,
+    cota inferior y checksum: un fallo aguas arriba ya no puede dejar la capa del
+    metodo vacia para todos los clientes.
+    """
+    run_id = sb.rpc("open_ad_equivalents_run", {"p_method": method}).execute().data
+
+    staged = 0
+    for i in range(0, len(rows), STAGE_CHUNK):
+        chunk = [
+            {
+                "ad_id": r["ad_id"],
+                "equivalent_ad_id": r.get("equivalent_ad_id"),
+                "equivalent_source": r["equivalent_source"],
+                "equivalent_ad_number": r["equivalent_ad_number"],
+                "match_level": r.get("match_level") or "candidate",
+                "note": r.get("note"),
+            }
+            for r in rows[i : i + STAGE_CHUNK]
+        ]
+        staged = sb.rpc("stage_ad_equivalents", {
+            "p_run_id": run_id, "p_rows": chunk,
+        }).execute().data
+
+    committed = sb.rpc("commit_ad_equivalents", {
+        "p_run_id": run_id,
+        "p_method": method,
+        "p_expected_count": staged,
+        "p_min_ratio": MIN_RATIO,
+        "p_checksum": canonical_checksum(rows),
+    }).execute().data
+    return committed
 
 
 def main():
