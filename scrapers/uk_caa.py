@@ -27,13 +27,15 @@ Dos decisiones de alcance, ambas para no corromper la tabla `ads`:
    pero de otra forma (una declaracion de NO aplicabilidad), no cabe en `ads`.
 """
 
-import json
 import os
 import re
 import time
 
 import requests
 from bs4 import BeautifulSoup
+from scrapers.common.http import browser_headers
+from scrapers.common.cache import load_json_cache, save_json_cache
+from scrapers.common.http import get_with_backoff
 
 BASE = "https://www.caa.co.uk"
 SERIES_BASE = f"{BASE}/data-and-publications/publications/publication-series"
@@ -51,11 +53,7 @@ SERIES = [
 # "FAA AD 2020-26-16", "ANAC AD 2024-04-01") pertenece a otra fuente y se descarta.
 UK_REF_RE = re.compile(r"^(?:G-\d{4}-\d{3,4}|CAP747-\d{3}|MPD\s*\d{4}-\d{3})", re.I)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "text/html,application/xhtml+xml",
-    "Accept-Language": "en-GB,en;q=0.9",
-}
+HEADERS = browser_headers({"Accept-Language": "en-GB,en;q=0.9"})
 
 _MONTHS = {
     "jan": "01", "feb": "02", "mar": "03", "apr": "04", "may": "05", "jun": "06",
@@ -68,52 +66,25 @@ _detail_cache = None
 
 def _load_cache():
     global _detail_cache
-    if _detail_cache is not None:
-        return _detail_cache
-    try:
-        with open(CACHE_PATH, "r", encoding="utf-8") as fh:
-            _detail_cache = json.load(fh)
-    except Exception:
-        _detail_cache = {}
+    if _detail_cache is None:
+        _detail_cache = load_json_cache(CACHE_PATH)
     return _detail_cache
 
 
 def _save_cache():
-    if _detail_cache is None:
-        return
-    try:
-        os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
-        with open(CACHE_PATH, "w", encoding="utf-8") as fh:
-            json.dump(_detail_cache, fh, ensure_ascii=False, indent=1)
-    except Exception as e:
-        print(f"[UK CAA] No se pudo escribir el cache: {e}")
+    if _detail_cache is not None:
+        save_json_cache(CACHE_PATH, _detail_cache, indent=1)
 
 
 def _get(session, url, tries=3):
-    """GET con backoff exponencial para 429/5xx. Devuelve texto o None."""
-    delay = 2
-    for attempt in range(tries):
-        try:
-            resp = session.get(url, timeout=25)
-            if resp.status_code == 429 or resp.status_code >= 500:
-                if attempt < tries - 1:
-                    time.sleep(delay)
-                    delay *= 2
-                    continue
-                print(f"[UK CAA] HTTP {resp.status_code} en {url}")
-                return None
-            if resp.status_code >= 400:
-                print(f"[UK CAA] HTTP {resp.status_code} en {url}")
-                return None
-            return resp.text
-        except Exception as e:
-            if attempt < tries - 1:
-                time.sleep(delay)
-                delay *= 2
-                continue
-            print(f"[UK CAA] Error en {url}: {e}")
-            return None
-    return None
+    """GET con backoff exponencial para 429/5xx (helper comun). Texto o None."""
+    resp = get_with_backoff(url, session=session, timeout=25, retries=tries, tag="UK CAA")
+    if resp is None:
+        return None
+    if resp.status_code >= 400:
+        print(f"[UK CAA] HTTP {resp.status_code} en {url}")
+        return None
+    return resp.text
 
 
 def _parse_date(text):

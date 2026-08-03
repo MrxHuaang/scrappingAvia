@@ -8,7 +8,8 @@ from bs4 import BeautifulSoup
 import time
 import re
 import os
-import json
+from scrapers.common.http import browser_headers, get_with_backoff
+from scrapers.common.cache import load_json_cache, save_json_cache
 
 
 EASA_BASE_URL = "https://ad.easa.europa.eu"
@@ -19,11 +20,7 @@ EASA_EXPORT_CSV = f"{EASA_BASE_URL}/search/export/csv"
 # FIXED: EASA muestra 20 ADs por pagina (sin link de paginacion en HTML — es JS)
 _PAGE_SIZE = 20
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-}
+HEADERS = browser_headers()
 
 
 def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None, date_to=None, max_pages=50):
@@ -71,18 +68,12 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
         url = EASA_RESULTS_URL if page == 1 else f"{EASA_RESULTS_URL}/?page={page}"
 
         try:
-            resp = session.get(url, params=params if page == 1 else {}, headers=HEADERS, timeout=60)
-
-            # Rate limiting: exponential backoff hasta 3 reintentos (2s, 4s, 8s)
-            retry_delay = 2
-            for attempt in range(3):
-                if resp.status_code != 429:
-                    break
-                print(f"[EASA] Rate limit (429) en pagina {page}, reintento {attempt + 1}/3 en {retry_delay}s...")
-                time.sleep(retry_delay)
-                resp = session.get(url, params=params if page == 1 else {}, headers=HEADERS, timeout=60)
-                retry_delay *= 2
-
+            # Backoff exponencial en 429/5xx (helper comun de scrapers)
+            resp = get_with_backoff(url, session=session,
+                                    params=params if page == 1 else {},
+                                    headers=HEADERS, timeout=60, tag="EASA")
+            if resp is None:
+                raise requests.RequestException(f"pagina {page}: reintentos agotados")
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
 
@@ -337,23 +328,13 @@ _detail_cache = None
 def _load_detail_cache():
     global _detail_cache
     if _detail_cache is None:
-        try:
-            with open(_DETAIL_CACHE_PATH, encoding="utf-8") as f:
-                _detail_cache = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            _detail_cache = {}
+        _detail_cache = load_json_cache(_DETAIL_CACHE_PATH)
     return _detail_cache
 
 
 def _save_detail_cache():
-    if _detail_cache is None:
-        return
-    try:
-        os.makedirs(os.path.dirname(_DETAIL_CACHE_PATH), exist_ok=True)
-        with open(_DETAIL_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump(_detail_cache, f, ensure_ascii=False)
-    except OSError:
-        pass
+    if _detail_cache is not None:
+        save_json_cache(_DETAIL_CACHE_PATH, _detail_cache)
 
 
 # Numero de AD dentro del texto EASA: forma moderna 2024-0195(R1) o legado
@@ -485,23 +466,13 @@ _pdf_cache = None
 def _load_pdf_cache():
     global _pdf_cache
     if _pdf_cache is None:
-        try:
-            with open(_PDF_CACHE_PATH, encoding="utf-8") as f:
-                _pdf_cache = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            _pdf_cache = {}
+        _pdf_cache = load_json_cache(_PDF_CACHE_PATH)
     return _pdf_cache
 
 
 def _save_pdf_cache():
-    if _pdf_cache is None:
-        return
-    try:
-        os.makedirs(os.path.dirname(_PDF_CACHE_PATH), exist_ok=True)
-        with open(_PDF_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump(_pdf_cache, f, ensure_ascii=False)
-    except OSError:
-        pass
+    if _pdf_cache is not None:
+        save_json_cache(_PDF_CACHE_PATH, _pdf_cache)
 
 
 def _clean_pdf(s: str) -> str:

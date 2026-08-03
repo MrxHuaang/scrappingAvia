@@ -9,13 +9,11 @@ Son directivas nacionales chilenas, no FAA/EASA.
 import re
 import requests
 from bs4 import BeautifulSoup
+from scrapers.common.http import browser_headers
 
 DGAC_URL = "https://www.dgac.gob.cl/normativa/reglamentacion-aeronautica/directiva-aeronavegab/"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "text/html,application/xhtml+xml",
-}
+HEADERS = browser_headers()
 
 
 def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None, max_results=200):

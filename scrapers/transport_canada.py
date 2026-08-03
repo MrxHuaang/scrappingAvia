@@ -10,17 +10,14 @@ import time
 import os
 import io
 import json
+from scrapers.common.http import browser_headers
 
 
 TC_BASE_URL = "https://wwwapps.tc.gc.ca/Saf-Sec-Sur/2/cawis-swimn"
 TC_SEARCH_URL = f"{TC_BASE_URL}/AD_as.aspx"
 TC_RECENT_URL = f"{TC_BASE_URL}/AD_r.aspx"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-}
+HEADERS = browser_headers()
 
 
 def _get_viewstate(soup):

@@ -12,14 +12,11 @@ Formato típico:
 import re
 import requests
 from bs4 import BeautifulSoup
+from scrapers.common.http import browser_headers
 
 ANAC_AR_URL = "https://www.argentina.gob.ar/anac/directivas-y-advertencias-de-aeronavegabilidad"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "es-AR,es;q=0.9,en-US;q=0.8,en;q=0.5",
-}
+HEADERS = browser_headers({"Accept-Language": "es-AR,es;q=0.9,en-US;q=0.8,en;q=0.5"})
 
 
 def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None, max_results=200):

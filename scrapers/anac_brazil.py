@@ -20,6 +20,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
+from scrapers.common.http import browser_headers
 
 
 ANAC_BASE_URL = "https://sistemas.anac.gov.br/certificacao/DA"
@@ -40,16 +41,10 @@ YEAR_RANGES = [
     "1996-2000",
 ]
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+HEADERS = browser_headers({
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.5",
     "Referer": "https://sistemas.anac.gov.br/certificacao/DA/DAE.asp",
-}
+})
 
 # Mapping de fabricantes conocidos a sus OrgCodi en ANAC (para búsqueda directa)
 # Estos se descubren via DA_ProdE.asp?Letr=<letra> → links a DA_ModProdE.asp?OrgCodi=<id>

@@ -13,6 +13,7 @@ simple tampoco resuelva) — no es un fix de parsing.
 import re
 import requests
 from bs4 import BeautifulSoup
+from scrapers.common.http import browser_headers
 
 CASA_URLS = [
     "https://ad.casa.gov.au/",
@@ -23,14 +24,11 @@ CASA_URLS = [
     "https://www.casa.gov.au/airworthiness-directives",
 ]
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
+HEADERS = browser_headers({
     "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
-}
+})
 
 
 def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None, max_results=200):

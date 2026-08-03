@@ -9,7 +9,6 @@ Endpoint: https://www.federalregister.gov/api/v1/documents.json
 Docs:     https://www.federalregister.gov/developers/documentation/api/v1
 """
 
-import json
 import os
 import re
 import threading
@@ -26,15 +25,15 @@ from utils import (
     normalize_ad_number,
 )
 
+from scrapers.common.cache import load_json_cache, save_json_cache
+from scrapers.common.http import API_HEADERS, get_with_backoff
+
 
 FEDERAL_REGISTER_API = "https://www.federalregister.gov/api/v1/documents.json"
 FR_API_START_YEAR = 1994
 PER_PAGE = 1000  # max soportado por la API
 
-HEADERS = {
-    "User-Agent": "AD-Scraper/1.0",
-    "Accept": "application/json",
-}
+HEADERS = API_HEADERS
 
 _FIELDS = [
     "title", "abstract", "document_number", "publication_date",
@@ -67,23 +66,13 @@ FULLTEXT_WORKERS = 8
 def _load_fulltext_cache() -> dict:
     global _fulltext_cache
     if _fulltext_cache is None:
-        try:
-            with open(_FULLTEXT_CACHE_PATH, encoding="utf-8") as f:
-                _fulltext_cache = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            _fulltext_cache = {}
+        _fulltext_cache = load_json_cache(_FULLTEXT_CACHE_PATH)
     return _fulltext_cache
 
 
 def _save_fulltext_cache() -> None:
-    if _fulltext_cache is None:
-        return
-    try:
-        os.makedirs(os.path.dirname(_FULLTEXT_CACHE_PATH), exist_ok=True)
-        with open(_FULLTEXT_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump(_fulltext_cache, f, ensure_ascii=False)
-    except OSError:
-        pass
+    if _fulltext_cache is not None:
+        save_json_cache(_FULLTEXT_CACHE_PATH, _fulltext_cache)
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -237,23 +226,16 @@ def _prefetch_fulltext(docs: list[dict]) -> None:
 
 
 def _request_page(params: dict, retries: int = 3) -> dict | None:
-    """Request con backoff exponencial en 429/5xx."""
-    delay = 2
-    for attempt in range(retries):
-        try:
-            resp = requests.get(FEDERAL_REGISTER_API, params=params, headers=HEADERS, timeout=60)
-            if resp.status_code == 429 or resp.status_code >= 500:
-                print(f"[Federal Register] HTTP {resp.status_code} attempt {attempt + 1}, sleep {delay}s")
-                time.sleep(delay)
-                delay *= 2
-                continue
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            print(f"[Federal Register] Error: {e} attempt {attempt + 1}")
-            time.sleep(delay)
-            delay *= 2
-    return None
+    """Request con backoff exponencial en 429/5xx (helper comun). Un 4xx no se
+    reintenta: no se cura solo."""
+    resp = get_with_backoff(FEDERAL_REGISTER_API, params=params, headers=HEADERS,
+                            timeout=60, retries=retries, tag="Federal Register")
+    if resp is None:
+        return None
+    if resp.status_code >= 400:
+        print(f"[Federal Register] HTTP {resp.status_code}")
+        return None
+    return resp.json()
 
 
 def _search_year(year: int, max_pages: int = 50) -> list[dict]:

@@ -22,7 +22,6 @@ Rate limit: 40 req/s, 36000 req/hr por key (docs usgpo/api). Usamos
 sleep(0.025) y pausa de 60s si X-RateLimit-Remaining < 50.
 """
 
-import json
 import os
 import re
 import time
@@ -31,6 +30,8 @@ from datetime import date, timedelta, datetime
 import requests
 
 from utils import extract_make_model, normalize_ad_number
+from scrapers.common.http import get_with_backoff
+from scrapers.common.cache import load_json_cache, save_json_cache
 
 
 GOVINFO_BASE = "https://api.govinfo.gov"
@@ -80,27 +81,18 @@ def _get(path: str, params: dict | None = None, retries: int = 3) -> dict | None
         p["api_key"] = key
 
     url = path if path.startswith("http") else f"{GOVINFO_BASE}{path}"
-    delay = 2
-    for attempt in range(retries):
-        try:
-            resp = _session.get(url, params=p, timeout=30)
-            if resp.status_code == 404:
-                return None
-            if resp.status_code == 429 or resp.status_code >= 500:
-                time.sleep(delay)
-                delay *= 2
-                continue
-            if resp.status_code == 403:
-                print("[GovInfo] 403 - revisar GOVINFO_API_KEY")
-                return None
-            resp.raise_for_status()
-            _check_rate_headers(resp)
-            return resp.json()
-        except requests.RequestException as e:
-            print(f"[GovInfo] GET error: {e}")
-            time.sleep(delay)
-            delay *= 2
-    return None
+    resp = get_with_backoff(url, session=_session, params=p, timeout=30,
+                            retries=retries, tag="GovInfo")
+    if resp is None or resp.status_code == 404:
+        return None
+    if resp.status_code == 403:
+        print("[GovInfo] 403 - revisar GOVINFO_API_KEY")
+        return None
+    if resp.status_code >= 400:
+        print(f"[GovInfo] HTTP {resp.status_code}")
+        return None
+    _check_rate_headers(resp)
+    return resp.json()
 
 
 def _get_text(path: str, params: dict | None = None, retries: int = 3) -> str | None:
@@ -111,27 +103,18 @@ def _get_text(path: str, params: dict | None = None, retries: int = 3) -> str | 
         p["api_key"] = key
 
     url = path if path.startswith("http") else f"{GOVINFO_BASE}{path}"
-    delay = 2
-    for attempt in range(retries):
-        try:
-            resp = _session.get(url, params=p, timeout=30)
-            if resp.status_code == 404:
-                return None
-            if resp.status_code == 429 or resp.status_code >= 500:
-                time.sleep(delay)
-                delay *= 2
-                continue
-            if resp.status_code == 403:
-                print("[GovInfo] 403 en MODS - revisar GOVINFO_API_KEY")
-                return None
-            resp.raise_for_status()
-            _check_rate_headers(resp)
-            return resp.text
-        except requests.RequestException as e:
-            print(f"[GovInfo] MODS GET error: {e}")
-            time.sleep(delay)
-            delay *= 2
-    return None
+    resp = get_with_backoff(url, session=_session, params=p, timeout=30,
+                            retries=retries, tag="GovInfo")
+    if resp is None or resp.status_code == 404:
+        return None
+    if resp.status_code == 403:
+        print("[GovInfo] 403 en MODS - revisar GOVINFO_API_KEY")
+        return None
+    if resp.status_code >= 400:
+        print(f"[GovInfo] HTTP {resp.status_code} en MODS")
+        return None
+    _check_rate_headers(resp)
+    return resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -166,26 +149,14 @@ def _parse_mods(xml_text: str) -> dict:
 
 
 def _load_cache() -> dict:
-    try:
-        with open(MODS_CACHE_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict) and data.get("version") == 1:
-            return data
-    except (OSError, json.JSONDecodeError):
-        pass
+    data = load_json_cache(MODS_CACHE_PATH, default=None)
+    if isinstance(data, dict) and data.get("version") == 1:
+        return data
     return {"version": 1, "granules": {}}
 
 
 def _save_cache(cache: dict) -> None:
-    """Guardado atomico: escribe .tmp y reemplaza."""
-    try:
-        os.makedirs(_OUTPUTS_DIR, exist_ok=True)
-        tmp = MODS_CACHE_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(cache, f, ensure_ascii=False)
-        os.replace(tmp, MODS_CACHE_PATH)
-    except OSError as e:
-        print(f"[GovInfo] No se pudo guardar cache MODS: {e}")
+    save_json_cache(MODS_CACHE_PATH, cache)
 
 
 def _fetch_mods(pkg_id: str, granule_id: str, cache: dict, stats: dict) -> dict:

@@ -11,7 +11,7 @@ import collections
 import re
 
 API = "https://www.federalregister.gov/api/v1/documents.json"
-HEADERS = {"User-Agent": "AD-Scraper/1.0", "Accept": "application/json"}
+from scrapers.common.http import API_HEADERS as HEADERS  # noqa: E402
 
 makes_models = collections.defaultdict(set)
 
