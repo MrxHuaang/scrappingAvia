@@ -17,6 +17,7 @@ Uso:
     -> abre http://127.0.0.1:8787
 """
 
+import hmac
 import os
 import re
 import subprocess
@@ -38,6 +39,40 @@ SINCE_MIN = 60  # ventana para el contador "procesados recientemente" (informati
 SNAPSHOT_INTERVAL = 5  # segundos entre refrescos de la DB (desacoplado del polling del navegador)
 
 app = Flask(__name__)
+
+# ---------------------------------------------------------------------------
+# Guard: este panel dispara enrich_ai.py con la service key heredada, asi que
+# (1) NUNCA sirve fuera de loopback, aunque alguien cambie el host de app.run;
+# (2) si DASHBOARD_TOKEN esta definido en el entorno, toda request debe
+# traerlo. El primer GET con ?token=... lo fija en una cookie HttpOnly y los
+# fetch() same-origin del UI lo arrastran solos — el frontend no cambia.
+# ---------------------------------------------------------------------------
+DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "").strip()
+
+
+@app.before_request
+def _guard_local_and_token():
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        return Response("forbidden", status=403)
+    if not DASHBOARD_TOKEN:
+        return None
+    supplied = (
+        request.args.get("token")
+        or request.headers.get("X-Dashboard-Token")
+        or request.cookies.get("dash_token")
+        or ""
+    )
+    if not hmac.compare_digest(supplied, DASHBOARD_TOKEN):
+        return Response("unauthorized: pass ?token=<DASHBOARD_TOKEN>", status=401)
+    return None
+
+
+@app.after_request
+def _persist_token_cookie(resp):
+    if DASHBOARD_TOKEN and request.args.get("token") == DASHBOARD_TOKEN:
+        resp.set_cookie("dash_token", DASHBOARD_TOKEN, httponly=True, samesite="Strict")
+    return resp
+
 
 # ---------------------------------------------------------------------------
 # Estado del trabajo activo (un solo proceso enrich_ai.py a la vez)
