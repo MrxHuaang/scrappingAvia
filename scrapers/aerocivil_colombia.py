@@ -18,6 +18,10 @@ import requests
 from bs4 import BeautifulSoup
 from scrapers.common.http import browser_headers
 
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
+
 # La primera es la ubicacion REAL del listado (SharePoint, bloqueada por WAF
 # hoy — ver docstring); las demas son intentos historicos que ya no sirven
 # (404 disfrazado de 200, o contenido administrativo sin relacion con DAs).
@@ -51,25 +55,25 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
         try:
             resp = session.get(url, timeout=15, allow_redirects=True)
             if resp.status_code == 403:
-                print(f"[AEROCIVIL Colombia] 403 Forbidden en {url}")
+                log.info(f"[AEROCIVIL Colombia] 403 Forbidden en {url}")
                 continue
             if resp.status_code >= 400:
-                print(f"[AEROCIVIL Colombia] HTTP {resp.status_code} en {url}")
+                log.info(f"[AEROCIVIL Colombia] HTTP {resp.status_code} en {url}")
                 continue
             resp.raise_for_status()
             results = _parse_page(resp.text, keyword, make, model)
             if results:
                 results = results[:max_results]
-                print(f"[AEROCIVIL Colombia] {len(results)} DAs obtenidas de {url}")
+                log.info(f"[AEROCIVIL Colombia] {len(results)} DAs obtenidas de {url}")
                 return results
         except requests.Timeout:
-            print(f"[AEROCIVIL Colombia] Timeout en {url}")
+            log.info(f"[AEROCIVIL Colombia] Timeout en {url}")
             continue
         except Exception as e:
-            print(f"[AEROCIVIL Colombia] Error en {url}: {e}")
+            log.info(f"[AEROCIVIL Colombia] Error en {url}: {e}")
             continue
 
-    print("[AEROCIVIL Colombia] Sitio no disponible — todas las URLs fallaron")
+    log.info("[AEROCIVIL Colombia] Sitio no disponible — todas las URLs fallaron")
     return []
 
 
@@ -161,6 +165,6 @@ def _matches_filters(ad, keyword, make, model):
 
 if __name__ == "__main__":
     results = search_ads(make="Boeing", max_results=10)
-    print(f"Encontrados: {len(results)}")
+    log.info(f"Encontrados: {len(results)}")
     if results:
-        print(results[0])
+        log.info(results[0])

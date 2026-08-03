@@ -43,6 +43,10 @@ from scrapers.uk_caa import search_ads as uk_caa_search
 from math import ceil
 from utils import map_product_type, run_with_timeout, VALID_SOURCES, MAX_RESULTS_PER_SOURCE
 
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
+
 
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
@@ -510,7 +514,7 @@ def _fetch_user_plan(user_id):
         res = sb.table("profiles").select("plan").eq("id", user_id).maybe_single().execute()
         return res.data["plan"] if res.data and res.data.get("plan") else "free"
     except Exception as e:
-        print(f"[Stripe] Error fetching plan for {user_id}: {e}")
+        log.info(f"[Stripe] Error fetching plan for {user_id}: {e}")
         return "free"
 
 
@@ -547,7 +551,7 @@ def _downgrade_to_free_by_customer(customer_id):
         if res.data:
             _update_user_plan(res.data["id"], "free")
     except Exception as e:
-        print(f"[Stripe] Error downgrading customer {customer_id}: {e}")
+        log.info(f"[Stripe] Error downgrading customer {customer_id}: {e}")
 
 
 @app.route("/api/stripe/config")
@@ -1383,12 +1387,12 @@ def api_status():
 # Entry point
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    print("\n" + "=" * 55)
-    print("  Zephr - Airworthiness Directives")
-    print("  Fuentes activas: FAA | EASA | TC | ANAC BR | DGAC CL | ANAC AR")
-    print("=" * 55)
-    print("\n  Landing:  http://127.0.0.1:5000/")
-    print("  App:      http://127.0.0.1:5000/app")
-    print("  Health:   http://127.0.0.1:5000/api/health\n")
+    log.info("\n" + "=" * 55)
+    log.info("  Zephr - Airworthiness Directives")
+    log.info("  Fuentes activas: FAA | EASA | TC | ANAC BR | DGAC CL | ANAC AR")
+    log.info("=" * 55)
+    log.info("\n  Landing:  http://127.0.0.1:5000/")
+    log.info("  App:      http://127.0.0.1:5000/app")
+    log.info("  Health:   http://127.0.0.1:5000/api/health\n")
 
     app.run(host="127.0.0.1", port=5000, debug=os.environ.get("FLASK_DEBUG") == "1")

@@ -28,6 +28,10 @@ from utils import (
 from scrapers.common.cache import load_json_cache, save_json_cache
 from scrapers.common.http import API_HEADERS, get_with_backoff
 
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
+
 
 FEDERAL_REGISTER_API = "https://www.federalregister.gov/api/v1/documents.json"
 FR_API_START_YEAR = 1994
@@ -216,8 +220,8 @@ def _prefetch_fulltext(docs: list[dict]) -> None:
 
     if not pending:
         return
-    print(f"[Federal Register]   prefetch full-text: {len(pending)} docs "
-          f"({FULLTEXT_WORKERS} hilos)")
+    log.info(f"[Federal Register]   prefetch full-text: {len(pending)} docs "
+             f"({FULLTEXT_WORKERS} hilos)")
     with ThreadPoolExecutor(max_workers=FULLTEXT_WORKERS) as pool:
         list(pool.map(
             lambda a: _fetch_fulltext_fields(a[0], a[1], amendment=a[2], want_ad=a[3]),
@@ -233,7 +237,7 @@ def _request_page(params: dict, retries: int = 3) -> dict | None:
     if resp is None:
         return None
     if resp.status_code >= 400:
-        print(f"[Federal Register] HTTP {resp.status_code}")
+        log.info(f"[Federal Register] HTTP {resp.status_code}")
         return None
     return resp.json()
 
@@ -277,7 +281,7 @@ def _search_year(year: int, max_pages: int = 50) -> list[dict]:
         page += 1
         time.sleep(0.3)
 
-    print(f"[Federal Register] {year}: {len(results)} ADs")
+    log.info(f"[Federal Register] {year}: {len(results)} ADs")
     return results
 
 
@@ -320,7 +324,7 @@ def _collapse_by_ad_number(rows: list[dict]) -> list[dict]:
         collapsed.append(canonical)
 
     if multi:
-        print(f"[Federal Register] {multi} numeros AD con varios documentos FR (colapsados)")
+        log.info(f"[Federal Register] {multi} numeros AD con varios documentos FR (colapsados)")
     return collapsed
 
 
@@ -330,7 +334,7 @@ def search_ads_by_year_range(year_from: int, year_to: int) -> list[dict]:
     for yr in range(year_from, year_to + 1):
         all_results.extend(_search_year(yr))
         _save_fulltext_cache()  # persistir progreso del cache full-text por anio
-    print(f"[Federal Register] Total {year_from}-{year_to}: {len(all_results)} documentos con numero AD")
+    log.info(f"[Federal Register] Total {year_from}-{year_to}: {len(all_results)} documentos con numero AD")
     return _collapse_by_ad_number(all_results)
 
 
@@ -507,7 +511,7 @@ def _parse_document(doc) -> dict | None:
 
         return out
     except Exception as e:
-        print(f"[Federal Register] Error parseando: {e}")
+        log.info(f"[Federal Register] Error parseando: {e}")
         return None
 
 

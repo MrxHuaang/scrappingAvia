@@ -11,6 +11,10 @@ import requests
 from bs4 import BeautifulSoup
 from scrapers.common.http import browser_headers
 
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
+
 DGAC_URL = "https://www.dgac.gob.cl/normativa/reglamentacion-aeronautica/directiva-aeronavegab/"
 
 HEADERS = browser_headers()
@@ -25,7 +29,7 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
         resp = requests.get(DGAC_URL, headers=HEADERS, timeout=20)
         resp.raise_for_status()
     except Exception as e:
-        print(f"[DGAC Chile] Error al conectar: {e}")
+        log.info(f"[DGAC Chile] Error al conectar: {e}")
         return []
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -77,7 +81,7 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
                 results.append(ad)
 
     results = results[:max_results]
-    print(f"[DGAC Chile] Total DAs obtenidas: {len(results)}")
+    log.info(f"[DGAC Chile] Total DAs obtenidas: {len(results)}")
     return results
 
 

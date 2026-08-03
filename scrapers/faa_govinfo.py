@@ -33,6 +33,10 @@ from utils import extract_make_model, normalize_ad_number
 from scrapers.common.http import get_with_backoff
 from scrapers.common.cache import load_json_cache, save_json_cache
 
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
+
 
 GOVINFO_BASE = "https://api.govinfo.gov"
 START_YEAR = 1995
@@ -69,7 +73,7 @@ def _check_rate_headers(resp) -> None:
     except (TypeError, ValueError):
         return
     if remaining < 50:
-        print("[GovInfo] Rate limit casi agotado, pausa de 60s...")
+        log.info("[GovInfo] Rate limit casi agotado, pausa de 60s...")
         time.sleep(60)
 
 
@@ -86,10 +90,10 @@ def _get(path: str, params: dict | None = None, retries: int = 3) -> dict | None
     if resp is None or resp.status_code == 404:
         return None
     if resp.status_code == 403:
-        print("[GovInfo] 403 - revisar GOVINFO_API_KEY")
+        log.info("[GovInfo] 403 - revisar GOVINFO_API_KEY")
         return None
     if resp.status_code >= 400:
-        print(f"[GovInfo] HTTP {resp.status_code}")
+        log.info(f"[GovInfo] HTTP {resp.status_code}")
         return None
     _check_rate_headers(resp)
     return resp.json()
@@ -108,10 +112,10 @@ def _get_text(path: str, params: dict | None = None, retries: int = 3) -> str | 
     if resp is None or resp.status_code == 404:
         return None
     if resp.status_code == 403:
-        print("[GovInfo] 403 en MODS - revisar GOVINFO_API_KEY")
+        log.info("[GovInfo] 403 en MODS - revisar GOVINFO_API_KEY")
         return None
     if resp.status_code >= 400:
-        print(f"[GovInfo] HTTP {resp.status_code} en MODS")
+        log.info(f"[GovInfo] HTTP {resp.status_code} en MODS")
         return None
     _check_rate_headers(resp)
     return resp.text
@@ -215,7 +219,7 @@ def search_ads(year_from: int = START_YEAR, year_to: int | None = None,
     Sin GOVINFO_API_KEY -> retorna [] sin fallar el pipeline.
     """
     if not _get_key():
-        print("[GovInfo] GOVINFO_API_KEY no configurada en .env - skip")
+        log.info("[GovInfo] GOVINFO_API_KEY no configurada en .env - skip")
         return []
 
     year_to = year_to or datetime.now().year
@@ -265,7 +269,7 @@ def search_ads(year_from: int = START_YEAR, year_to: int | None = None,
             checked += 1
             if checked % 100 == 0:
                 pct = checked / total_days * 100
-                print(
+                log.info(
                     f"[GovInfo] {current.isoformat()} ({pct:.0f}%) {len(all_results)} ADs | "
                     f"MODS cache hits: {stats['hits']}, fetches: {stats['fetches']}"
                 )
@@ -274,8 +278,8 @@ def search_ads(year_from: int = START_YEAR, year_to: int | None = None,
 
     # Resumen por anio
     for yr in sorted(year_counts):
-        print(f"[GovInfo] {yr}: {year_counts[yr]} ADs")
-    print(
+        log.info(f"[GovInfo] {yr}: {year_counts[yr]} ADs")
+    log.info(
         f"[GovInfo] Total {start_date.isoformat()} a {end_date.isoformat()}: "
         f"{len(all_results)} ADs | skipped sin numero AD: {skipped_no_ad} | "
         f"MODS cache hits: {stats['hits']}, fetches: {stats['fetches']}"
@@ -348,5 +352,5 @@ def _parse_granule(g: dict, pkg_id: str, mods: dict | None = None) -> dict | Non
             "GranuleId": granule_id,
         }
     except Exception as e:
-        print(f"[GovInfo] Error parseando granule: {e}")
+        log.info(f"[GovInfo] Error parseando granule: {e}")
         return None

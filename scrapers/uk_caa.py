@@ -37,6 +37,10 @@ from scrapers.common.http import browser_headers
 from scrapers.common.cache import load_json_cache, save_json_cache
 from scrapers.common.http import get_with_backoff
 
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
+
 BASE = "https://www.caa.co.uk"
 SERIES_BASE = f"{BASE}/data-and-publications/publications/publication-series"
 
@@ -82,7 +86,7 @@ def _get(session, url, tries=3):
     if resp is None:
         return None
     if resp.status_code >= 400:
-        print(f"[UK CAA] HTTP {resp.status_code} en {url}")
+        log.info(f"[UK CAA] HTTP {resp.status_code} en {url}")
         return None
     return resp.text
 
@@ -280,7 +284,7 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
     for slug, label in SERIES:
         html = _get(session, f"{SERIES_BASE}/{slug}/")
         if not html:
-            print(f"[UK CAA] Serie no disponible: {label}")
+            log.info(f"[UK CAA] Serie no disponible: {label}")
             continue
 
         found = _parse_series(html, label)
@@ -292,7 +296,7 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
             seen.add(key)
             docs.append(d)
             added += 1
-        print(f"[UK CAA] {label}: {added} documentos ({len(found)} de autoria UK en la pagina)")
+        log.info(f"[UK CAA] {label}: {added} documentos ({len(found)} de autoria UK en la pagina)")
         time.sleep(0.5)
 
     results = []
@@ -328,7 +332,7 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
     _save_cache()
 
     out = [ad for ad, _ in results]
-    print(f"[UK CAA] Total documentos obtenidos: {len(out)}")
+    log.info(f"[UK CAA] Total documentos obtenidos: {len(out)}")
     return out
 
 
@@ -357,6 +361,6 @@ def _matches_filters(ad, keyword, make, model):
 
 if __name__ == "__main__":
     found = search_ads(max_results=5)
-    print(f"Encontrados: {len(found)}")
+    log.info(f"Encontrados: {len(found)}")
     for row in found[:5]:
-        print(row)
+        log.info(row)

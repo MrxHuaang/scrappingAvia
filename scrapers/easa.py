@@ -11,6 +11,10 @@ import os
 from scrapers.common.http import browser_headers, get_with_backoff
 from scrapers.common.cache import load_json_cache, save_json_cache
 
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
+
 
 EASA_BASE_URL = "https://ad.easa.europa.eu"
 EASA_SEARCH_URL = f"{EASA_BASE_URL}/search/advanced"
@@ -82,21 +86,21 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
                 total_available = _parse_total_results(soup)
                 max_page_calc = ((total_available - 1) // _PAGE_SIZE + 1) if total_available else max_pages
                 effective_max = min(max_pages, max_page_calc)
-                print(f"[EASA] Total disponible: {total_available} ADs ({effective_max} paginas)")
+                log.info(f"[EASA] Total disponible: {total_available} ADs ({effective_max} paginas)")
 
             results = _parse_results_table(soup)
 
             if not results:
-                print(f"[EASA] Pagina {page}: sin resultados, deteniendo.")
+                log.info(f"[EASA] Pagina {page}: sin resultados, deteniendo.")
                 break
 
             all_results.extend(results)
 
             # Log detallado cada 100 paginas, resumen breve el resto
             if page % 100 == 0:
-                print(f"[EASA] *** PROGRESO: Pagina {page}/{effective_max} | Total acumulado: {len(all_results)} ADs ***")
+                log.info(f"[EASA] *** PROGRESO: Pagina {page}/{effective_max} | Total acumulado: {len(all_results)} ADs ***")
             else:
-                print(f"[EASA] Pagina {page}/{effective_max}: {len(results)} ADs | acumulado: {len(all_results)}")
+                log.info(f"[EASA] Pagina {page}/{effective_max}: {len(results)} ADs | acumulado: {len(all_results)}")
 
             # FIXED: parar cuando ya tenemos todos o llegamos al limite
             if len(all_results) >= (total_available or 0) or page >= effective_max:
@@ -106,7 +110,7 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
             time.sleep(0.8)
 
         except requests.RequestException as e:
-            print(f"[EASA] Error en pagina {page}: {e}")
+            log.info(f"[EASA] Error en pagina {page}: {e}")
             break
 
     # Filtrar por modelo si se especifico
@@ -120,10 +124,10 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
             or model_lower in r.get("AD_Number", "").lower()
         ]
         if filtered:
-            print(f"[EASA] Filtrados {len(filtered)} de {len(all_results)} por '{model_keyword}'")
+            log.info(f"[EASA] Filtrados {len(filtered)} de {len(all_results)} por '{model_keyword}'")
             all_results = filtered
 
-    print(f"[EASA] Total ADs obtenidos: {len(all_results)}")
+    log.info(f"[EASA] Total ADs obtenidos: {len(all_results)}")
     return all_results
 
 
@@ -145,20 +149,20 @@ def search_main_page(model_keyword=None, max_pages=5):
 
             if total_available is None:
                 total_available = _parse_total_results(soup)
-                print(f"[EASA] Total disponible: {total_available} ADs")
+                log.info(f"[EASA] Total disponible: {total_available} ADs")
 
             results = _parse_results_table(soup)
 
             if not results:
-                print(f"[EASA] Pagina principal {page}: sin resultados, deteniendo.")
+                log.info(f"[EASA] Pagina principal {page}: sin resultados, deteniendo.")
                 break
 
             all_results.extend(results)
-            print(f"[EASA] Pagina principal {page}: {len(results)} ADs | acumulado: {len(all_results)}")
+            log.info(f"[EASA] Pagina principal {page}: {len(results)} ADs | acumulado: {len(all_results)}")
             time.sleep(0.8)
 
         except requests.RequestException as e:
-            print(f"[EASA] Error pagina principal {page}: {e}")
+            log.info(f"[EASA] Error pagina principal {page}: {e}")
             break
 
     if model_keyword and all_results:
@@ -172,7 +176,7 @@ def search_main_page(model_keyword=None, max_pages=5):
         if filtered:
             all_results = filtered
 
-    print(f"[EASA] Total ADs obtenidos: {len(all_results)}")
+    log.info(f"[EASA] Total ADs obtenidos: {len(all_results)}")
     return all_results
 
 
@@ -289,7 +293,7 @@ def _parse_results_table(soup):
         except Exception as e:
             _PARSE_FAILURES += 1
             if _PARSE_FAILURES <= 10:
-                print(f"[EASA] WARNING row parse failed: {type(e).__name__}: {e}")
+                log.info(f"[EASA] WARNING row parse failed: {type(e).__name__}: {e}")
             continue
 
     return results
@@ -620,7 +624,7 @@ def enrich_details(results: list[dict]) -> list[dict]:
             row["Service_Bulletins"] = sbs
 
         if i % 200 == 0:
-            print(f"[EASA] detalle+pdf: {i}/{total} enriquecidos")
+            log.info(f"[EASA] detalle+pdf: {i}/{total} enriquecidos")
             _save_detail_cache()
             _save_pdf_cache()
         if not cached:  # no dormir si ya estaba en cache (re-run rapido)
@@ -645,5 +649,5 @@ def export_csv(keyword=None, session=None):
         resp.raise_for_status()
         return resp.content
     except requests.RequestException as e:
-        print(f"[EASA] Error exportando CSV: {e}")
+        log.info(f"[EASA] Error exportando CSV: {e}")
         return None

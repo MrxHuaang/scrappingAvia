@@ -15,6 +15,10 @@ import requests
 from bs4 import BeautifulSoup
 from scrapers.common.http import browser_headers
 
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
+
 CASA_URLS = [
     "https://ad.casa.gov.au/",
     "https://www.casa.gov.au/aircraft/airworthiness-directives/airworthiness-directives-search",
@@ -43,29 +47,29 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
         try:
             resp = session.get(url, timeout=12, allow_redirects=True)
             if resp.status_code == 403:
-                print(f"[CASA Australia] 403 Forbidden en {url}")
+                log.info(f"[CASA Australia] 403 Forbidden en {url}")
                 continue
             if resp.status_code >= 400:
-                print(f"[CASA Australia] HTTP {resp.status_code} en {url}")
+                log.info(f"[CASA Australia] HTTP {resp.status_code} en {url}")
                 continue
             resp.raise_for_status()
 
             results = _parse_html(resp.text, keyword, make, model)
             if results:
                 results = results[:max_results]
-                print(f"[CASA Australia] {len(results)} ADs obtenidas de {url}")
+                log.info(f"[CASA Australia] {len(results)} ADs obtenidas de {url}")
                 return results
             else:
-                print(f"[CASA Australia] Página accesible pero sin ADs parseables en {url}")
+                log.info(f"[CASA Australia] Página accesible pero sin ADs parseables en {url}")
 
         except requests.Timeout:
-            print(f"[CASA Australia] Timeout en {url}")
+            log.info(f"[CASA Australia] Timeout en {url}")
             continue
         except Exception as e:
-            print(f"[CASA Australia] Error en {url}: {e}")
+            log.info(f"[CASA Australia] Error en {url}: {e}")
             continue
 
-    print("[CASA Australia] Sitio no disponible — todas las URLs fallaron (403 Forbidden)")
+    log.info("[CASA Australia] Sitio no disponible — todas las URLs fallaron (403 Forbidden)")
     return []
 
 
@@ -184,6 +188,6 @@ def _matches_filters(ad, keyword, make, model):
 
 if __name__ == "__main__":
     results = search_ads(make="Boeing", max_results=10)
-    print(f"Encontrados: {len(results)}")
+    log.info(f"Encontrados: {len(results)}")
     if results:
-        print(results[0])
+        log.info(results[0])

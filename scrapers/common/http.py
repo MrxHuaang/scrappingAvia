@@ -11,6 +11,10 @@ import time
 
 import requests
 
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
+
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -59,11 +63,11 @@ def get_with_backoff(
         try:
             resp = getter.get(url, params=params, headers=headers, timeout=timeout)
         except requests.RequestException as e:
-            print(f"[{tag}] GET error: {e} (intento {attempt + 1}/{retries})")
+            log.warning(f"[{tag}] GET error: {e} (intento {attempt + 1}/{retries})")
         else:
             if resp.status_code != 429 and resp.status_code < 500:
                 return resp
-            print(f"[{tag}] HTTP {resp.status_code} (intento {attempt + 1}/{retries})")
+            log.warning(f"[{tag}] HTTP {resp.status_code} (intento {attempt + 1}/{retries})")
         if attempt < retries - 1:
             time.sleep(delay)
             delay *= 2
