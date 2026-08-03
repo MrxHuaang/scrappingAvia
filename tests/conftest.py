@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest  # noqa: E402
 
 import app as app_module  # noqa: E402
+from webapp import core  # noqa: E402
 
 
 @pytest.fixture()
@@ -48,6 +49,7 @@ def authed_client(client):
 
 @pytest.fixture()
 def proxied(monkeypatch):
-    """Activa el guard del proxy (leido en runtime dentro del decorador)."""
-    monkeypatch.setattr(app_module, "INTERNAL_PROXY_SECRET", "s3cret-de-prueba")
+    """Activa el guard del proxy (leido en runtime dentro del decorador, que
+    vive en webapp.core desde el refactor a blueprints)."""
+    monkeypatch.setattr(core, "INTERNAL_PROXY_SECRET", "s3cret-de-prueba")
     return "s3cret-de-prueba"

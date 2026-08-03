@@ -37,7 +37,7 @@ py-modules = [
   "utils",
   "watch_progress",
 ]
-packages = ["scrapers", "scrapers.common"]
+packages = ["scrapers", "scrapers.common", "webapp"]
 
 [tool.ruff]
 line-length = 120
