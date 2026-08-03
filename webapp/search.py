@@ -38,6 +38,22 @@ bp = Blueprint("search", __name__)
 _SUPABASE_PAGE_SIZE = 1000  # PostgREST max rows per request
 
 
+class DbResults(list):
+    """
+    Lista de resultados que además carga cuántas filas casaron en la BD.
+
+    Es una `list` a propósito: el contrato de los scrapers es "devuelve una
+    lista", y `run_with_timeout` y `build_scrapers` la manipulan como tal. Un
+    dict de estadísticas habría que pasarlo por los siete sitios que construyen
+    scrapers; esto viaja pegado al resultado y quien no lo mire sigue viendo una
+    lista normal. Los consumidores leen con `getattr(x, "truncated", False)`, así
+    que un scraper en vivo (que devuelve `list` pelada) no rompe nada.
+    """
+
+    total: int | None = None
+    truncated: bool = False
+
+
 # -------------------------------------------------------- service: DB search --
 def search_supabase(source, keyword="", make="", model="", product_type="",
                     date_from="", date_to="", max_results=10000) -> list[dict]:
@@ -55,11 +71,12 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
     """
     sb = get_supabase_admin()
     if not sb:
-        return []
+        return DbResults()
 
     try:
         all_rows = []
         offset = 0
+        db_total = None
 
         while offset < max_results:
             batch_size = min(_SUPABASE_PAGE_SIZE, max_results - offset)
@@ -77,6 +94,11 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
             }).execute()
             rows = resp.data or []
             all_rows.extend(rows)
+
+            # `total_count` es el nº de filas que casaron los filtros, antes de
+            # LIMIT/OFFSET; viene en cada fila y basta leerlo una vez.
+            if db_total is None and rows:
+                db_total = rows[0].get("total_count")
 
             # Si recibimos menos de lo pedido, no hay más datos
             if len(rows) < batch_size:
@@ -114,12 +136,23 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
                 "Superseded_By": row.get("superseded_by", "") or "",
             })
 
-        logger.info(f"[DB] {source}: {len(results)} resultados desde Supabase")
-        return results
+        out = DbResults(results)
+        out.total = db_total
+        # Truncado = la BD tenía más de lo que este tope permitió traer. Sin esta
+        # señal el bucle de arriba devolvía exactamente `max_results` filas y
+        # parecían el total; el contrato de INT-6 exigía justamente exponerlo.
+        out.truncated = bool(db_total is not None and db_total > len(results))
+        if out.truncated:
+            logger.warning(
+                f"[DB] {source}: {len(results)} de {db_total} filas — resultado truncado por el tope {max_results}"
+            )
+        else:
+            logger.info(f"[DB] {source}: {len(results)} resultados desde Supabase")
+        return out
 
     except Exception as e:
         logger.error(f"[DB] Error buscando en Supabase ({source}): {e}")
-        return []
+        return DbResults()
 
 
 # --------------------------------------------------- service: scraper plan --
@@ -336,6 +369,8 @@ def api_search() -> RouteResult:
 
         all_results = []
         errors = []
+        truncated_sources = []
+        total_matched = 0
 
         scrapers = build_scrapers(source, keyword, make, model, product_type, date_from, date_to, max_results=max_results)
 
@@ -346,12 +381,31 @@ def api_search() -> RouteResult:
             results, err = run_with_timeout(fn, SCRAPER_TIMEOUT, label, max_results=max_results)
             if err:
                 errors.append(err)
+            # `getattr` con default: solo la ruta de BD devuelve DbResults; un
+            # scraper en vivo entrega una lista pelada y no sabe cuántas hay.
+            if getattr(results, "truncated", False):
+                truncated_sources.append(label)
+            src_total = getattr(results, "total", None)
+            if src_total is not None:
+                total_matched += src_total
             if results:
                 all_results.extend(results)
+
+        if truncated_sources:
+            # Va también a `errors` porque es el canal que la UI ya muestra: una
+            # lista incompleta que se presenta como completa es el riesgo real.
+            errors.append(
+                "Showing the most recent matches only for: "
+                + ", ".join(truncated_sources)
+                + ". Narrow the search to see the rest."
+            )
 
         return jsonify({
             "results": all_results,
             "count": len(all_results),
+            "total_matched": total_matched or None,
+            "truncated": bool(truncated_sources),
+            "truncated_sources": truncated_sources,
             "errors": errors,
         })
 
@@ -413,10 +467,15 @@ def api_search_stream() -> RouteResult:
                 count = len(results) if results else 0
                 total += count
 
+                # Mismo par que /api/search: por fuente, cuántas casaron en la BD
+                # y si lo enviado es solo una parte. `getattr` con default porque
+                # un scraper en vivo devuelve una lista pelada.
                 event = {
                     "source": src_key,
                     "results": results if results else [],
                     "count": count,
+                    "total_matched": getattr(results, "total", None),
+                    "truncated": getattr(results, "truncated", False),
                     "error": err,
                 }
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"

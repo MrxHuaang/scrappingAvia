@@ -188,6 +188,60 @@ def test_search_proxy_guard(client, proxied):
     assert r.status_code == 400
 
 
+def test_search_reports_truncation_instead_of_hiding_it(client, monkeypatch):
+    """
+    Un resultado recortado por el tope debe decirlo. Antes la ruta devolvia una
+    lista plana y el cliente no podia distinguir "estos son todos" de "estos son
+    los primeros 10.000 de 30.000" — el defecto que INT-6 dejo abierto.
+    """
+    from webapp import search as search_mod
+
+    truncated = search_mod.DbResults([_ROW])
+    truncated.total = 4297
+    truncated.truncated = True
+    monkeypatch.setattr(search_mod, "build_scrapers",
+                        lambda *a, **k: [("easa", "EASA", lambda: truncated)])
+
+    r = client.post("/api/search", json={"source": "easa", "keyword": "engine"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["truncated"] is True
+    assert body["total_matched"] == 4297
+    assert body["truncated_sources"] == ["EASA"]
+    assert body["count"] == 1
+    # El aviso viaja tambien por `errors`, que es el canal que la UI ya muestra.
+    assert any("Narrow the search" in e for e in body["errors"])
+
+
+def test_search_complete_result_is_not_flagged(client, monkeypatch):
+    from webapp import search as search_mod
+
+    whole = search_mod.DbResults([_ROW])
+    whole.total = 1
+    whole.truncated = False
+    monkeypatch.setattr(search_mod, "build_scrapers",
+                        lambda *a, **k: [("easa", "EASA", lambda: whole)])
+
+    body = client.post("/api/search", json={"source": "easa"}).get_json()
+    assert body["truncated"] is False
+    assert body["truncated_sources"] == []
+    assert body["errors"] == []
+
+
+def test_search_live_scraper_list_carries_no_signal(client, monkeypatch):
+    """
+    Un scraper en vivo devuelve una `list` pelada: no sabe cuantas hay en la BD.
+    La ruta debe leerlo con default y no inventarse un total.
+    """
+    from webapp import search as search_mod
+
+    monkeypatch.setattr(search_mod, "build_scrapers",
+                        lambda *a, **k: [("easa", "EASA", lambda: [_ROW])])
+    body = client.post("/api/search", json={"source": "easa"}).get_json()
+    assert body["truncated"] is False
+    assert body["total_matched"] is None
+
+
 def _sse_events(response):
     text = response.get_data(as_text=True)
     return [json.loads(line[len("data: "):])
