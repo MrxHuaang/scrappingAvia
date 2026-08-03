@@ -426,7 +426,10 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
       - ad_applicability  (make/model afectados)
       - ad_service_bulletins (SBs referenciados en subject/abstract)
       - superseded_to_ad_id (si el scraper aporto 'Superseded_By')
-    Idempotente: borra applicability previa de estos ad_ids y reinserta;
+    Applicability va por la RPC transaccional `replace_ad_applicability` con el
+    estado triestado por AD del contrato (docs/applicability-contract.md):
+    un AD presente en la salida del scraper con make -> success_with_rows;
+    presente sin make -> success_empty; ausente -> no se toca (failed implicito).
     SBs por upsert (ad_id, sb_number).
     """
     if not normalized:
@@ -435,17 +438,19 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     if not id_map:
         return
 
-    applic_rows: list[dict] = []
+    # ad_id -> filas de applicability deduplicadas por clave natural.
+    applic_by_ad: dict[str, list[dict]] = {}
+    applic_seen: dict[str, set] = {}
     sb_rows: list[dict] = []
     # (ad_id_to_update, target_ad_number) — the row at ad_id is superseded BY target.
     supersede_updates: list[tuple[str, str]] = []
-    touched_ids: list[str] = []
 
     for r in normalized:
         ad_id = id_map.get(r["ad_number"])
         if not ad_id:
             continue
-        touched_ids.append(ad_id)
+        applic_by_ad.setdefault(ad_id, [])
+        applic_seen.setdefault(ad_id, set())
 
         make = (r.get("make") or "").strip()
         model = (r.get("model") or "").strip()
@@ -453,8 +458,12 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
             # EASA packs several models in "A, B, C"; one applicability row each.
             models = [m.strip() for m in (model.split(",") if model else [""]) if True]
             for mod in (models or [""]):
-                applic_rows.append({
-                    "ad_id": ad_id,
+                # La RPC rechaza el payload entero si un AD repite clave natural.
+                key = (make, mod or None)
+                if key in applic_seen[ad_id]:
+                    continue
+                applic_seen[ad_id].add(key)
+                applic_by_ad[ad_id].append({
                     "make": make,
                     "model": mod or None,
                     "confidence": "high" if make and mod else "medium",
@@ -485,19 +494,24 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                 # mark the older AD superseded by this ad_number (resolved below)
                 supersede_updates.append((old_id, r["ad_number"]))
 
-    # ad_applicability: delete-then-insert for touched ads (scraper-owned table)
+    # ad_applicability: reemplazo transaccional por lote via RPC (INT-3). Cada
+    # llamada es una transaccion en Postgres: un proceso muerto entre lotes deja
+    # los anteriores completos y los posteriores intactos, nunca un AD a medias.
+    applic_payload = [
+        {
+            "ad_id": aid,
+            "status": "success_with_rows" if rows else "success_empty",
+            "rows": rows,
+        }
+        for aid, rows in applic_by_ad.items()
+    ]
     BATCH = 300
-    for i in range(0, len(touched_ids), BATCH):
-        chunk = touched_ids[i : i + BATCH]
+    for i in range(0, len(applic_payload), BATCH):
+        chunk = applic_payload[i : i + BATCH]
         try:
-            supabase.table("ad_applicability").delete().in_("ad_id", chunk).execute()
+            supabase.rpc("replace_ad_applicability", {"p_ads": chunk}).execute()
         except Exception as e:
-            _record_write_error(f"  applicability: delete fallo: {e}")
-    for i in range(0, len(applic_rows), 500):
-        try:
-            supabase.table("ad_applicability").insert(applic_rows[i : i + 500]).execute()
-        except Exception as e:
-            _record_write_error(f"  applicability: insert fallo: {e}")
+            _record_write_error(f"  applicability: RPC replace fallo (lote {i // BATCH + 1}): {e}")
 
     # ad_service_bulletins: upsert on (ad_id, sb_number)
     for i in range(0, len(sb_rows), 500):
@@ -524,7 +538,8 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                     _record_write_error(f"  supersede: update fallo {ad_id}: {e}")
 
     logger.info(
-        f"[{source}] relaciones: {len(applic_rows)} applicability, "
+        f"[{source}] relaciones: {sum(len(v) for v in applic_by_ad.values())} applicability "
+        f"({sum(1 for v in applic_by_ad.values() if not v)} declarados success_empty), "
         f"{len(sb_rows)} service bulletins, {len(supersede_updates)} supersession"
     )
 
