@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zephr-scrapers"
+version = "0.1.0"
+description = "Zephr airworthiness-directive scraping backend (11 authority scrapers + Flask API)"
+requires-python = ">=3.11"
+dependencies = [
+  "requests>=2.31.0,<3",
+  "beautifulsoup4>=4.12.0,<5",
+  "lxml>=6.1.0,<7",
+  "pandas>=2.1.0,<3",
+  "openpyxl>=3.1.0,<4",
+  "flask>=3.0.0,<4",
+  "flask-cors>=4.0.0,<7",
+  "supabase>=2.0.0,<3",
+  "stripe>=7.0.0,<14",
+  "python-dotenv>=1.0.0,<2",
+  "playwright>=1.40.0,<2",
+  "pypdf>=4.0.0,<8",
+]
+
+# Flat layout: top-level modules plus the scrapers package. `pip install -e .`
+# makes them importable from anywhere, replacing the sys.path.insert() hack
+# that 13 files carried.
+[tool.setuptools]
+py-modules = [
+  "app",
+  "build_aliases",
+  "dashboard_server",
+  "enrich",
+  "enrich_ai",
+  "flush_easa_cache",
+  "populate_db",
+  "utils",
+  "watch_progress",
+]
+packages = ["scrapers"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [".venv", "outputs", "results"]
+
+[tool.ruff.lint]
+# Explicit set (newer ruff ships a much wider default): pyflakes + pycodestyle
+# + warnings. E501 stays off: the scrapers carry long literal URLs and
+# selectors; wrapping them hurts more than it helps. Style-preference packs
+# (SIM/FURB/BLE/...) are a later conversation, not a CI gate.
+select = ["E4", "E7", "E9", "F", "W"]
+ignore = ["E501"]

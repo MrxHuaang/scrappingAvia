@@ -20,15 +20,12 @@ import json
 import logging
 import os
 import re
-import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from supabase import create_client
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _ROOT)
 
 from scripts.fr_identity import INDEX_PATH, load_index  # noqa: E402
 

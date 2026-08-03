@@ -62,7 +62,8 @@ Configura las mismas variables en el panel de variables de entorno de tu platafo
 Asegurate de tener el paquete `supabase` instalado:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.lock
+pip install -e . --no-deps
 ```
 
 ## 6. Probar localmente

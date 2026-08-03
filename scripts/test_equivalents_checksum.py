@@ -12,12 +12,11 @@ Uso:  python scripts/test_equivalents_checksum.py
       (para el lado SQL, ver el bloque de abajo)
 """
 
-import os
-import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.build_equivalents import canonical_checksum  # noqa: E402
+# Same-directory import: `python scripts/test_equivalents_checksum.py` puts
+# scripts/ itself on sys.path[0], and scripts/ is not an installed package.
+from build_equivalents import canonical_checksum  # noqa: E402
 
 VECTOR = [
     {

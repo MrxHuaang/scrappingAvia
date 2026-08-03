@@ -28,13 +28,11 @@ import io
 import json
 import os
 import re
-import sys
 from collections import defaultdict
 
 from dotenv import load_dotenv
 
 load_dotenv()
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from supabase import create_client  # noqa: E402
 
@@ -327,7 +325,7 @@ def build_shared_sb_rows(sb, limit, stats, samples, reference_pairs: set):
                     stats["sb_make_mismatch"] += 1
                     continue
                 for x, y in ((a, b), (b, a)):
-                    rx, ry = ads[x], ads[y]
+                    ry = ads[y]
                     key = (x, ry["source"], ry["ad_number"])
                     if key in seen or key in reference_pairs:
                         continue

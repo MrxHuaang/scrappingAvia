@@ -7,14 +7,12 @@ Fuentes: Federal Register (USA), EASA (Europa), Transport Canada, ANAC (Brasil).
 import os
 import io
 import re
-import sys
 import json
 import base64
 import time
 import logging
 import traceback
 import zipfile
-import threading
 import hmac
 import socket
 import ipaddress
@@ -31,7 +29,6 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import pandas as pd
 
 # Agregar el directorio raiz al path para importar scrapers
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from scrapers.federal_register import search_ads as fr_search
 from scrapers.easa import search_ads as easa_search, search_main_page as easa_main_page
@@ -399,7 +396,7 @@ def auth_register():
         return jsonify({"error": "Auth no configurado. Configura SUPABASE_URL y SUPABASE_ANON_KEY.", "configured": False}), 200
     try:
         data = request.get_json()
-        res = sb.auth.sign_up({"email": data.get("email", ""), "password": data.get("password", ""), "options": {"data": {"full_name": data.get("name", "")}}})
+        sb.auth.sign_up({"email": data.get("email", ""), "password": data.get("password", ""), "options": {"data": {"full_name": data.get("name", "")}}})
         return jsonify({"ok": True, "message": "Revisa tu email para confirmar tu cuenta."})
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -1390,8 +1387,8 @@ if __name__ == "__main__":
     print("  Zephr - Airworthiness Directives")
     print("  Fuentes activas: FAA | EASA | TC | ANAC BR | DGAC CL | ANAC AR")
     print("=" * 55)
-    print(f"\n  Landing:  http://127.0.0.1:5000/")
-    print(f"  App:      http://127.0.0.1:5000/app")
-    print(f"  Health:   http://127.0.0.1:5000/api/health\n")
+    print("\n  Landing:  http://127.0.0.1:5000/")
+    print("  App:      http://127.0.0.1:5000/app")
+    print("  Health:   http://127.0.0.1:5000/api/health\n")
 
     app.run(host="127.0.0.1", port=5000, debug=os.environ.get("FLASK_DEBUG") == "1")

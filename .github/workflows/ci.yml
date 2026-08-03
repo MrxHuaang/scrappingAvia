@@ -20,8 +20,15 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install dependencies (locked) and the package
+        run: |
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+
+      - name: Ruff
+        run: |
+          pip install ruff
+          ruff check .
 
       - name: Import check (every scraper and entry point)
         run: |
@@ -44,12 +51,12 @@ jobs:
           python scripts/test_upsert_dedup.py
           python scripts/test_faa_identity.py
 
-      # Audits the requirement ranges for now; Fase 3 introduces a lockfile and
-      # this step switches to auditing that instead.
+      # Audits the exact pinned versions the cron installs against prod —
+      # ranges can silently pick up a vulnerable release between runs.
       - name: pip-audit
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt
+          pip-audit -r requirements.lock
 
   secret-scan:
     runs-on: ubuntu-latest

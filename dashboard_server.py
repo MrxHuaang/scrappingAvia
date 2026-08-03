@@ -17,7 +17,6 @@ Uso:
     -> abre http://127.0.0.1:8787
 """
 
-import json
 import os
 import re
 import subprocess
@@ -214,7 +213,7 @@ def tail_log(path, n=14):
                 if seek_pos == 0 or data.count("\n") > n:
                     break
                 block *= 2
-        lines = [l for l in data.splitlines() if "HTTP Request" not in l]
+        lines = [ln for ln in data.splitlines() if "HTTP Request" not in ln]
         return lines[-n:]
     except Exception:
         return []

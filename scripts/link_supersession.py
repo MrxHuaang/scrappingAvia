@@ -31,12 +31,10 @@ import io
 import json
 import os
 import re
-import sys
 
 from dotenv import load_dotenv
 
 load_dotenv()
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from supabase import create_client  # noqa: E402
 from utils import normalize_ad_number  # noqa: E402

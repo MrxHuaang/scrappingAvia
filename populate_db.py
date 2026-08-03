@@ -24,7 +24,6 @@ from utils import normalize_ad_number
 import enrich
 
 # Agregar directorio raiz al path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from scrapers.federal_register import search_ads as fr_search
 from scrapers.faa_govinfo import search_ads as govinfo_search
@@ -205,7 +204,6 @@ def normalize(row: dict, source_key: str) -> dict | None:
     subject = (row.get("Subject") or "").strip() or None
     abstract = (row.get("Abstract") or "").strip()
     raw_status = (row.get("Status") or "").strip() or None
-    text_blob = " ".join(t for t in (subject or "", abstract, row.get("Type") or "") if t)
 
     # Explicit scraper-provided values win; otherwise derive from available text.
     unsafe = (row.get("Unsafe_Condition") or "").strip() or enrich.extract_unsafe_condition(abstract)

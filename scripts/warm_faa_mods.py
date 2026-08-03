@@ -20,12 +20,10 @@ re-run — cached granules are skipped.
 import argparse
 import os
 import re
-import sys
 
 from dotenv import load_dotenv
 
 load_dotenv()
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from supabase import create_client  # noqa: E402
 import scrapers.faa_govinfo as g  # noqa: E402

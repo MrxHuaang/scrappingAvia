@@ -499,7 +499,8 @@ def _parse_tc_pdf(text: str) -> dict:
     if not text:
         return out
     txt = re.sub(r"[ \t]+", " ", text)
-    others = lambda lbl: [s for s in _TC_SECTIONS if s != lbl]
+    def others(lbl):
+        return [s for s in _TC_SECTIONS if s != lbl]
 
     # unsafe: TC Background -> EASA Reason
     out["unsafe_condition"] = (

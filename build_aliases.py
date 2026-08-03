@@ -4,7 +4,11 @@ y construye aircraft_aliases.json para el autocompletado.
 Corre una vez: python build_aliases.py
 """
 
-import requests, json, time, collections, re
+import requests
+import json
+import time
+import collections
+import re
 
 API = "https://www.federalregister.gov/api/v1/documents.json"
 HEADERS = {"User-Agent": "AD-Scraper/1.0", "Accept": "application/json"}

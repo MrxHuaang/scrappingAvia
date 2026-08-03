@@ -5,11 +5,9 @@ No hace fetching: solo lee los JSON de cache y escribe a DB.
 """
 import json
 import os
-import sys
 from dotenv import load_dotenv
 from supabase import create_client
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils import normalize_ad_number
 
 load_dotenv()
