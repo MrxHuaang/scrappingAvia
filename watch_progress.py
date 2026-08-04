@@ -45,7 +45,11 @@ def get_client():
 
 
 def _count(sb, *, source=None, field_notnull=None, updated_since=None):
-    q = sb.table("ads").select("id", count="exact").limit(1)
+    # count="planned" usa la estimacion del planner en vez de un COUNT(*)
+    # completo: este monitor llegaba a 24 counts exactos por iteracion y era
+    # el mayor consumidor medido de la BD (22k+ llamadas en pg_stat_statements).
+    # Para una barra de progreso, la estimacion sobra.
+    q = sb.table("ads").select("id", count="planned").limit(1)
     if source:
         q = q.eq("source_label", source)
     if field_notnull:
@@ -240,7 +244,7 @@ def write_html(snap, path, refresh_seconds):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--interval", type=int, default=5)
+    ap.add_argument("--interval", type=int, default=60)
     ap.add_argument("--since", type=int, default=180, help="ventana de actividad en minutos")
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--html", nargs="?", const=HTML_PATH_DEFAULT, default=None,

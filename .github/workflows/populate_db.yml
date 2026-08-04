@@ -7,14 +7,31 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: "Source to scrape (leave empty for all)"
+        description: "Source to scrape (all = every daily source)"
         required: false
-        default: ""
+        default: "all"
+        # Allowlist: a choice input cannot carry shell metacharacters, and the
+        # value additionally reaches the command only through a quoted env var.
+        type: choice
+        options:
+          - all
+          - federal_register
+          - easa
+          - transport_canada
+          - anac_brazil
+          - dgac_chile
+          - anac_argentina
+          - uk_caa
+          - aerocivil_colombia
+          - casa_australia
+          - gcaa_uae
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The first cold run re-fetches every FAA/EASA/TC body or PDF; 60 minutes
+    # was never enough for that and the cron died mid-run looking green.
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -23,19 +40,45 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
           cache: "pip"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install dependencies (locked) and the package
+        run: |
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+
+      # Cache entries are immutable: a plain actions/cache with a fixed key
+      # would never update after the first run. Restore the newest previous
+      # snapshot, save a fresh one per run id.
+      - name: Restore scraper caches (outputs/)
+        uses: actions/cache/restore@v4
+        with:
+          path: outputs
+          key: outputs-${{ github.run_id }}
+          restore-keys: |
+            outputs-
 
       - name: Run scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          # Without this key the FAA deep fields (compliance_time, AMOC,
+          # supersession) silently self-skip.
+          GOVINFO_API_KEY: ${{ secrets.GOVINFO_API_KEY }}
+          SCRAPE_SOURCE: ${{ inputs.source || 'all' }}
         run: |
-          if [ -n "${{ github.event.inputs.source }}" ]; then
-            python populate_db.py --source ${{ github.event.inputs.source }}
+          if [ "$SCRAPE_SOURCE" != "all" ]; then
+            python populate_db.py --source "$SCRAPE_SOURCE"
           else
             python populate_db.py
           fi
+
+      - name: Save scraper caches (outputs/)
+        # Save even when the scrape step failed: a partial cache still spares
+        # the next run thousands of re-fetches.
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: outputs
+          key: outputs-${{ github.run_id }}

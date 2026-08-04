@@ -19,15 +19,12 @@ Usage:
 import argparse
 import json
 import os
-import re
-import sys
 import time
 from datetime import datetime
 
 import requests
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _ROOT)
 
 from utils import ad_identity_from_docket_ids as identity_from_docket_ids  # noqa: E402
 

@@ -20,6 +20,11 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
+from scrapers.common.http import browser_headers
+
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
 
 
 ANAC_BASE_URL = "https://sistemas.anac.gov.br/certificacao/DA"
@@ -40,16 +45,10 @@ YEAR_RANGES = [
     "1996-2000",
 ]
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+HEADERS = browser_headers({
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.5",
     "Referer": "https://sistemas.anac.gov.br/certificacao/DA/DAE.asp",
-}
+})
 
 # Mapping de fabricantes conocidos a sus OrgCodi en ANAC (para búsqueda directa)
 # Estos se descubren via DA_ProdE.asp?Letr=<letra> → links a DA_ModProdE.asp?OrgCodi=<id>
@@ -103,24 +102,24 @@ def search_ads(
 
     # --- Ruta 1: buscar por fabricante/producto ---
     if make:
-        print(f"[ANAC Brasil] Buscando por fabricante: {make}...")
+        log.info(f"[ANAC Brasil] Buscando por fabricante: {make}...")
         results = _search_by_manufacturer(session, make, model, keyword)
         all_results.extend(results)
 
     # --- Ruta 2: buscar por rango de años ---
     elif year_range:
-        print(f"[ANAC Brasil] Buscando en rango {year_range}...")
+        log.info(f"[ANAC Brasil] Buscando en rango {year_range}...")
         results = _fetch_list_by_number(session, year_range)
         all_results.extend(results)
 
     # --- Ruta 3: sin filtros → recientes + rango más actual ---
     else:
-        print("[ANAC Brasil] Buscando ADs recientes...")
+        log.info("[ANAC Brasil] Buscando ADs recientes...")
         recent = _fetch_recent(session)
         all_results.extend(recent)
 
         if len(all_results) < max_results:
-            print("[ANAC Brasil] Complementando con rango 2021-2025...")
+            log.info("[ANAC Brasil] Complementando con rango 2021-2025...")
             listed = _fetch_list_by_number(session, "2021-2025")
             # Deduplicar por AD_Number
             existing_nums = {r["AD_Number"] for r in all_results}
@@ -153,7 +152,7 @@ def search_ads(
         ]
 
     all_results = all_results[:max_results]
-    print(f"[ANAC Brasil] Total ADs obtenidos: {len(all_results)}")
+    log.info(f"[ANAC Brasil] Total ADs obtenidos: {len(all_results)}")
     return all_results
 
 
@@ -174,7 +173,7 @@ def _fetch_recent(session):
         soup = BeautifulSoup(resp.text, "lxml")
         return _parse_list_table(soup, source_tag="recent")
     except requests.RequestException as e:
-        print(f"[ANAC Brasil] Error en recientes: {e}")
+        log.info(f"[ANAC Brasil] Error en recientes: {e}")
         return []
 
 
@@ -197,10 +196,10 @@ def _fetch_list_by_number(session, year_range="2021-2025"):
         resp.encoding = "latin-1"
         soup = BeautifulSoup(resp.text, "lxml")
         results = _parse_list_table(soup, source_tag="list_num")
-        print(f"[ANAC Brasil] Rango {year_range}: {len(results)} ADs encontrados.")
+        log.info(f"[ANAC Brasil] Rango {year_range}: {len(results)} ADs encontrados.")
         return results
     except requests.RequestException as e:
-        print(f"[ANAC Brasil] Error en listado {year_range}: {e}")
+        log.info(f"[ANAC Brasil] Error en listado {year_range}: {e}")
         return []
 
 
@@ -228,7 +227,7 @@ def _search_by_manufacturer(session, make, model=None, keyword=None):
         org_codi = _discover_org_codi(session, make)
 
     if org_codi:
-        print(f"[ANAC Brasil] Usando página de producto directa (OrgCodi={org_codi}).")
+        log.info(f"[ANAC Brasil] Usando página de producto directa (OrgCodi={org_codi}).")
         results = _fetch_by_product(session, org_codi, make)
         if results:
             # Filtrar por modelo si se especificó
@@ -239,11 +238,11 @@ def _search_by_manufacturer(session, make, model=None, keyword=None):
                     if model_lower in r.get("Model", "").lower()
                     or model_lower in r.get("Subject", "").lower()
                 ]
-            print(f"[ANAC Brasil] {len(results)} ADs encontrados vía producto directo.")
+            log.info(f"[ANAC Brasil] {len(results)} ADs encontrados vía producto directo.")
             return results
 
     # --- Estrategia 2: Fallback a listados cronológicos con filtro amplio ---
-    print(f"[ANAC Brasil] Delegando búsqueda de '{make}' a listado cronológico con filtro amplio.")
+    log.info(f"[ANAC Brasil] Delegando búsqueda de '{make}' a listado cronológico con filtro amplio.")
     results = []
 
     for yr in ["2021-2025", "2016-2020"]:
@@ -282,7 +281,7 @@ def _search_by_manufacturer(session, make, model=None, keyword=None):
             or model_lower in r.get("Subject", "").lower()
         ]
 
-    print(f"[ANAC Brasil] {len(filtered)} ADs filtrados para '{make}'.")
+    log.info(f"[ANAC Brasil] {len(filtered)} ADs filtrados para '{make}'.")
     return filtered
 
 
@@ -311,10 +310,10 @@ def _discover_org_codi(session, make):
                 match = re.search(r"OrgCodi=(\d+)", href)
                 if match:
                     org_codi = match.group(1)
-                    print(f"[ANAC Brasil] Descubierto OrgCodi={org_codi} para '{make}'.")
+                    log.info(f"[ANAC Brasil] Descubierto OrgCodi={org_codi} para '{make}'.")
                     return org_codi
     except requests.RequestException as e:
-        print(f"[ANAC Brasil] Error descubriendo OrgCodi para '{make}': {e}")
+        log.info(f"[ANAC Brasil] Error descubriendo OrgCodi para '{make}': {e}")
 
     return None
 
@@ -347,7 +346,7 @@ def _fetch_by_product(session, org_codi, make_name):
             # Si no hay links a modelos específicos, el fabricante lista ADs en esta misma página
             return _parse_list_table(soup, source_tag="product", make_override=make_name)
 
-        print(f"[ANAC Brasil] {len(model_links)} modelos para {make_name}.")
+        log.info(f"[ANAC Brasil] {len(model_links)} modelos para {make_name}.")
         all_results = []
 
         for model_text, href in model_links:
@@ -368,7 +367,7 @@ def _fetch_by_product(session, org_codi, make_name):
                 all_results.extend(ads)
                 time.sleep(0.3)  # Rate limiting
             except requests.RequestException as e:
-                print(f"[ANAC Brasil] Error obteniendo modelo '{model_text}': {e}")
+                log.info(f"[ANAC Brasil] Error obteniendo modelo '{model_text}': {e}")
 
         # Deduplicar
         seen = set()
@@ -382,7 +381,7 @@ def _fetch_by_product(session, org_codi, make_name):
         return unique
 
     except requests.RequestException as e:
-        print(f"[ANAC Brasil] Error obteniendo productos para OrgCodi={org_codi}: {e}")
+        log.info(f"[ANAC Brasil] Error obteniendo productos para OrgCodi={org_codi}: {e}")
         return []
 
 
@@ -477,7 +476,7 @@ def _parse_list_table(soup, source_tag="", make_override=None):
             col_make = _find_col(cells_text, ["manufacturer", "fabricante", "holder", "make"])
             col_model = _find_col(cells_text, ["model", "modelo", "aircraft", "type"])
             col_action = _find_col(cells_text, ["action"])  # FIXED: mapear columna Action
-            print(f"[ANAC Brasil] DEBUG headers: {cells_text} -> action_col={col_action}")
+            log.info(f"[ANAC Brasil] DEBUG headers: {cells_text} -> action_col={col_action}")
             break
 
     # Defaults si no encontramos encabezados
@@ -573,7 +572,7 @@ def _parse_list_table(soup, source_tag="", make_override=None):
         # FIXED: debug para ADs sin pdf_link — nos ayuda a ver qué hrefs hay en la fila
         if not pdf_link and ad_number_raw:
             all_hrefs = [a["href"] for c in cells for a in c.find_all("a", href=True)]
-            print(f"[ANAC Brasil] WARNING no pdf_link: AD={ad_number_raw!r} hrefs={all_hrefs}")
+            log.info(f"[ANAC Brasil] WARNING no pdf_link: AD={ad_number_raw!r} hrefs={all_hrefs}")
 
         # --- Normalizar número de AD ---
         ad_number = _normalize_ad_number(ad_number_raw)
@@ -710,7 +709,7 @@ def get_ad_detail(session, detail_url):
 
         return detail
     except Exception as e:
-        print(f"[ANAC Brasil] Error obteniendo detalle {detail_url}: {e}")
+        log.info(f"[ANAC Brasil] Error obteniendo detalle {detail_url}: {e}")
         return {}
 
 
@@ -863,11 +862,11 @@ def get_recent_ads(days=14):
 
 
 if __name__ == "__main__":
-    print("=== ANAC Brasil Zephr - Test ===")
+    log.info("=== ANAC Brasil Zephr - Test ===")
     results = search_ads(make="Embraer", max_results=20)
-    print(f"\nTotal: {len(results)} results")
+    log.info(f"\nTotal: {len(results)} results")
     for r in results[:10]:
-        print(
+        log.info(
             f"  AD: {r['AD_Number']} | "
             f"Make: {r['Make']} | "
             f"Model: {r['Model']} | "

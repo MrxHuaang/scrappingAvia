@@ -10,17 +10,18 @@ import time
 import os
 import io
 import json
+from scrapers.common.http import browser_headers
+
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
 
 
 TC_BASE_URL = "https://wwwapps.tc.gc.ca/Saf-Sec-Sur/2/cawis-swimn"
 TC_SEARCH_URL = f"{TC_BASE_URL}/AD_as.aspx"
 TC_RECENT_URL = f"{TC_BASE_URL}/AD_r.aspx"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-}
+HEADERS = browser_headers()
 
 
 def _get_viewstate(soup):
@@ -62,7 +63,7 @@ def get_manufacturers(session=None):
         return manufacturers, soup
 
     except requests.RequestException as e:
-        print(f"[TC] Error obteniendo fabricantes: {e}")
+        log.info(f"[TC] Error obteniendo fabricantes: {e}")
         return [], None
 
 
@@ -110,7 +111,7 @@ def get_models_for_manufacturer(session, soup, manufacturer_value):
         return models, new_soup
 
     except requests.RequestException as e:
-        print(f"[TC] Error obteniendo modelos: {e}")
+        log.info(f"[TC] Error obteniendo modelos: {e}")
         return {"aircraft": [], "engine": [], "propeller": []}, soup
 
 
@@ -128,11 +129,11 @@ def search_ads(manufacturer_name=None, model_name=None, search_type="aircraft"):
     """
     session = requests.Session()
 
-    print("[TC] Obteniendo pagina de busqueda...")
+    log.info("[TC] Obteniendo pagina de busqueda...")
     manufacturers, soup = get_manufacturers(session)
 
     if not manufacturers or not soup:
-        print("[TC] No se pudieron obtener los fabricantes.")
+        log.info("[TC] No se pudieron obtener los fabricantes.")
         return []
 
     selected_mfr = None
@@ -144,24 +145,24 @@ def search_ads(manufacturer_name=None, model_name=None, search_type="aircraft"):
                 break
 
         if not selected_mfr:
-            print(f"[TC] Fabricante '{manufacturer_name}' no encontrado.")
+            log.info(f"[TC] Fabricante '{manufacturer_name}' no encontrado.")
             return []
 
     if not selected_mfr:
-        print("[TC] No se especifico fabricante.")
+        log.info("[TC] No se especifico fabricante.")
         return []
 
-    print(f"[TC] Fabricante seleccionado: {selected_mfr['text']}")
+    log.info(f"[TC] Fabricante seleccionado: {selected_mfr['text']}")
 
-    print("[TC] Obteniendo modelos...")
+    log.info("[TC] Obteniendo modelos...")
     models, new_soup = get_models_for_manufacturer(session, soup, selected_mfr["value"])
 
     type_models = models.get(search_type, [])
     if not type_models:
-        print(f"[TC] No hay modelos de tipo '{search_type}' para {selected_mfr['text']}.")
+        log.info(f"[TC] No hay modelos de tipo '{search_type}' para {selected_mfr['text']}.")
         for st, ms in models.items():
             if ms:
-                print(f"  {st}: {len(ms)} modelos")
+                log.info(f"  {st}: {len(ms)} modelos")
         return []
 
     selected_models = []
@@ -172,19 +173,19 @@ def search_ads(manufacturer_name=None, model_name=None, search_type="aircraft"):
                 selected_models.append(m)
 
         if not selected_models:
-            print(f"[TC] Modelo '{model_name}' no encontrado.")
+            log.info(f"[TC] Modelo '{model_name}' no encontrado.")
             return []
     else:
         selected_models = type_models
 
     all_results = []
     for sel_model in selected_models:
-        print(f"[TC] Buscando ADs para {selected_mfr['text']} - {sel_model['text']}...")
+        log.info(f"[TC] Buscando ADs para {selected_mfr['text']} - {sel_model['text']}...")
         results = _do_search(session, new_soup, selected_mfr, sel_model, search_type)
         all_results.extend(results)
         time.sleep(1)
 
-    print(f"[TC] Total ADs obtenidos: {len(all_results)}")
+    log.info(f"[TC] Total ADs obtenidos: {len(all_results)}")
     return all_results
 
 
@@ -243,7 +244,7 @@ def _do_search(session, soup, manufacturer, model, search_type):
         return _parse_tc_results(result_soup, manufacturer["text"], model["text"])
 
     except requests.RequestException as e:
-        print(f"[TC] Error en busqueda: {e}")
+        log.info(f"[TC] Error en busqueda: {e}")
         return []
 
 
@@ -266,7 +267,7 @@ def _parse_tc_results(soup, make_name, model_name):
     if not table:
         no_records = soup.find(string=re.compile(r"no.*record|no.*result|not.*found", re.I))
         if no_records:
-            print(f"  Sin resultados para {make_name} - {model_name}")
+            log.info(f"  Sin resultados para {make_name} - {model_name}")
         return results
 
     rows = table.find_all("tr")
@@ -275,7 +276,7 @@ def _parse_tc_results(soup, make_name, model_name):
     col_map = {}
     if header_row:
         headers = [th.get_text(strip=True).lower() for th in header_row.find_all(["th", "td"])]
-        print(f"[TC] DEBUG headers encontrados: {headers}")
+        log.info(f"[TC] DEBUG headers encontrados: {headers}")
         for i, h in enumerate(headers):
             # FIXED: mapeo ampliado con headers reales del DOM
             if ("ad" in h and "number" in h) or h in ("ad number",):
@@ -353,7 +354,7 @@ def _parse_tc_results(soup, make_name, model_name):
 
             # FIXED: debug para cada AD sin pdf_link
             if not pdf_link and ad_number:
-                print(f"[TC] WARNING no pdf_link: AD={ad_number!r} make={make_name!r} hrefs={[a.get('href','') for c in cells for a in c.find_all('a',href=True)]}")
+                log.info(f"[TC] WARNING no pdf_link: AD={ad_number!r} make={make_name!r} hrefs={[a.get('href','') for c in cells for a in c.find_all('a',href=True)]}")
 
             # FIXED: status real a partir del subject (no hay columna propia en CAWIS)
             subject_lower = subject.lower()
@@ -419,10 +420,10 @@ def _parse_tc_results(soup, make_name, model_name):
                 results.append(row_out)
 
         except Exception as e:
-            print(f"[TC] WARNING error parseando fila: {e}")
+            log.info(f"[TC] WARNING error parseando fila: {e}")
             continue
 
-    print(f"[TC] Parseados {len(results)} ADs (make={make_name!r}, model={model_name!r})")
+    log.info(f"[TC] Parseados {len(results)} ADs (make={make_name!r}, model={model_name!r})")
     return results
 
 
@@ -499,7 +500,8 @@ def _parse_tc_pdf(text: str) -> dict:
     if not text:
         return out
     txt = re.sub(r"[ \t]+", " ", text)
-    others = lambda lbl: [s for s in _TC_SECTIONS if s != lbl]
+    def others(lbl):
+        return [s for s in _TC_SECTIONS if s != lbl]
 
     # unsafe: TC Background -> EASA Reason
     out["unsafe_condition"] = (
@@ -597,7 +599,7 @@ def enrich_details(results: list[dict]) -> list[dict]:
         if pf.get("supersedes") and pf["supersedes"] != num:
             row["Supersedes"] = pf["supersedes"]
         if i % 100 == 0:
-            print(f"[TC] pdf: {i}/{total} enriquecidos")
+            log.info(f"[TC] pdf: {i}/{total} enriquecidos")
             _save_tc_cache()
         time.sleep(0.15)
     _save_tc_cache()
@@ -610,7 +612,7 @@ def get_recent_ads(max_pages=1):
     all_results = []
 
     try:
-        print("[TC] Obteniendo ADs recientes...")
+        log.info("[TC] Obteniendo ADs recientes...")
         resp = session.get(TC_RECENT_URL, headers=HEADERS, timeout=30)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "lxml")
@@ -618,9 +620,9 @@ def get_recent_ads(max_pages=1):
         results = _parse_tc_results(soup, "", "")
         all_results.extend(results)
 
-        print(f"[TC] ADs recientes obtenidos: {len(all_results)}")
+        log.info(f"[TC] ADs recientes obtenidos: {len(all_results)}")
 
     except requests.RequestException as e:
-        print(f"[TC] Error obteniendo ADs recientes: {e}")
+        log.info(f"[TC] Error obteniendo ADs recientes: {e}")
 
     return all_results

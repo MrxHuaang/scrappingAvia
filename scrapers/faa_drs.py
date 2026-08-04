@@ -20,6 +20,10 @@ from urllib.parse import urljoin
 
 from utils import extract_make_model, normalize_ad_number
 
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
+
 
 DRS_BASE = "https://drs.faa.gov"
 DRS_AD_LIST = f"{DRS_BASE}/browse/ADFRAWD/doctypeDetails"
@@ -34,7 +38,7 @@ def _import_playwright():
         from playwright.sync_api import sync_playwright
         return sync_playwright
     except ImportError:
-        print("[DRS] playwright no instalado - skip. Instalar con: pip install playwright && playwright install chromium")
+        log.info("[DRS] playwright no instalado - skip. Instalar con: pip install playwright && playwright install chromium")
         return None
 
 
@@ -59,7 +63,7 @@ def search_ads(max_results: int = 10000, pre_govinfo_only: bool = True) -> list[
 
     BeautifulSoup = _import_bs4()
     if not BeautifulSoup:
-        print("[DRS] bs4 no disponible - skip")
+        log.info("[DRS] bs4 no disponible - skip")
         return []
 
     captured_requests: list[dict] = []
@@ -89,18 +93,18 @@ def search_ads(max_results: int = 10000, pre_govinfo_only: bool = True) -> list[
 
             page.on("request", on_request)
 
-            print(f"[DRS] Abriendo {DRS_AD_LIST}...")
+            log.info(f"[DRS] Abriendo {DRS_AD_LIST}...")
             try:
                 page.goto(DRS_AD_LIST, wait_until="networkidle", timeout=60000)
             except Exception as e:
-                print(f"[DRS] Timeout / error en goto: {str(e).encode('ascii','replace').decode()}")
+                log.info(f"[DRS] Timeout / error en goto: {str(e).encode('ascii','replace').decode()}")
                 browser.close()
                 return []
 
             # Verificar bloqueo Akamai (titulo o body con 'Access Denied')
             content = page.content()
             if "Access Denied" in content or "Reference #" in content[:5000]:
-                print("[DRS] Bloqueado por Akamai (Access Denied) - skip")
+                log.info("[DRS] Bloqueado por Akamai (Access Denied) - skip")
                 browser.close()
                 return []
 
@@ -121,14 +125,14 @@ def search_ads(max_results: int = 10000, pre_govinfo_only: bool = True) -> list[
                     listing_html_pages.append(page.content())
                     time.sleep(0.5)
                 except Exception as e:
-                    print(f"[DRS] Paginacion detenida en click {click_attempt}: {str(e).encode('ascii','replace').decode()}")
+                    log.info(f"[DRS] Paginacion detenida en click {click_attempt}: {str(e).encode('ascii','replace').decode()}")
                     break
 
             browser.close()
 
     except Exception as e:
         msg = str(e).encode("ascii", errors="replace").decode("ascii")
-        print(f"[DRS] Error fatal Playwright: {msg}")
+        log.info(f"[DRS] Error fatal Playwright: {msg}")
         return []
 
     # Parsear todas las paginas HTML acumuladas
@@ -151,7 +155,7 @@ def search_ads(max_results: int = 10000, pre_govinfo_only: bool = True) -> list[
     if len(deduped) > max_results:
         deduped = deduped[:max_results]
 
-    print(f"[DRS] Total {'pre-1995' if pre_govinfo_only else 'all'}: {len(deduped)} ADs")
+    log.info(f"[DRS] Total {'pre-1995' if pre_govinfo_only else 'all'}: {len(deduped)} ADs")
     return deduped
 
 

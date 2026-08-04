@@ -16,6 +16,11 @@ browser real (Playwright) para pasar el WAF, y aun asi no esta garantizado.
 import re
 import requests
 from bs4 import BeautifulSoup
+from scrapers.common.http import browser_headers
+
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
 
 # La primera es la ubicacion REAL del listado (SharePoint, bloqueada por WAF
 # hoy — ver docstring); las demas son intentos historicos que ya no sirven
@@ -30,14 +35,12 @@ AEROCIVIL_URLS = [
     "https://www.aerocivil.gov.co/documentos/377/directivas/",
 ]
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+HEADERS = browser_headers({
     "Accept-Language": "es-CO,es;q=0.9,en-US;q=0.8,en;q=0.5",
     "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
-}
+})
 
 
 def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None, max_results=200):
@@ -52,25 +55,25 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
         try:
             resp = session.get(url, timeout=15, allow_redirects=True)
             if resp.status_code == 403:
-                print(f"[AEROCIVIL Colombia] 403 Forbidden en {url}")
+                log.info(f"[AEROCIVIL Colombia] 403 Forbidden en {url}")
                 continue
             if resp.status_code >= 400:
-                print(f"[AEROCIVIL Colombia] HTTP {resp.status_code} en {url}")
+                log.info(f"[AEROCIVIL Colombia] HTTP {resp.status_code} en {url}")
                 continue
             resp.raise_for_status()
             results = _parse_page(resp.text, keyword, make, model)
             if results:
                 results = results[:max_results]
-                print(f"[AEROCIVIL Colombia] {len(results)} DAs obtenidas de {url}")
+                log.info(f"[AEROCIVIL Colombia] {len(results)} DAs obtenidas de {url}")
                 return results
         except requests.Timeout:
-            print(f"[AEROCIVIL Colombia] Timeout en {url}")
+            log.info(f"[AEROCIVIL Colombia] Timeout en {url}")
             continue
         except Exception as e:
-            print(f"[AEROCIVIL Colombia] Error en {url}: {e}")
+            log.info(f"[AEROCIVIL Colombia] Error en {url}: {e}")
             continue
 
-    print("[AEROCIVIL Colombia] Sitio no disponible — todas las URLs fallaron")
+    log.info("[AEROCIVIL Colombia] Sitio no disponible — todas las URLs fallaron")
     return []
 
 
@@ -162,6 +165,6 @@ def _matches_filters(ad, keyword, make, model):
 
 if __name__ == "__main__":
     results = search_ads(make="Boeing", max_results=10)
-    print(f"Encontrados: {len(results)}")
+    log.info(f"Encontrados: {len(results)}")
     if results:
-        print(results[0])
+        log.info(results[0])

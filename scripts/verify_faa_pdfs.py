@@ -22,8 +22,6 @@ import sys
 import requests
 from dotenv import load_dotenv
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _ROOT)
 
 load_dotenv()
 from supabase import create_client  # noqa: E402

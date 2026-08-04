@@ -115,6 +115,8 @@
         lastSearchMs: null,
         lastSearchTerm: '',
         lastErrors: [],
+        // fuente -> total real que caso en la BD (o null si no se sabe)
+        truncatedSources: new Map(),
         lastParams: null,
         sourceCounts: {},
         streamAbort: null,
@@ -484,6 +486,7 @@
         state.sortField = '_relevance';
         state.sortOrder = 'desc';
         state.lastErrors = [];
+        state.truncatedSources.clear();
         state.results = [];
         state.filteredResults = null;
         state.sourceCounts = {};
@@ -569,6 +572,18 @@
 
                         if (srcError) { state.lastErrors.push(srcError); showToast(srcError, 'error'); }
 
+                        // El stream trae la señal de truncado por fuente. Se
+                        // guarda en el estado, no solo se avisa: un toast dura
+                        // 4s y despues la lista vuelve a parecer completa.
+                        if (event.truncated) {
+                            state.truncatedSources.set(
+                                event.source,
+                                typeof event.total_matched === 'number' ? event.total_matched : null,
+                            );
+                            showToast(truncationNotice(event.source, state.truncatedSources.get(event.source)), 'warning');
+                            state._lastRenderKey = null;
+                        }
+
                         state.lastResultCount = state.results.length;
                         state.lastSearchMs = Math.round(performance.now() - t0);
                         state._lastRenderKey = null;
@@ -622,6 +637,7 @@
         state.sortField = '_relevance';
         state.sortOrder = 'desc';
         state.lastErrors = [];
+        state.truncatedSources.clear();
         state.results = [];
         state.filteredResults = null;
         state.sourceCounts = {};
@@ -666,6 +682,17 @@
             state.lastErrors = data.errors || [];
             state.lastSearchMs = Math.round(performance.now() - t0);
             state.lastResultCount = state.results.length;
+
+            // Este es el camino del despliegue serverless, no un respaldo
+            // marginal: sin esto el banner de truncado no aparecia nunca alli.
+            // Misma informacion por fuente que trae cada evento del SSE.
+            (data.truncated_sources || []).forEach(src => {
+                state.truncatedSources.set(
+                    src.source,
+                    typeof src.total_matched === 'number' ? src.total_matched : null,
+                );
+                showToast(truncationNotice(src.source, src.total_matched), 'warning');
+            });
 
             if (state.lastErrors.length > 0) {
                 state.lastErrors.forEach(err => showToast(err, 'error'));
@@ -804,7 +831,8 @@
         if (dom.inputDateTo) dom.inputDateTo.value = '';
         state.results = []; state.filteredResults = null; state.currentPage = 1;
         state.activeManufacturerKey = null; state.activeManufacturerModels = null;
-        state.lastErrors = []; state.sourceCounts = {}; state.lastParams = null;
+        state.lastErrors = [];
+        state.truncatedSources.clear(); state.sourceCounts = {}; state.lastParams = null;
         state.quickFilter = ''; state.ataFilter = ''; state._lastRenderKey = null; state.searching = false;
         if (dom.quickFilter) dom.quickFilter.value = '';
         if (dom.ataSelect) dom.ataSelect.value = '';
@@ -974,6 +1002,8 @@
             badge.title = 'Resultados limitados a 200 por fuente en este modo';
             dom.resultsCount.parentNode.appendChild(badge);
         }
+
+        renderTruncationBanner();
 
         if (state.viewMode === 'table') renderTable(pageResults);
         else renderCards(pageResults);
@@ -1637,6 +1667,34 @@
         if (type === 'searching') dom.statusIndicator.classList.add('searching');
         if (type === 'error') dom.statusIndicator.classList.add('error');
     }
+
+    // La UI de este backend esta en espanol y formatea con es-ES (ver
+    // resultsCount): el aviso de truncado usa lo mismo. El de Zephr (Next.js) va
+    // en ingles con en-US porque ese producto es English only — son dos
+    // interfaces distintas, no una inconsistencia.
+    function truncationNotice(source, total) {
+        const n = typeof total === 'number' ? total.toLocaleString('es-ES') : null;
+        return n
+            ? `${source}: mostrando solo los mas recientes — hay ${n} ADs que coinciden. Afina la busqueda para verlos todos.`
+            : `${source}: resultados incompletos. Afina la busqueda para verlos todos.`;
+    }
+
+    function renderTruncationBanner() {
+        const host = dom.resultsCount && dom.resultsCount.parentNode;
+        if (!host) return;
+        const existing = host.querySelector('.truncation-notice');
+        if (existing) existing.remove();
+        if (state.truncatedSources.size === 0) return;
+
+        const banner = document.createElement('div');
+        banner.className = 'truncation-notice';
+        banner.setAttribute('role', 'status');
+        const parts = [];
+        state.truncatedSources.forEach((total, source) => parts.push(truncationNotice(source, total)));
+        banner.textContent = parts.join(' ');
+        host.appendChild(banner);
+    }
+
     function showToast(message, type = 'info') {
         const toast = document.createElement('div');
         toast.className = `toast toast-${type}`;
@@ -1644,6 +1702,9 @@
             success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>',
             error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
             info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+            // Truncation is not an error and not neutral information: the list
+            // on screen is incomplete. It gets its own weight.
+            warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
         };
         toast.innerHTML = `<div class="toast-icon">${icons[type]||icons.info}</div><span class="toast-message">${esc(message)}</span>`;
         dom.toastContainer.appendChild(toast);

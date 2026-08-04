@@ -13,6 +13,11 @@ simple tampoco resuelva) — no es un fix de parsing.
 import re
 import requests
 from bs4 import BeautifulSoup
+from scrapers.common.http import browser_headers
+
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
 
 CASA_URLS = [
     "https://ad.casa.gov.au/",
@@ -23,14 +28,11 @@ CASA_URLS = [
     "https://www.casa.gov.au/airworthiness-directives",
 ]
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
+HEADERS = browser_headers({
     "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
-}
+})
 
 
 def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None, max_results=200):
@@ -45,29 +47,29 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
         try:
             resp = session.get(url, timeout=12, allow_redirects=True)
             if resp.status_code == 403:
-                print(f"[CASA Australia] 403 Forbidden en {url}")
+                log.info(f"[CASA Australia] 403 Forbidden en {url}")
                 continue
             if resp.status_code >= 400:
-                print(f"[CASA Australia] HTTP {resp.status_code} en {url}")
+                log.info(f"[CASA Australia] HTTP {resp.status_code} en {url}")
                 continue
             resp.raise_for_status()
 
             results = _parse_html(resp.text, keyword, make, model)
             if results:
                 results = results[:max_results]
-                print(f"[CASA Australia] {len(results)} ADs obtenidas de {url}")
+                log.info(f"[CASA Australia] {len(results)} ADs obtenidas de {url}")
                 return results
             else:
-                print(f"[CASA Australia] Página accesible pero sin ADs parseables en {url}")
+                log.info(f"[CASA Australia] Página accesible pero sin ADs parseables en {url}")
 
         except requests.Timeout:
-            print(f"[CASA Australia] Timeout en {url}")
+            log.info(f"[CASA Australia] Timeout en {url}")
             continue
         except Exception as e:
-            print(f"[CASA Australia] Error en {url}: {e}")
+            log.info(f"[CASA Australia] Error en {url}: {e}")
             continue
 
-    print("[CASA Australia] Sitio no disponible — todas las URLs fallaron (403 Forbidden)")
+    log.info("[CASA Australia] Sitio no disponible — todas las URLs fallaron (403 Forbidden)")
     return []
 
 
@@ -186,6 +188,6 @@ def _matches_filters(ad, keyword, make, model):
 
 if __name__ == "__main__":
     results = search_ads(make="Boeing", max_results=10)
-    print(f"Encontrados: {len(results)}")
+    log.info(f"Encontrados: {len(results)}")
     if results:
-        print(results[0])
+        log.info(results[0])

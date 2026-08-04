@@ -10,11 +10,8 @@ Cubre las dos reglas que se rompieron en produccion:
      fila canonica es el rule, no la correccion.
 """
 
-import os
 import sys
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, _ROOT)
 
 from utils import ad_identity_from_docket_ids  # noqa: E402
 from scrapers.federal_register import _collapse_by_ad_number  # noqa: E402

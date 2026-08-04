@@ -9,10 +9,8 @@ suerte de orden — el mismo patron que rompio la identidad de FAA, un nivel mas
 arriba.
 """
 
-import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from populate_db import _dedup_rows  # noqa: E402
 

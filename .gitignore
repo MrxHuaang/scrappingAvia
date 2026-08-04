@@ -6,3 +6,4 @@ __pycache__/
 .venv/
 venv/
 outputs/
+zephr_scrapers.egg-info/

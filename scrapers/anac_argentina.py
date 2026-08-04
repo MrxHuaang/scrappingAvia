@@ -12,14 +12,15 @@ Formato típico:
 import re
 import requests
 from bs4 import BeautifulSoup
+from scrapers.common.http import browser_headers
+
+from scrapers.common.log import get_logger
+
+log = get_logger(__name__)
 
 ANAC_AR_URL = "https://www.argentina.gob.ar/anac/directivas-y-advertencias-de-aeronavegabilidad"
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "es-AR,es;q=0.9,en-US;q=0.8,en;q=0.5",
-}
+HEADERS = browser_headers({"Accept-Language": "es-AR,es;q=0.9,en-US;q=0.8,en;q=0.5"})
 
 
 def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None, max_results=200):
@@ -31,7 +32,7 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
         resp = requests.get(ANAC_AR_URL, headers=HEADERS, timeout=25)
         resp.raise_for_status()
     except Exception as e:
-        print(f"[ANAC Argentina] Error al conectar: {e}")
+        log.info(f"[ANAC Argentina] Error al conectar: {e}")
         return []
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -85,7 +86,7 @@ def search_ads(keyword=None, make=None, model=None, date_from=None, date_to=None
             unique.append(r)
 
     unique = unique[:max_results]
-    print(f"[ANAC Argentina] Total DAs obtenidas: {len(unique)}")
+    log.info(f"[ANAC Argentina] Total DAs obtenidas: {len(unique)}")
     return unique
 
 
@@ -171,6 +172,6 @@ def _matches_filters(ad, keyword, make, model):
 
 if __name__ == "__main__":
     results = search_ads(max_results=50)
-    print(f"Encontrados: {len(results)}")
+    log.info(f"Encontrados: {len(results)}")
     for r in results[:10]:
-        print(f"  {r['AD_Number']} | {r['Make']} | {r['Model']} | {r['Subject'][:60]}")
+        log.info(f"  {r['AD_Number']} | {r['Make']} | {r['Model']} | {r['Subject'][:60]}")
