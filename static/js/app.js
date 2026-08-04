@@ -683,6 +683,17 @@
             state.lastSearchMs = Math.round(performance.now() - t0);
             state.lastResultCount = state.results.length;
 
+            // Este es el camino del despliegue serverless, no un respaldo
+            // marginal: sin esto el banner de truncado no aparecia nunca alli.
+            // Misma informacion por fuente que trae cada evento del SSE.
+            (data.truncated_sources || []).forEach(src => {
+                state.truncatedSources.set(
+                    src.source,
+                    typeof src.total_matched === 'number' ? src.total_matched : null,
+                );
+                showToast(truncationNotice(src.source, src.total_matched), 'warning');
+            });
+
             if (state.lastErrors.length > 0) {
                 state.lastErrors.forEach(err => showToast(err, 'error'));
             }

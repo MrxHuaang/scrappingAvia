@@ -207,10 +207,14 @@ def test_search_reports_truncation_instead_of_hiding_it(client, monkeypatch):
     body = r.get_json()
     assert body["truncated"] is True
     assert body["total_matched"] == 4297
-    assert body["truncated_sources"] == ["EASA"]
     assert body["count"] == 1
-    # El aviso viaja tambien por `errors`, que es el canal que la UI ya muestra.
-    assert any("Narrow the search" in e for e in body["errors"])
+    # Por fuente y con su total: la misma forma que trae cada evento del SSE, para
+    # que el cliente pinte el mismo aviso venga por donde venga. El serverless usa
+    # esta ruta y el resto usa el stream.
+    assert body["truncated_sources"] == [{"source": "EASA", "total_matched": 4297}]
+    # Y NO viaja por `errors`: no es un error, y ahi se volvia un toast rojo de 4s
+    # entre fallos reales en vez de un aviso persistente.
+    assert body["errors"] == []
 
 
 def test_search_complete_result_is_not_flagged(client, monkeypatch):
@@ -263,6 +267,34 @@ def test_search_stream_all_without_terms_streams_error(client):
     events = _sse_events(r)
     assert any(e.get("error") for e in events)
     assert events[-1].get("event") == "done"
+
+
+def test_stream_and_post_report_truncation_the_same_way(client, monkeypatch):
+    """
+    Los dos caminos deben entregar la MISMA informacion por fuente.
+
+    Este test existe porque divergieron: el evento SSE llevaba `truncated` y
+    `total_matched` y la respuesta POST solo una lista de etiquetas, asi que el
+    cliente pintaba el aviso persistente en streaming y no en serverless — que es
+    justo el despliegue que usa POST.
+    """
+    from webapp import search as search_mod
+
+    truncated = search_mod.DbResults([_ROW])
+    truncated.total = 4297
+    truncated.truncated = True
+    monkeypatch.setattr(search_mod, "build_scrapers",
+                        lambda *a, **k: [("easa", "EASA", lambda: truncated)])
+
+    post = client.post("/api/search", json={"source": "easa", "keyword": "engine"}).get_json()
+    events = _sse_events(client.get("/api/search/stream?source=easa&keyword=engine"))
+    payload = [e for e in events if e.get("source") == "easa"][0]
+
+    assert post["truncated_sources"] == [{"source": "EASA", "total_matched": 4297}]
+    assert payload["truncated"] is True
+    assert payload["total_matched"] == 4297
+    # El mismo par (esta truncado, cuantas casaron) por ambos canales.
+    assert post["truncated_sources"][0]["total_matched"] == payload["total_matched"]
 
 
 def test_search_stream_proxy_guard(client, proxied):

@@ -383,23 +383,20 @@ def api_search() -> RouteResult:
                 errors.append(err)
             # `getattr` con default: solo la ruta de BD devuelve DbResults; un
             # scraper en vivo entrega una lista pelada y no sabe cuántas hay.
-            if getattr(results, "truncated", False):
-                truncated_sources.append(label)
             src_total = getattr(results, "total", None)
+            if getattr(results, "truncated", False):
+                # Por fuente y con su total, igual que cada evento del SSE: los
+                # dos caminos deben entregar lo mismo, porque el serverless usa
+                # este y el resto usa el otro.
+                truncated_sources.append({"source": label, "total_matched": src_total})
             if src_total is not None:
                 total_matched += src_total
             if results:
                 all_results.extend(results)
 
-        if truncated_sources:
-            # Va también a `errors` porque es el canal que la UI ya muestra: una
-            # lista incompleta que se presenta como completa es el riesgo real.
-            errors.append(
-                "Showing the most recent matches only for: "
-                + ", ".join(truncated_sources)
-                + ". Narrow the search to see the rest."
-            )
-
+        # El truncado NO va en `errors`: no es un error, y mezclarlo ahí lo
+        # convertía en un toast rojo de 4s entre fallos reales. El cliente lo
+        # pinta como aviso persistente desde el campo estructurado.
         return jsonify({
             "results": all_results,
             "count": len(all_results),
