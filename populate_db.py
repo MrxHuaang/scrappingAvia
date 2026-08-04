@@ -419,6 +419,46 @@ def _fetch_ad_ids(supabase, source: str, ad_numbers: list[str]) -> dict[str, str
     return ids
 
 
+def _applicability_pairs(raw: dict, make: str, model: str) -> list[tuple[str, str | None]]:
+    """
+    Pares (make, model) para `ad_applicability`, deduplicados por el llamador.
+
+    Camino estructurado: el scraper aporta `raw_data["Applicability"]` como
+    [{make, models[]}] — un approval holder con SUS modelos. Es el unico camino
+    correcto cuando un AD lista varios fabricantes: los nombres de holder tienen
+    comas dentro ("REVO, Inc."), asi que un string unido por ", " no se puede
+    volver a partir, y cruzar todos los makes con todos los modelos inventaba
+    combinaciones que el AD nunca declaro.
+
+    Camino legado: `make` escalar + `model` posiblemente con varios separados por
+    coma. Se conserva porque FAA/TC/ANAC nunca empaquetan mas de un fabricante.
+    """
+    holders = raw.get("Applicability")
+    if isinstance(holders, list) and holders:
+        pairs: list[tuple[str, str | None]] = []
+        for holder in holders:
+            if not isinstance(holder, dict):
+                continue
+            h_make = (holder.get("make") or "").strip()
+            if not h_make:
+                continue
+            models = [
+                m.strip() for m in (holder.get("models") or []) if isinstance(m, str) and m.strip()
+            ]
+            if models:
+                pairs.extend((h_make, m) for m in models)
+            else:
+                pairs.append((h_make, None))
+        if pairs:
+            return pairs
+
+    if not make:
+        return []
+    models = [m.strip() for m in model.split(",")] if model else []
+    models = [m for m in models if m]
+    return [(make, m) for m in models] if models else [(make, None)]
+
+
 def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     """
     Tras el upsert de `ads`, puebla las tablas relacionales derivadas de cada AD:
@@ -451,24 +491,22 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
         applic_by_ad.setdefault(ad_id, [])
         applic_seen.setdefault(ad_id, set())
 
+        raw = r.get("raw_data") or {}
         make = (r.get("make") or "").strip()
         model = (r.get("model") or "").strip()
-        if make:
-            # EASA packs several models in "A, B, C"; one applicability row each.
-            models = [m.strip() for m in (model.split(",") if model else [""]) if True]
-            for mod in (models or [""]):
-                # La RPC rechaza el payload entero si un AD repite clave natural.
-                key = (make, mod or None)
-                if key in applic_seen[ad_id]:
-                    continue
-                applic_seen[ad_id].add(key)
-                applic_by_ad[ad_id].append({
-                    "make": make,
-                    "model": mod or None,
-                    "confidence": "high" if make and mod else "medium",
-                })
 
-        raw = r.get("raw_data") or {}
+        for pair_make, pair_model in _applicability_pairs(raw, make, model):
+            # La RPC rechaza el payload entero si un AD repite clave natural.
+            key = (pair_make, pair_model)
+            if key in applic_seen[ad_id]:
+                continue
+            applic_seen[ad_id].add(key)
+            applic_by_ad[ad_id].append({
+                "make": pair_make,
+                "model": pair_model,
+                "confidence": "high" if pair_model else "medium",
+            })
+
         # Explicit SB list (EASA detail page) wins; else mine subject/abstract.
         explicit_sbs = raw.get("Service_Bulletins")
         sbs = explicit_sbs if isinstance(explicit_sbs, list) else \

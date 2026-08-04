@@ -221,30 +221,47 @@ def _parse_results_table(soup):
             # Columna 3: Subject
             subject = cells[3].get_text(strip=True) if len(cells) > 3 else ""
 
-            # Columna 4: Approval Holder / Type Designation
+            # Columna 4: Approval Holder / Type Designation.
+            #
+            # Un AD puede listar N approval holders, cada uno con sus propios
+            # type designations. Esa estructura se conserva en `applicability`
+            # (una entrada por holder, con SUS modelos) porque es la unica forma
+            # de reconstruirla despues: los nombres de holder contienen comas
+            # ("McDermott 214 Holdings, LLC", "REVO, Inc.") y re-partir el string
+            # unido por ", " los corta al medio.
             make = ""
             model = ""
+            applicability = []
             if len(cells) > 4:
                 tree_cell = cells[4]
 
                 tc_holders = tree_cell.find_all("li", class_="tc_holder")
-                makes_list = []
                 models_list = []
 
                 for holder in tc_holders:
                     holder_name = holder.find(string=True, recursive=False)
-                    if holder_name:
-                        holder_name = holder_name.strip()
-                        if holder_name:
-                            makes_list.append(holder_name)
+                    holder_name = holder_name.strip() if holder_name else ""
 
+                    holder_models = []
                     types = holder.find_all("li", class_="type")
                     for t in types:
                         type_text = t.get_text(strip=True)
                         if type_text:
+                            holder_models.append(type_text)
                             models_list.append(type_text)
 
-                make = ", ".join(makes_list) if makes_list else ""
+                    if holder_name:
+                        applicability.append({"make": holder_name, "models": holder_models})
+
+                # `Make` es el holder PRIMARIO, no la lista unida: el string
+                # unido llegaba a 494 chars y aparecia tal cual como opcion en
+                # el filtro Make de la UI. Los N holders viven en
+                # `Applicability` -> ad_applicability (misma convencion que
+                # Model, cuyo listado completo tambien vive alli).
+                make = applicability[0]["make"] if applicability else ""
+                # Model se mantiene como el join de TODOS los types del AD: es
+                # lo que filtra `search_ads` sobre ads.model, y recortarlo al
+                # holder primario perderia recall en la busqueda por modelo.
                 model = ", ".join(models_list) if models_list else ""
 
             # Columna 5: Effective Date
@@ -283,6 +300,9 @@ def _parse_results_table(soup):
                 "Subject": subject,
                 "Make": make,
                 "Model": model,
+                # [{make, models[]}] por approval holder — populate_relations lo
+                # usa para escribir una fila de ad_applicability por par real.
+                "Applicability": applicability,
                 "Effective_Date": effective_date or issue_date,
                 "Status": "Current",
                 "Product_Type": product_type,  # FIXED: ya no hardcodeado a ""
