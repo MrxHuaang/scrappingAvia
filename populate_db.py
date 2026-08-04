@@ -419,21 +419,35 @@ def _fetch_ad_ids(supabase, source: str, ad_numbers: list[str]) -> dict[str, str
     return ids
 
 
-def _applicability_pairs(raw: dict, make: str, model: str) -> list[tuple[str, str | None]]:
-    """
-    Pares (make, model) para `ad_applicability`, deduplicados por el llamador.
+# Igual que el limite por campo de `replace_ad_applicability` (INT-3). Si la RPC
+# lo cambia, cambia aqui: enviar un campo mas largo aborta el LOTE ENTERO, no la
+# fila. Lo vigila tests/test_applicability_pairs.py.
+APPLICABILITY_TEXT_MAX = 256
+
+
+def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
+    """Pares (make, model) para un AD, sin inventar combinaciones.
 
     Camino estructurado: el scraper aporta `raw_data["Applicability"]` como
     [{make, models[]}] — un approval holder con SUS modelos. Es el unico camino
-    correcto cuando un AD lista varios fabricantes: los nombres de holder tienen
-    comas dentro ("REVO, Inc."), asi que un string unido por ", " no se puede
-    volver a partir, y cruzar todos los makes con todos los modelos inventaba
-    combinaciones que el AD nunca declaro.
+    correcto cuando un AD lista varios fabricantes, y EASA lo permite porque el
+    listado anida los type designations dentro de cada `li.tc_holder`. Asi un AD
+    multi-holder conserva pares reales en `high` en vez de degradar a make solo.
 
-    Camino legado: `make` escalar + `model` posiblemente con varios separados por
-    coma. Se conserva porque FAA/TC/ANAC nunca empaquetan mas de un fabricante.
+    Camino legado (FAA/TC/ANAC, que nunca traen mas de un fabricante): `make`
+    escalar y `model` con varios separados por coma.
+
+    Lo que este helper NO hace es partir `make` por coma. Los nombres de holder
+    llevan comas propias ("REVO, Inc.", "McDermott 214 Holdings, LLC"), asi que
+    el join no es reversible: sobre las 765 filas afectadas de EASA, partir da
+    1972 tokens de los que 316 son sufijos societarios ("INC." x194, "LLC" x56,
+    "GmbH" x42), y esos fragmentos terminarian como fabricantes en
+    `ad_applicability` y como opciones del filtro Make via `aircraft_makes()`.
+    Un `make` largo sin estructura que lo explique se reporta arriba contra
+    APPLICABILITY_TEXT_MAX; no se convierte en varios fabricantes plausibles.
     """
-    holders = raw.get("Applicability")
+    holders = row.get("raw_data") or {}
+    holders = holders.get("Applicability") if isinstance(holders, dict) else None
     if isinstance(holders, list) and holders:
         pairs: list[tuple[str, str | None]] = []
         for holder in holders:
@@ -452,11 +466,22 @@ def _applicability_pairs(raw: dict, make: str, model: str) -> list[tuple[str, st
         if pairs:
             return pairs
 
-    if not make:
+    make_field = (row.get("make") or "").strip()
+    if not make_field:
+        # Sin fabricante no hay fila que declarar. El AD queda con
+        # `success_empty` mas abajo, no con una fila invalida.
         return []
-    models = [m.strip() for m in model.split(",")] if model else []
-    models = [m for m in models if m]
-    return [(make, m) for m in models] if models else [(make, None)]
+    if "," in make_field:
+        # Una fuente que empaqueta fabricantes sin atribucion es una regresion
+        # del scraper, no un dato a interpretar aqui. Se avisa y se sigue: la
+        # fila entra tal cual y, si no cabe, la corta el limite de la RPC.
+        logger.warning(
+            f"  applicability: make con coma y sin estructura ({make_field[:80]!r}) "
+            f"— el scraper deberia emitir raw_data['Applicability']"
+        )
+    model_field = (row.get("model") or "").strip()
+    models = [m.strip() for m in model_field.split(",") if m.strip()]
+    return [(make_field, m) for m in models] or [(make_field, None)]
 
 
 def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
@@ -481,6 +506,7 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     applic_by_ad: dict[str, list[dict]] = {}
     applic_seen: dict[str, set] = {}
     sb_rows: list[dict] = []
+    sb_seen: set[tuple[str, str]] = set()
     # (ad_id_to_update, target_ad_number) — the row at ad_id is superseded BY target.
     supersede_updates: list[tuple[str, str]] = []
 
@@ -492,19 +518,29 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
         applic_seen.setdefault(ad_id, set())
 
         raw = r.get("raw_data") or {}
-        make = (r.get("make") or "").strip()
-        model = (r.get("model") or "").strip()
 
-        for pair_make, pair_model in _applicability_pairs(raw, make, model):
+        for mk, mod in _applicability_pairs(r):
             # La RPC rechaza el payload entero si un AD repite clave natural.
-            key = (pair_make, pair_model)
+            key = (mk, mod)
             if key in applic_seen[ad_id]:
                 continue
             applic_seen[ad_id].add(key)
+            if len(mk) > APPLICABILITY_TEXT_MAX or len(mod or "") > APPLICABILITY_TEXT_MAX:
+                # Se descarta la fila, pero NUNCA en silencio: un campo que no
+                # cabe es un dato que hay que mirar, y `_record_write_error`
+                # fuerza status='error' y salida != 0.
+                _record_write_error(
+                    f"  applicability: {r['ad_number']}: campo de mas de "
+                    f"{APPLICABILITY_TEXT_MAX} chars, fila descartada "
+                    f"(make={len(mk)}, model={len(mod or '')})"
+                )
+                continue
             applic_by_ad[ad_id].append({
-                "make": pair_make,
-                "model": pair_model,
-                "confidence": "high" if pair_model else "medium",
+                "make": mk,
+                "model": mod,
+                # make+model identifica una aeronave; solo make es mas debil.
+                # Alineado con lib/ads/applicability.ts del frontend.
+                "confidence": "high" if mod else "medium",
             })
 
         # Explicit SB list (EASA detail page) wins; else mine subject/abstract.
@@ -512,9 +548,15 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
         sbs = explicit_sbs if isinstance(explicit_sbs, list) else \
             enrich.extract_service_bulletins(raw.get("Subject") or "", raw.get("Abstract") or "")
         for sb in sbs:
-            sb = (sb or "").strip()
-            if sb:
-                sb_rows.append({"ad_id": ad_id, "sb_number": sb[:120]})
+            sb = (sb or "").strip()[:120]
+            # Postgres rechaza el statement entero con 21000 si una misma
+            # sentencia ON CONFLICT propone dos veces la misma clave. Un AD
+            # puede citar el mismo SB dos veces, y el corte a 120 chars puede
+            # ademas colapsar dos SBs distintos en el mismo valor: se dedupe
+            # sobre la forma YA truncada, que es la que ve el constraint.
+            if sb and (ad_id, sb) not in sb_seen:
+                sb_seen.add((ad_id, sb))
+                sb_rows.append({"ad_id": ad_id, "sb_number": sb})
 
         # "This AD is superseded by X" -> this row's superseded_to = X.
         superseded_by = (raw.get("Superseded_By") or "").strip()
