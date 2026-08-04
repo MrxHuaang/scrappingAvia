@@ -1,5 +1,19 @@
 name: Populate DB — Daily Scrape
 
+# One job per source.
+#
+# Until 2026-08-04 every source ran sequentially inside a single job. EASA's
+# cold start needs ~4.5 h of detail+PDF fetches, so it consumed the whole job
+# budget and the sources queued behind it never ran at all: `easa` and
+# `transport_canada` went 19 days without an update, `dgac_chile` 20, while
+# `federal_register` — first in the loop — stayed current every single day. The
+# health panel showed no error for the starved sources because a source that
+# never starts never writes a `scrape_runs` row. Nobody notices an absence.
+#
+# Splitting by source means one slow authority can no longer starve the others,
+# each gets its own timeout sized to its own cost, and each reports its own
+# pass/fail.
+
 on:
   schedule:
     # Every day at 06:00 UTC
@@ -26,12 +40,71 @@ on:
           - casa_australia
           - gcaa_uae
 
+permissions:
+  contents: read
+
 jobs:
-  scrape:
+  plan:
+    name: Pick sources
     runs-on: ubuntu-latest
-    # The first cold run re-fetches every FAA/EASA/TC body or PDF; 60 minutes
-    # was never enough for that and the cron died mid-run looking green.
-    timeout-minutes: 180
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      # `soft_minutes` bounds the process; `job_minutes` bounds the job and is
+      # always the larger of the two. See the note on the Run scraper step for
+      # why the process needs its own, lower bound.
+      #
+      # The daily list MUST match populate_db.DAILY_SOURCES. It is duplicated
+      # here because a matrix cannot import Python, so
+      # tests/test_workflow_sources.py fails if the two ever drift.
+      - name: Pick the sources to run
+        id: pick
+        env:
+          REQUESTED: ${{ inputs.source || 'all' }}
+        run: |
+          set -euo pipefail
+          catalog='[
+            {"source":"federal_register","soft_minutes":55,"job_minutes":65,"daily":true},
+            {"source":"easa","soft_minutes":320,"job_minutes":330,"daily":true},
+            {"source":"transport_canada","soft_minutes":115,"job_minutes":125,"daily":true},
+            {"source":"anac_brazil","soft_minutes":25,"job_minutes":35,"daily":true},
+            {"source":"dgac_chile","soft_minutes":20,"job_minutes":30,"daily":true},
+            {"source":"anac_argentina","soft_minutes":20,"job_minutes":30,"daily":true},
+            {"source":"uk_caa","soft_minutes":55,"job_minutes":65,"daily":true},
+            {"source":"aerocivil_colombia","soft_minutes":20,"job_minutes":30,"daily":false},
+            {"source":"casa_australia","soft_minutes":20,"job_minutes":30,"daily":false},
+            {"source":"gcaa_uae","soft_minutes":20,"job_minutes":30,"daily":false}
+          ]'
+          if [ "$REQUESTED" = "all" ]; then
+            include=$(printf '%s' "$catalog" | jq -c '[.[] | select(.daily) | del(.daily)]')
+          else
+            # A disabled source is still runnable on purpose: the three that are
+            # out of the daily run need Playwright, not a parser fix, and stay
+            # available for debugging.
+            include=$(printf '%s' "$catalog" \
+              | jq -c --arg s "$REQUESTED" '[.[] | select(.source == $s) | del(.daily)]')
+            if [ "$include" = "[]" ]; then
+              echo "::error title=Unknown source::$REQUESTED is not in the catalog"
+              exit 1
+            fi
+          fi
+          echo "Sources: $(printf '%s' "$include" | jq -r 'map(.source) | join(", ")')"
+          printf 'matrix={"include":%s}\n' "$include" >> "$GITHUB_OUTPUT"
+
+  scrape:
+    name: ${{ matrix.source }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.job_minutes }}
+    strategy:
+      # A source that fails must never cancel the others — that starvation is
+      # the defect this split exists to fix.
+      fail-fast: false
+      # Seven authorities upserting at once is needless pressure on one
+      # PostgREST instance; the cheap sources finish long before EASA anyway.
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
       - name: Checkout
@@ -51,12 +124,20 @@ jobs:
       # Cache entries are immutable: a plain actions/cache with a fixed key
       # would never update after the first run. Restore the newest previous
       # snapshot, save a fresh one per run id.
+      #
+      # The key is scoped per source now that the jobs run concurrently — a
+      # shared key would make six of the seven saves collide on a key that
+      # already exists. The bare `outputs-` fallback is transitional: it lets
+      # each source pick up the last single-job snapshot (which holds EASA's
+      # 11,200 already-enriched ADs) instead of starting cold. Drop it once
+      # every source has saved under its own prefix.
       - name: Restore scraper caches (outputs/)
         uses: actions/cache/restore@v4
         with:
           path: outputs
-          key: outputs-${{ github.run_id }}
+          key: outputs-${{ matrix.source }}-${{ github.run_id }}
           restore-keys: |
+            outputs-${{ matrix.source }}-
             outputs-
 
       - name: Run scraper
@@ -66,19 +147,33 @@ jobs:
           # Without this key the FAA deep fields (compliance_time, AMOC,
           # supersession) silently self-skip.
           GOVINFO_API_KEY: ${{ secrets.GOVINFO_API_KEY }}
-          SCRAPE_SOURCE: ${{ inputs.source || 'all' }}
+          SCRAPE_SOURCE: ${{ matrix.source }}
+          SOFT_MINUTES: ${{ matrix.soft_minutes }}
+        # A job killed by `timeout-minutes` is reported as **cancelled**, and a
+        # cancelled run fires no Actions failure notification. That is precisely
+        # how a 40-day outage stayed invisible: 40 consecutive nights of
+        # `cancelled`, no alert, and no `status='error'` row because the process
+        # died before it could write one.
+        #
+        # So bound the process a few minutes BELOW the job budget. An overrun
+        # then exits 124 and the run is reported as `failure`, which does notify.
         run: |
-          if [ "$SCRAPE_SOURCE" != "all" ]; then
+          set +e
+          timeout --signal=INT --kill-after=60s "${SOFT_MINUTES}m" \
             python populate_db.py --source "$SCRAPE_SOURCE"
-          else
-            python populate_db.py
+          code=$?
+          set -e
+          if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
+            echo "::error title=Scrape overran::$SCRAPE_SOURCE did not finish within ${SOFT_MINUTES}m. This is a real failure, not a cancellation — the catalog for this source is now stale."
           fi
+          exit "$code"
 
       - name: Save scraper caches (outputs/)
         # Save even when the scrape step failed: a partial cache still spares
-        # the next run thousands of re-fetches.
+        # the next run thousands of re-fetches, and the EASA cold start only
+        # converges because each attempt keeps what it managed to enrich.
         if: always()
         uses: actions/cache/save@v4
         with:
           path: outputs
-          key: outputs-${{ github.run_id }}
+          key: outputs-${{ matrix.source }}-${{ github.run_id }}

@@ -34,6 +34,17 @@ jobs:
           pip install ruff
           ruff check .
 
+      # A workflow file with an invalid expression is not a workflow that fails
+      # loudly: GitHub aborts the run before creating any job, so every check
+      # reports `failure` in 0s with an empty job list and nothing says why. That
+      # went unnoticed for twelve runs in the sibling repo. actionlint validates
+      # expressions and context availability, which is exactly what was missing.
+      # Pinned by digest (v1.7.12) so the gate cannot change under us.
+      - name: Lint the workflows
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+
       - name: Import check (every scraper and entry point)
         run: |
           python - <<'EOF'
@@ -56,9 +67,9 @@ jobs:
           python scripts/test_faa_identity.py
           python scripts/test_equivalents_checksum.py
 
-      - name: HTTP contract suite
+      - name: HTTP contract suite and workflow-drift guard
         run: |
-          pip install pytest
+          pip install pytest pyyaml
           pytest tests/ -q
 
       # Audits the exact pinned versions the cron installs against prod —
