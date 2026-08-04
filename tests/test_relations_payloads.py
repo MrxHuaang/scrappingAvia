@@ -112,10 +112,13 @@ def test_two_bulletins_that_collide_after_truncation_are_sent_once(fake):
 
 
 def test_the_applicability_payload_carries_no_oversized_field(fake):
-    """D-21, extremo a extremo.
+    """D-21 + D-24, extremo a extremo.
 
-    El AD 15-117 real llevaba 457 chars de `make` concatenado. Ahora sale un par
-    por fabricante y ninguno excede el limite que valida la RPC.
+    El AD 15-117 real llevaba 457 chars de `make` concatenado. Ahora sale el
+    producto cartesiano completo: campos cortos que pasan la validacion de la
+    RPC, y CADA modelo emparejado con cada fabricante — el par correcto es el
+    que mantiene el AD dentro del corte de 500 para la aeronave real (D-24),
+    los incorrectos son inertes porque ninguna aeronave cruza fabricantes.
     """
     makes = ", ".join(f"FABRICANTE {i:02d} SOCIEDAD ANONIMA DE AERONAVES" for i in range(14))
     rows = [{"ad_number": "EASA-3", "make": makes, "model": "AS 350, 407, R44", "raw_data": {}}]
@@ -124,11 +127,13 @@ def test_the_applicability_payload_carries_no_oversized_field(fake):
     payloads = [params["p_ads"] for (name, params) in fake.rpcs if name == "replace_ad_applicability"]
     assert payloads, "no se llamo a replace_ad_applicability"
     sent = [row for chunk in payloads for ad in chunk for row in ad["rows"]]
-    assert sent, "el AD quedo sin filas de applicability"
+    assert len(sent) == 14 * 3, "14 fabricantes x 3 modelos"
     for row in sent:
         assert len(row["make"]) <= populate_db.APPLICABILITY_TEXT_MAX
         assert len(row.get("model") or "") <= populate_db.APPLICABILITY_TEXT_MAX
-        assert row["model"] is None, "varios fabricantes: no se atribuyen modelos"
+        assert row["model"] in ("AS 350", "407", "R44"), "el modelo nunca se omite (D-24)"
+        assert row["confidence"] == "high", \
+            "make+model presente: el matching de flota exige high para sobrevivir al cap"
     assert not populate_db._write_errors, "un payload valido no debe registrar error de escritura"
 
 

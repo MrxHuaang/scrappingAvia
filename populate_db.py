@@ -424,21 +424,59 @@ def _fetch_ad_ids(supabase, source: str, ad_numbers: list[str]) -> dict[str, str
 # fila. Lo vigila tests/test_applicability_pairs.py.
 APPLICABILITY_TEXT_MAX = 256
 
+# Techos del lote hacia la RPC, que rechaza llamadas de mas de 500 ADs o 20.000
+# filas totales. El producto cartesiano de multi-fabricante hace variable el
+# numero de filas por AD (maximo observado en produccion: 1.247), asi que el
+# corte va por filas acumuladas ademas de por numero de ADs, con margen 2x bajo
+# el limite del servidor. Tambien lo vigila tests/test_applicability_pairs.py.
+APPLICABILITY_BATCH_ADS = 300
+APPLICABILITY_BATCH_ROWS = 10000
+
+
+def _applicability_batches(payload: list[dict]) -> list[list[dict]]:
+    """Parte el payload en lotes que la RPC acepta, preservando el orden.
+
+    Un AD cuyas filas superen por si solas APPLICABILITY_BATCH_ROWS viaja solo
+    en su propio lote: si aun asi la RPC lo rechaza, el fallo (ruidoso, via
+    `_record_write_error` en el llamador) queda acotado a ese AD en vez de
+    tumbar a otros 299 — el radio de dano de D-21.
+    """
+    batches: list[list[dict]] = []
+    cur: list[dict] = []
+    cur_rows = 0
+    for item in payload:
+        n = len(item["rows"])
+        if cur and (len(cur) >= APPLICABILITY_BATCH_ADS
+                    or cur_rows + n > APPLICABILITY_BATCH_ROWS):
+            batches.append(cur)
+            cur, cur_rows = [], 0
+        cur.append(item)
+        cur_rows += n
+    if cur:
+        batches.append(cur)
+    return batches
+
 
 def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
-    """Pares (make, model) para un AD, sin inventar combinaciones.
+    """Pares (make, model) para un AD: el modelo NUNCA se omite (D-24).
 
     EASA empaqueta listas separadas por coma en AMBOS campos. Con un solo
-    fabricante, cada modelo de la lista le pertenece y el par es directo. Con
-    VARIOS fabricantes no hay atribucion por fabricante en el origen: el
-    producto cartesiano afirmaria cosas falsas (el AD 15-117 lista 9 titulares
-    de TC y 60 modelos, y cruzarlos pondria el R44 de Robinson bajo Airbus).
+    fabricante cada modelo le pertenece y el par es directo. Con VARIOS
+    fabricantes el origen no atribuye modelos, y se emite el producto
+    cartesiano completo makes x models.
 
-    En ese caso se declara solo el fabricante, con `model = None`. Se pierde
-    precision y no se gana falsedad: el matching por make sigue sacando el AD
-    para el operador, con confianza `medium` en vez de `high`. En
-    aeronavegabilidad el falso negativo es la direccion peligrosa — un AD que
-    no aparece se lee igual que "no aplica".
+    El producto inventa pares que ningun fabricante declaro (el AD 15-117
+    pondria el R44 de Robinson bajo Airbus Helicopters), pero esos pares son
+    INERTES: ninguna aeronave real lleva el make de un fabricante y el model
+    de otro, y `fleet_applicable_ads` exige que coincidan ambos para declarar
+    `high`. Lo que NO es inerte es omitir el modelo: el RPC recalcula la
+    confianza desde el match de modelo (una fila con model NULL nunca es
+    `high`), ordena por confianza y corta en 500 por aeronave — en flotas
+    cuyo make coincide con miles de ADs (un A330 matchea 8.637 por make),
+    bajar a `medium` no reordena el AD, lo EXPULSA del resultado. En
+    aeronavegabilidad ese falso negativo es la direccion peligrosa: un AD que
+    no aparece se lee igual que "no aplica". Control del 2026-08-04 en el
+    clon: 3 ADs `high` -> 0 filas con la forma `(make, None)`.
     """
     make_field = (row.get("make") or "").strip()
     model_field = (row.get("model") or "").strip()
@@ -447,10 +485,10 @@ def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
         # Sin fabricante no hay fila que declarar. El AD queda con
         # `success_empty` mas abajo, no con una fila invalida.
         return []
-    if len(makes) > 1:
-        return [(mk, None) for mk in makes]
     models = [m.strip() for m in model_field.split(",") if m.strip()]
-    return [(makes[0], mod) for mod in models] or [(makes[0], None)]
+    if not models:
+        return [(mk, None) for mk in makes]
+    return [(mk, mod) for mk in makes for mod in models]
 
 
 def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
@@ -552,13 +590,13 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
         }
         for aid, rows in applic_by_ad.items()
     ]
-    BATCH = 300
-    for i in range(0, len(applic_payload), BATCH):
-        chunk = applic_payload[i : i + BATCH]
+    for b_idx, chunk in enumerate(_applicability_batches(applic_payload)):
         try:
             supabase.rpc("replace_ad_applicability", {"p_ads": chunk}).execute()
         except Exception as e:
-            _record_write_error(f"  applicability: RPC replace fallo (lote {i // BATCH + 1}): {e}")
+            _record_write_error(
+                f"  applicability: RPC replace fallo (lote {b_idx + 1}, {len(chunk)} ADs): {e}"
+            )
 
     # ad_service_bulletins: upsert on (ad_id, sb_number)
     for i in range(0, len(sb_rows), 500):
