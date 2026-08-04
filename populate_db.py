@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import signal
 import sys
 import traceback
 from datetime import datetime, timezone
@@ -589,6 +590,62 @@ def save_scrape_run(supabase, source: str, ads_found: int, ads_new: int,
         _record_write_error(f"No se pudo guardar scrape_run para {source}: {e}")
 
 
+# La fuente que se esta scrapeando ahora mismo, o None entre fuentes.
+# {"supabase": client, "source": str, "started_at": datetime}
+_IN_FLIGHT: dict | None = None
+_ABORTING = False
+
+
+def _on_abort(signum, _frame) -> None:
+    """Deja rastro en `scrape_runs` cuando el proceso muere por timeout.
+
+    El workflow acota el proceso con `timeout(1)` unos minutos por debajo del
+    presupuesto del job, para que un desborde salga con 124 (failure, que
+    notifica) en vez de cancelled (que no). Eso arregla la senal del lado de
+    GitHub, pero no la del lado de la base: la escritura de `scrape_runs` vive
+    al final del bucle, asi que un SIGINT a mitad del scrape mataba el proceso
+    sin dejar fila. El panel de salud volvia a mostrar una *ausencia* — que es
+    exactamente el disfraz bajo el que EASA paso 19 dias sin actualizarse.
+
+    Aqui se escribe la fila de error y se sale con 124. Es I/O dentro de un
+    handler, deliberadamente: es un solo INSERT y el `--kill-after=60s` del
+    workflow deja margen de sobra. Una segunda senal sale en seco.
+    """
+    global _ABORTING
+    if _ABORTING:
+        os._exit(124)
+    _ABORTING = True
+
+    state = _IN_FLIGHT
+    name = signal.Signals(signum).name
+    if state is not None:
+        logger.error(
+            f"[{state['source']}] {name}: proceso abortado (probable timeout). "
+            f"Registrando el fallo en scrape_runs antes de salir."
+        )
+        save_scrape_run(
+            state["supabase"],
+            source=state["source"],
+            ads_found=0,
+            ads_new=0,
+            ads_updated=0,
+            error_msg=(
+                f"Abortado por {name} antes de terminar (probable timeout del "
+                f"workflow). La corrida no llego a persistir resultados."
+            ),
+            started_at=state["started_at"],
+        )
+    else:
+        logger.error(f"{name}: proceso abortado fuera de una fuente activa.")
+    os._exit(124)
+
+
+def install_abort_handler() -> None:
+    """SIGINT/SIGTERM -> fila de error en scrape_runs, luego exit 124."""
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, _on_abort)
+
+
 # ---------------------------------------------------------------------------
 # Runners por fuente
 # ---------------------------------------------------------------------------
@@ -857,16 +914,23 @@ def main():
     if not args.dry_run:
         supabase = get_supabase_client()
         logger.info("Supabase conectado.")
+        # Solo con cliente: sin el no hay donde registrar el aborto, y en
+        # --dry-run el Ctrl-C debe seguir siendo un Ctrl-C normal.
+        install_abort_handler()
 
     total_new = 0
     total_updated = 0
     total_errors = 0
+
+    global _IN_FLIGHT
 
     for source in sources_to_run:
         started_at = datetime.now(timezone.utc)
         error_msg = None
         raw_results = []
         write_errors_before = len(_write_errors)
+        if supabase is not None:
+            _IN_FLIGHT = {"supabase": supabase, "source": source, "started_at": started_at}
 
         if args.reset and supabase and not args.dry_run:
             logger.warning(f"[{source}] --reset: borrando filas existentes...")
@@ -949,6 +1013,9 @@ def main():
                 error_msg=error_msg,
                 started_at=started_at,
             )
+
+        # La fila ya esta escrita: un aborto a partir de aqui no debe duplicarla.
+        _IN_FLIGHT = None
 
     logger.info(
         f"\n{'='*50}\n"
