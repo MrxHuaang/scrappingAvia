@@ -419,6 +419,40 @@ def _fetch_ad_ids(supabase, source: str, ad_numbers: list[str]) -> dict[str, str
     return ids
 
 
+# Igual que el limite por campo de `replace_ad_applicability` (INT-3). Si la RPC
+# lo cambia, cambia aqui: enviar un campo mas largo aborta el LOTE ENTERO, no la
+# fila. Lo vigila tests/test_applicability_pairs.py.
+APPLICABILITY_TEXT_MAX = 256
+
+
+def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
+    """Pares (make, model) para un AD, sin inventar combinaciones.
+
+    EASA empaqueta listas separadas por coma en AMBOS campos. Con un solo
+    fabricante, cada modelo de la lista le pertenece y el par es directo. Con
+    VARIOS fabricantes no hay atribucion por fabricante en el origen: el
+    producto cartesiano afirmaria cosas falsas (el AD 15-117 lista 9 titulares
+    de TC y 60 modelos, y cruzarlos pondria el R44 de Robinson bajo Airbus).
+
+    En ese caso se declara solo el fabricante, con `model = None`. Se pierde
+    precision y no se gana falsedad: el matching por make sigue sacando el AD
+    para el operador, con confianza `medium` en vez de `high`. En
+    aeronavegabilidad el falso negativo es la direccion peligrosa — un AD que
+    no aparece se lee igual que "no aplica".
+    """
+    make_field = (row.get("make") or "").strip()
+    model_field = (row.get("model") or "").strip()
+    makes = [m.strip() for m in make_field.split(",") if m.strip()]
+    if not makes:
+        # Sin fabricante no hay fila que declarar. El AD queda con
+        # `success_empty` mas abajo, no con una fila invalida.
+        return []
+    if len(makes) > 1:
+        return [(mk, None) for mk in makes]
+    models = [m.strip() for m in model_field.split(",") if m.strip()]
+    return [(makes[0], mod) for mod in models] or [(makes[0], None)]
+
+
 def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     """
     Tras el upsert de `ads`, puebla las tablas relacionales derivadas de cada AD:
@@ -441,6 +475,7 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     applic_by_ad: dict[str, list[dict]] = {}
     applic_seen: dict[str, set] = {}
     sb_rows: list[dict] = []
+    sb_seen: set[tuple[str, str]] = set()
     # (ad_id_to_update, target_ad_number) — the row at ad_id is superseded BY target.
     supersede_updates: list[tuple[str, str]] = []
 
@@ -451,22 +486,29 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
         applic_by_ad.setdefault(ad_id, [])
         applic_seen.setdefault(ad_id, set())
 
-        make = (r.get("make") or "").strip()
-        model = (r.get("model") or "").strip()
-        if make:
-            # EASA packs several models in "A, B, C"; one applicability row each.
-            models = [m.strip() for m in (model.split(",") if model else [""]) if True]
-            for mod in (models or [""]):
-                # La RPC rechaza el payload entero si un AD repite clave natural.
-                key = (make, mod or None)
-                if key in applic_seen[ad_id]:
-                    continue
-                applic_seen[ad_id].add(key)
-                applic_by_ad[ad_id].append({
-                    "make": make,
-                    "model": mod or None,
-                    "confidence": "high" if make and mod else "medium",
-                })
+        for mk, mod in _applicability_pairs(r):
+            # La RPC rechaza el payload entero si un AD repite clave natural.
+            key = (mk, mod)
+            if key in applic_seen[ad_id]:
+                continue
+            applic_seen[ad_id].add(key)
+            if len(mk) > APPLICABILITY_TEXT_MAX or len(mod or "") > APPLICABILITY_TEXT_MAX:
+                # Se descarta la fila, pero NUNCA en silencio: un campo que no
+                # cabe es un dato que hay que mirar, y `_record_write_error`
+                # fuerza status='error' y salida != 0.
+                _record_write_error(
+                    f"  applicability: {r['ad_number']}: campo de mas de "
+                    f"{APPLICABILITY_TEXT_MAX} chars, fila descartada "
+                    f"(make={len(mk)}, model={len(mod or '')})"
+                )
+                continue
+            applic_by_ad[ad_id].append({
+                "make": mk,
+                "model": mod,
+                # make+model identifica una aeronave; solo make es mas debil.
+                # Alineado con lib/ads/applicability.ts del frontend.
+                "confidence": "high" if mod else "medium",
+            })
 
         raw = r.get("raw_data") or {}
         # Explicit SB list (EASA detail page) wins; else mine subject/abstract.
@@ -474,9 +516,15 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
         sbs = explicit_sbs if isinstance(explicit_sbs, list) else \
             enrich.extract_service_bulletins(raw.get("Subject") or "", raw.get("Abstract") or "")
         for sb in sbs:
-            sb = (sb or "").strip()
-            if sb:
-                sb_rows.append({"ad_id": ad_id, "sb_number": sb[:120]})
+            sb = (sb or "").strip()[:120]
+            # Postgres rechaza el statement entero con 21000 si una misma
+            # sentencia ON CONFLICT propone dos veces la misma clave. Un AD
+            # puede citar el mismo SB dos veces, y el corte a 120 chars puede
+            # ademas colapsar dos SBs distintos en el mismo valor: se dedupe
+            # sobre la forma YA truncada, que es la que ve el constraint.
+            if sb and (ad_id, sb) not in sb_seen:
+                sb_seen.add((ad_id, sb))
+                sb_rows.append({"ad_id": ad_id, "sb_number": sb})
 
         # "This AD is superseded by X" -> this row's superseded_to = X.
         superseded_by = (raw.get("Superseded_By") or "").strip()
