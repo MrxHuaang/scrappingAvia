@@ -114,22 +114,55 @@ def test_two_bulletins_that_collide_after_truncation_are_sent_once(fake):
 def test_the_applicability_payload_carries_no_oversized_field(fake):
     """D-21, extremo a extremo.
 
-    El AD 15-117 real llevaba 457 chars de `make` concatenado. Ahora sale un par
-    por fabricante y ninguno excede el limite que valida la RPC.
+    El AD 15-117 real llevaba 457 chars de `make` concatenado. Con la estructura
+    del origen (`raw_data["Applicability"]`, un approval holder con SUS modelos)
+    sale un par por fabricante, cada uno holgado frente al limite de la RPC, y
+    sin cruzar el modelo de un fabricante con el nombre de otro.
     """
-    makes = ", ".join(f"FABRICANTE {i:02d} SOCIEDAD ANONIMA DE AERONAVES" for i in range(14))
-    rows = [{"ad_number": "EASA-3", "make": makes, "model": "AS 350, 407, R44", "raw_data": {}}]
+    holders = [
+        {"make": f"FABRICANTE {i:02d} SOCIEDAD ANONIMA DE AERONAVES", "models": [f"MOD-{i:02d}"]}
+        for i in range(14)
+    ]
+    rows = [{
+        "ad_number": "EASA-3",
+        "make": holders[0]["make"],
+        "model": ", ".join(h["models"][0] for h in holders),
+        "raw_data": {"Applicability": holders},
+    }]
     populate_db.populate_relations(fake, "easa", rows)
 
     payloads = [params["p_ads"] for (name, params) in fake.rpcs if name == "replace_ad_applicability"]
     assert payloads, "no se llamo a replace_ad_applicability"
     sent = [row for chunk in payloads for ad in chunk for row in ad["rows"]]
-    assert sent, "el AD quedo sin filas de applicability"
+    assert len(sent) == 14, "un par por approval holder"
     for row in sent:
         assert len(row["make"]) <= populate_db.APPLICABILITY_TEXT_MAX
         assert len(row.get("model") or "") <= populate_db.APPLICABILITY_TEXT_MAX
-        assert row["model"] is None, "varios fabricantes: no se atribuyen modelos"
+    # La estructura permite conservar el modelo: no hay que elegir entre
+    # inventar una atribucion y perderla.
+    assert {(r["make"], r["model"]) for r in sent} == {(h["make"], h["models"][0]) for h in holders}
+    assert all(r["confidence"] == "high" for r in sent)
     assert not populate_db._write_errors, "un payload valido no debe registrar error de escritura"
+
+
+def test_a_joined_make_without_structure_is_reported_not_split(fake):
+    """La alternativa descartada, fijada como contrato.
+
+    Partir `make` por coma parece el fix obvio y no lo es: los nombres de holder
+    traen comas propias, asi que sobre las 765 filas afectadas de EASA produce
+    1972 tokens de los que 316 son sufijos societarios ("INC." x194, "LLC" x56,
+    "GmbH" x42). Esos fragmentos acabarian como fabricantes en la BD y como
+    opciones del filtro Make. Sin estructura que lo explique, el campo se
+    reporta y se descarta; no se convierte en 14 fabricantes plausibles.
+    """
+    makes = ", ".join(f"FABRICANTE {i:02d} SOCIEDAD ANONIMA DE AERONAVES" for i in range(14))
+    rows = [{"ad_number": "EASA-5", "make": makes, "model": "AS 350", "raw_data": {}}]
+    populate_db.populate_relations(fake, "easa", rows)
+
+    payloads = [params["p_ads"] for (name, params) in fake.rpcs if name == "replace_ad_applicability"]
+    sent = [row for chunk in payloads for ad in chunk for row in ad["rows"]]
+    assert sent == [], "ningun fragmento del string unido debe viajar como fabricante"
+    assert any("mas de 256 chars" in e for e in populate_db._write_errors)
 
 
 def test_an_unsplittable_oversized_field_is_dropped_loudly(fake):

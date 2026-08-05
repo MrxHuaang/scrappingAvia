@@ -20,7 +20,13 @@ from scrapers.federal_register import search_ads as fr_search
 from scrapers.gcaa_uae import search_ads as gcaa_search
 from scrapers.transport_canada import search_ads as tc_search
 from scrapers.uk_caa import search_ads as uk_caa_search
-from utils import MAX_RESULTS_PER_SOURCE, VALID_SOURCES, map_product_type, run_with_timeout
+from utils import (
+    MAX_RESULTS_PER_SOURCE,
+    VALID_SOURCES,
+    map_product_type,
+    run_with_timeout,
+    validate_search_filters,
+)
 
 from webapp.core import (
     APP_VERSION,
@@ -364,8 +370,9 @@ def api_search() -> RouteResult:
 
         if source not in VALID_SOURCES:
             return jsonify({"error": f"Invalid source: '{source}'."}), 400
-        if source == "all" and not keyword and not make and not model:
-            return jsonify({"error": "Enter a search term, make, or model to search all sources — or pick a specific authority to browse it."}), 400
+        gate = validate_search_filters(keyword, make, model, product_type, date_from, date_to)
+        if gate:
+            return jsonify({"error": gate}), 400
 
         all_results = []
         errors = []
@@ -435,11 +442,12 @@ def api_search_stream() -> RouteResult:
         return Response(error_gen(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    # Input validation: "all" with no terms is not allowed; specific sources may run unfiltered
-    if not keyword and not make and not model and source == "all":
+    # Mismo gate que /api/search (utils.validate_search_filters): un make mas un
+    # filtro, salvo que el keyword sea un numero de AD o un docket.
+    gate = validate_search_filters(keyword, make, model, product_type, date_from, date_to)
+    if gate:
         def empty_gen():
-            event = {"source": source, "results": [], "count": 0,
-                     "error": "Enter a search term, make, or model to search all sources — or pick a specific authority to browse it."}
+            event = {"source": source, "results": [], "count": 0, "error": gate}
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'event': 'done', 'total': 0})}\n\n"
         return Response(empty_gen(), mimetype="text/event-stream",

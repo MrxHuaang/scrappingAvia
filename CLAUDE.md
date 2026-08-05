@@ -52,8 +52,8 @@ source_label      TEXT   -- label legible (ej: "FAA")
 ad_number         TEXT   -- PK natural junto con source
 state_of_design   TEXT   -- pais emisor (derivado del source via enrich.STATE_OF_DESIGN)
 subject           TEXT
-make              TEXT
-model             TEXT   -- modelo principal; los multiples van en ad_applicability
+make              TEXT   -- fabricante PRINCIPAL; los multiples van en ad_applicability
+model             TEXT   -- todos los type designations del AD (lo que filtra search_ads)
 product_type      TEXT   -- enum: Aircraft|Engine|Propeller|Appliance|Helicopter
 published_date    DATE   -- fecha de publicacion (distinta de effective)
 effective_date    DATE   -- YYYY-MM-DD
@@ -77,6 +77,34 @@ Constraint único: `(source, ad_number)` → upsert usa `on_conflict=source,ad_n
 - `ad_applicability` — make/model afectados (1 AD -> N). Las tablas de usuario y
   Watchlist hacen match contra esta.
 - `ad_service_bulletins` — SBs referenciados, extraidos de subject/abstract.
+
+### Applicability multi-fabricante (`Applicability` en raw_data)
+
+Un AD puede listar N approval holders, cada uno con SUS type designations (EASA
+lo hace en 765 ADs). Un scraper que pueda verlo emite
+`Applicability: [{make, models[]}]` en su record; `populate_db._applicability_pairs()`
+escribe una fila de `ad_applicability` por par real. Sin esa clave se usa el
+camino escalar (`Make` + `Model` separado por comas), correcto para
+FAA/TC/ANAC, que nunca traen mas de un fabricante.
+
+> **NUNCA** unir varios makes en un solo string (`", ".join`) ni volver a
+> partirlos por coma. Los nombres de holder traen comas propias ("REVO, Inc.",
+> "McDermott 214 Holdings, LLC"), asi que el join no es reversible. Ese fue el
+> bug de 2026-08: `ads.make` guardaba strings de hasta 494 chars, la UI los
+> ofrecia como opcion del filtro Make, y `ad_applicability` cruzaba cada
+> fabricante con los modelos de los otros — falsos positivos en el matching de
+> flota (un A320 matcheaba cualquier AD que mencionara Airbus entre diez
+> holders).
+
+### Gate de filtros de busqueda
+
+`utils.validate_search_filters()` es la unica fuente de la regla y la aplican los
+dos endpoints (`/api/search` y `/api/search/stream`, que antes validaban distinto):
+**make + al menos otro filtro** (model, product_type, date_from, date_to o
+keyword). Excepcion: si el keyword tiene forma de numero de AD o docket
+(`utils.is_ad_identifier()`, reusa `AD_NUM_FAA/EASA/TC`) pasa solo — pegar
+"2023-12-03" es el uso mas comun y nadie sabe de memoria el fabricante.
+Barrer una autoridad entera sin filtros ya **no** esta permitido.
 
 **Enriquecimiento (`enrich.py`):** todas las derivaciones (state_of_design, status
 canonico, priority, product_type canonico, AMOC, unsafe/corrective/compliance, SBs)

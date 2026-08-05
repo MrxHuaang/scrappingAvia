@@ -166,6 +166,52 @@ AD_NUM_EASA = r"(?<![-\w])(?:[A-Z]{1,2}-)?\d{4}-\d{3,4}(?:R\d+)?(?![-\d])"
 AD_NUM_TC = r"CF-\d{2,4}-\d{2,3}(?:R\d+)?(?![-\d])"
 
 
+# ------------------------------------------------------------------
+# Gate de filtros de busqueda
+#
+# Una busqueda sin filtros barre la autoridad entera: 18k ADs de EASA para
+# alguien que escribio "fuel". El gate exige `make` + al menos otro filtro,
+# con una excepcion deliberada: pegar un numero de AD (o un docket) es el caso
+# de uso mas comun de todos y no tiene por que conocer el fabricante.
+# ------------------------------------------------------------------
+_AD_QUERY_RE = re.compile(
+    rf"^(?:A\.?\s?D\.?\s*)?(?:{AD_NUM_FAA}|{AD_NUM_EASA}|{AD_NUM_TC})$", re.I
+)
+# Docket/proyecto: "FAA-2023-0927", "MCAI-2023-00013-T"
+_DOCKET_QUERY_RE = re.compile(r"^[A-Z]{2,5}-\d{4}-\d{3,6}(?:-[A-Z]{1,3})?$", re.I)
+
+SEARCH_FILTER_HINT = (
+    "Add a make plus at least one more filter (model, product type or date range) "
+    "— or search a specific AD number or docket."
+)
+
+
+def is_ad_identifier(term: str) -> bool:
+    """True si `term` tiene forma de numero de AD (FAA/EASA/TC) o de docket."""
+    s = (term or "").strip().replace("–", "-").replace("—", "-")
+    s = re.sub(r"\s+", " ", s)
+    if not s:
+        return False
+    return bool(_AD_QUERY_RE.match(s) or _DOCKET_QUERY_RE.match(s))
+
+
+def validate_search_filters(keyword="", make="", model="", product_type="",
+                            date_from="", date_to="") -> str | None:
+    """
+    Mensaje de error si la combinacion de filtros no alcanza, o None si pasa.
+    Unica fuente de la regla: la usan /api/search y /api/search/stream, que
+    antes validaban cada uno lo suyo y no coincidian.
+    """
+    if is_ad_identifier(keyword):
+        return None
+    if not (make or "").strip():
+        return SEARCH_FILTER_HINT
+    others = [keyword, model, product_type, date_from, date_to]
+    if not any((v or "").strip() for v in others):
+        return SEARCH_FILTER_HINT
+    return None
+
+
 def map_product_type(product_type):
     """Mapea tipo de producto al formato de Transport Canada."""
     mapping = {

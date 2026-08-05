@@ -202,7 +202,7 @@ def test_search_reports_truncation_instead_of_hiding_it(client, monkeypatch):
     monkeypatch.setattr(search_mod, "build_scrapers",
                         lambda *a, **k: [("easa", "EASA", lambda: truncated)])
 
-    r = client.post("/api/search", json={"source": "easa", "keyword": "engine"})
+    r = client.post("/api/search", json={"source": "easa", "make": "Airbus", "keyword": "engine"})
     assert r.status_code == 200
     body = r.get_json()
     assert body["truncated"] is True
@@ -226,7 +226,7 @@ def test_search_complete_result_is_not_flagged(client, monkeypatch):
     monkeypatch.setattr(search_mod, "build_scrapers",
                         lambda *a, **k: [("easa", "EASA", lambda: whole)])
 
-    body = client.post("/api/search", json={"source": "easa"}).get_json()
+    body = client.post("/api/search", json=_FILTERED_QUERY).get_json()
     assert body["truncated"] is False
     assert body["truncated_sources"] == []
     assert body["errors"] == []
@@ -241,7 +241,7 @@ def test_search_live_scraper_list_carries_no_signal(client, monkeypatch):
 
     monkeypatch.setattr(search_mod, "build_scrapers",
                         lambda *a, **k: [("easa", "EASA", lambda: [_ROW])])
-    body = client.post("/api/search", json={"source": "easa"}).get_json()
+    body = client.post("/api/search", json=_FILTERED_QUERY).get_json()
     assert body["truncated"] is False
     assert body["total_matched"] is None
 
@@ -286,8 +286,10 @@ def test_stream_and_post_report_truncation_the_same_way(client, monkeypatch):
     monkeypatch.setattr(search_mod, "build_scrapers",
                         lambda *a, **k: [("easa", "EASA", lambda: truncated)])
 
-    post = client.post("/api/search", json={"source": "easa", "keyword": "engine"}).get_json()
-    events = _sse_events(client.get("/api/search/stream?source=easa&keyword=engine"))
+    post = client.post("/api/search",
+                       json={"source": "easa", "make": "Airbus", "keyword": "engine"}).get_json()
+    events = _sse_events(
+        client.get("/api/search/stream?source=easa&make=Airbus&keyword=engine"))
     payload = [e for e in events if e.get("source") == "easa"][0]
 
     assert post["truncated_sources"] == [{"source": "EASA", "total_matched": 4297}]
@@ -303,6 +305,11 @@ def test_search_stream_proxy_guard(client, proxied):
 
 
 # ----------------------------------------------------------------- export --
+
+# Consulta que satisface el gate de filtros (utils.validate_search_filters):
+# make + otro filtro. Los tests de truncado no prueban el gate, solo necesitan
+# pasarlo.
+_FILTERED_QUERY = {"source": "easa", "make": "Airbus", "model": "A320"}
 
 _ROW = {
     "AD_Number": "2026-01-01", "Source": "FAA", "Subject": "Test subject",

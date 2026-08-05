@@ -428,29 +428,60 @@ APPLICABILITY_TEXT_MAX = 256
 def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
     """Pares (make, model) para un AD, sin inventar combinaciones.
 
-    EASA empaqueta listas separadas por coma en AMBOS campos. Con un solo
-    fabricante, cada modelo de la lista le pertenece y el par es directo. Con
-    VARIOS fabricantes no hay atribucion por fabricante en el origen: el
-    producto cartesiano afirmaria cosas falsas (el AD 15-117 lista 9 titulares
-    de TC y 60 modelos, y cruzarlos pondria el R44 de Robinson bajo Airbus).
+    Camino estructurado: el scraper aporta `raw_data["Applicability"]` como
+    [{make, models[]}] — un approval holder con SUS modelos. Es el unico camino
+    correcto cuando un AD lista varios fabricantes, y EASA lo permite porque el
+    listado anida los type designations dentro de cada `li.tc_holder`. Asi un AD
+    multi-holder conserva pares reales en `high` en vez de degradar a make solo.
 
-    En ese caso se declara solo el fabricante, con `model = None`. Se pierde
-    precision y no se gana falsedad: el matching por make sigue sacando el AD
-    para el operador, con confianza `medium` en vez de `high`. En
-    aeronavegabilidad el falso negativo es la direccion peligrosa — un AD que
-    no aparece se lee igual que "no aplica".
+    Camino legado (FAA/TC/ANAC, que nunca traen mas de un fabricante): `make`
+    escalar y `model` con varios separados por coma.
+
+    Lo que este helper NO hace es partir `make` por coma. Los nombres de holder
+    llevan comas propias ("REVO, Inc.", "McDermott 214 Holdings, LLC"), asi que
+    el join no es reversible: sobre las 765 filas afectadas de EASA, partir da
+    1972 tokens de los que 316 son sufijos societarios ("INC." x194, "LLC" x56,
+    "GmbH" x42), y esos fragmentos terminarian como fabricantes en
+    `ad_applicability` y como opciones del filtro Make via `aircraft_makes()`.
+    Un `make` largo sin estructura que lo explique se reporta arriba contra
+    APPLICABILITY_TEXT_MAX; no se convierte en varios fabricantes plausibles.
     """
+    holders = row.get("raw_data") or {}
+    holders = holders.get("Applicability") if isinstance(holders, dict) else None
+    if isinstance(holders, list) and holders:
+        pairs: list[tuple[str, str | None]] = []
+        for holder in holders:
+            if not isinstance(holder, dict):
+                continue
+            h_make = (holder.get("make") or "").strip()
+            if not h_make:
+                continue
+            models = [
+                m.strip() for m in (holder.get("models") or []) if isinstance(m, str) and m.strip()
+            ]
+            if models:
+                pairs.extend((h_make, m) for m in models)
+            else:
+                pairs.append((h_make, None))
+        if pairs:
+            return pairs
+
     make_field = (row.get("make") or "").strip()
-    model_field = (row.get("model") or "").strip()
-    makes = [m.strip() for m in make_field.split(",") if m.strip()]
-    if not makes:
+    if not make_field:
         # Sin fabricante no hay fila que declarar. El AD queda con
         # `success_empty` mas abajo, no con una fila invalida.
         return []
-    if len(makes) > 1:
-        return [(mk, None) for mk in makes]
+    if "," in make_field:
+        # Una fuente que empaqueta fabricantes sin atribucion es una regresion
+        # del scraper, no un dato a interpretar aqui. Se avisa y se sigue: la
+        # fila entra tal cual y, si no cabe, la corta el limite de la RPC.
+        logger.warning(
+            f"  applicability: make con coma y sin estructura ({make_field[:80]!r}) "
+            f"— el scraper deberia emitir raw_data['Applicability']"
+        )
+    model_field = (row.get("model") or "").strip()
     models = [m.strip() for m in model_field.split(",") if m.strip()]
-    return [(makes[0], mod) for mod in models] or [(makes[0], None)]
+    return [(make_field, m) for m in models] or [(make_field, None)]
 
 
 def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
@@ -486,6 +517,8 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
         applic_by_ad.setdefault(ad_id, [])
         applic_seen.setdefault(ad_id, set())
 
+        raw = r.get("raw_data") or {}
+
         for mk, mod in _applicability_pairs(r):
             # La RPC rechaza el payload entero si un AD repite clave natural.
             key = (mk, mod)
@@ -510,7 +543,6 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                 "confidence": "high" if mod else "medium",
             })
 
-        raw = r.get("raw_data") or {}
         # Explicit SB list (EASA detail page) wins; else mine subject/abstract.
         explicit_sbs = raw.get("Service_Bulletins")
         sbs = explicit_sbs if isinstance(explicit_sbs, list) else \
