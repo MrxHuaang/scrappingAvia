@@ -179,3 +179,34 @@ def test_an_unsplittable_oversized_field_is_dropped_loudly(fake):
     assert sent == [], "la fila sobredimensionada no debe viajar a la RPC"
     assert any("mas de 256 chars" in e for e in populate_db._write_errors), \
         "descartarla en silencio seria el defecto que este plan combate"
+
+    # Y el AD viaja como `failed`, NUNCA como `success_empty`: un descarte del
+    # cliente no es evidencia de "no aplica", y `success_empty` le ordenaria a
+    # la RPC borrar la applicability ya guardada de ese AD.
+    statuses = [ad["status"] for chunk in payloads for ad in chunk]
+    assert statuses == ["failed"], \
+        f"un AD con filas descartadas debe declararse failed, no {statuses}"
+
+
+def test_an_ad_with_one_bad_holder_and_one_good_one_is_still_failed_not_partial(fake):
+    """Un AD con estructura (varios holders) donde solo uno de ellos no cabe.
+
+    El holder valido (SIKORSKY/S-76) por si solo pasaria como `success_with_rows`
+    con una fila. Pero el AD tiene mas de lo que se esta declarando -- el holder
+    descartado no es "el AD no aplica a Sikorsky", es un dato que no se pudo
+    escribir. Sale `failed` con `rows: []`, nunca una fila parcial.
+    """
+    rows = [{
+        "ad_number": "EASA-6", "make": "X" * 300, "model": "", "raw_data": {
+            "Applicability": [
+                {"make": "X" * 300, "models": []},
+                {"make": "SIKORSKY", "models": ["S-76"]},
+            ]
+        },
+    }]
+    populate_db.populate_relations(fake, "easa", rows)
+
+    payloads = [params["p_ads"] for (name, params) in fake.rpcs if name == "replace_ad_applicability"]
+    element = [ad for chunk in payloads for ad in chunk][0]
+    assert element["status"] == "failed"
+    assert element["rows"] == [], "failed no puede llevar filas (la RPC lo rechaza)"
