@@ -484,6 +484,59 @@ def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
     return [(make_field, m) for m in models] or [(make_field, None)]
 
 
+# Igual que max_ads/max_total_rows de replace_ad_applicability (migracion D-21,
+# 20260805100000). Un AD con varios approval holders puede aportar muchas filas
+# (peor visto en produccion: >1200 filas para un solo AD EASA), asi que un lote
+# fijo por CANTIDAD DE ADS puede igual pasarse del tope de filas de la RPC. El
+# margen de 2x bajo max_total_rows deja aire para que ADs promedio (pocas filas)
+# sigan viajando 300 a la vez sin acercarse al limite real de la RPC.
+APPLICABILITY_BATCH_ADS = 300
+APPLICABILITY_BATCH_ROWS = 10000
+
+
+def _applicability_batches(payload: list[dict]) -> list[list[dict]]:
+    """
+    Parte `payload` en lotes acotados por CANTIDAD DE ADS y por FILAS
+    ACUMULADAS. Un AD cuyas propias filas ya superan el tope de filas viaja
+    SOLO en su lote: si la RPC lo rechaza (por ejemplo por pasarse de
+    max_total_rows), el rechazo queda confinado a ese AD y no arrastra a los
+    demas. Preserva el orden y no pierde ni duplica ningun elemento.
+    """
+    batches: list[list[dict]] = []
+    batch: list[dict] = []
+    batch_rows = 0
+
+    def _flush():
+        nonlocal batch, batch_rows
+        if batch:
+            batches.append(batch)
+        batch, batch_rows = [], 0
+
+    for element in payload:
+        n_rows = len(element.get("rows") or [])
+        if n_rows > APPLICABILITY_BATCH_ROWS:
+            # Ni siquiera solo cabria con margen; se manda igual (la RPC es la
+            # autoridad final) pero aislado, para no arrastrar a nadie mas.
+            _flush()
+            batches.append([element])
+            continue
+        if batch and (len(batch) >= APPLICABILITY_BATCH_ADS or batch_rows + n_rows > APPLICABILITY_BATCH_ROWS):
+            _flush()
+        batch.append(element)
+        batch_rows += n_rows
+    _flush()
+    return batches
+
+
+def _send_applicability_batches(supabase, payload: list[dict]) -> None:
+    """Envia cada lote de `_applicability_batches(payload)` a la RPC."""
+    for i, batch in enumerate(_applicability_batches(payload)):
+        try:
+            supabase.rpc("replace_ad_applicability", {"p_ads": batch}).execute()
+        except Exception as e:
+            _record_write_error(f"  applicability: RPC replace fallo (lote {i + 1}): {e}")
+
+
 def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     """
     Tras el upsert de `ads`, puebla las tablas relacionales derivadas de cada AD:
@@ -507,6 +560,10 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     applic_seen: dict[str, set] = {}
     sb_rows: list[dict] = []
     sb_seen: set[tuple[str, str]] = set()
+    # ADs con >=1 fila de applicability descartada por tamano de campo. Viajan
+    # `failed` en vez de `success_empty`/`success_with_rows`: lo que sobrevivio
+    # es un subconjunto accidental, no la verdad completa del AD.
+    applic_dropped: set[str] = set()
     # (ad_id_to_update, target_ad_number) — the row at ad_id is superseded BY target.
     supersede_updates: list[tuple[str, str]] = []
 
@@ -528,12 +585,17 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
             if len(mk) > APPLICABILITY_TEXT_MAX or len(mod or "") > APPLICABILITY_TEXT_MAX:
                 # Se descarta la fila, pero NUNCA en silencio: un campo que no
                 # cabe es un dato que hay que mirar, y `_record_write_error`
-                # fuerza status='error' y salida != 0.
+                # fuerza status='error' y salida != 0. Ademas marca el AD para
+                # que viaje `failed` mas abajo: un descarte de cliente es una
+                # anomalia de extraccion, no evidencia de que el AD no aplica a
+                # nada, y declararlo `success_empty` le ordenaria a la RPC BORRAR
+                # lo que ya tenia guardado.
                 _record_write_error(
                     f"  applicability: {r['ad_number']}: campo de mas de "
                     f"{APPLICABILITY_TEXT_MAX} chars, fila descartada "
                     f"(make={len(mk)}, model={len(mod or '')})"
                 )
+                applic_dropped.add(ad_id)
                 continue
             applic_by_ad[ad_id].append({
                 "make": mk,
@@ -576,21 +638,21 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     # ad_applicability: reemplazo transaccional por lote via RPC (INT-3). Cada
     # llamada es una transaccion en Postgres: un proceso muerto entre lotes deja
     # los anteriores completos y los posteriores intactos, nunca un AD a medias.
-    applic_payload = [
-        {
+    def _applic_element(aid: str, rows: list[dict]) -> dict:
+        if aid in applic_dropped:
+            # `failed` significa "no toques lo guardado": el descarte del
+            # cliente no es evidencia de que el AD no aplica a nada, y las
+            # filas que SI cupieron no son la verdad completa del AD. La RPC
+            # rechaza `rows` no vacio salvo con status=success_with_rows.
+            return {"ad_id": aid, "status": "failed", "rows": []}
+        return {
             "ad_id": aid,
             "status": "success_with_rows" if rows else "success_empty",
             "rows": rows,
         }
-        for aid, rows in applic_by_ad.items()
-    ]
-    BATCH = 300
-    for i in range(0, len(applic_payload), BATCH):
-        chunk = applic_payload[i : i + BATCH]
-        try:
-            supabase.rpc("replace_ad_applicability", {"p_ads": chunk}).execute()
-        except Exception as e:
-            _record_write_error(f"  applicability: RPC replace fallo (lote {i // BATCH + 1}): {e}")
+
+    applic_payload = [_applic_element(aid, rows) for aid, rows in applic_by_ad.items()]
+    _send_applicability_batches(supabase, applic_payload)
 
     # ad_service_bulletins: upsert on (ad_id, sb_number)
     for i in range(0, len(sb_rows), 500):
@@ -643,9 +705,15 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                 except Exception as e:
                     _record_write_error(f"  supersede: update fallo target {tgt}: {e}")
 
+    # Contado sobre el payload REAL enviado (applic_payload), no sobre
+    # applic_by_ad: un AD con filas descartadas por tamano tiene `rows == []`
+    # ahi igual que uno legitimamente vacio, pero viaja `failed`, no
+    # `success_empty` — contarlo desde applic_by_ad los mezclaba.
+    n_empty = sum(1 for e in applic_payload if e["status"] == "success_empty")
+    n_failed = sum(1 for e in applic_payload if e["status"] == "failed")
     logger.info(
         f"[{source}] relaciones: {sum(len(v) for v in applic_by_ad.values())} applicability "
-        f"({sum(1 for v in applic_by_ad.values() if not v)} declarados success_empty), "
+        f"({n_empty} declarados success_empty, {n_failed} failed por filas descartadas), "
         f"{len(sb_rows)} service bulletins, {len(supersede_updates)} supersession"
     )
 

@@ -141,3 +141,52 @@ def test_the_client_bound_matches_the_rpc_bound():
     campo que aborta el lote entero — que es exactamente D-21.
     """
     assert populate_db.APPLICABILITY_TEXT_MAX == 256
+    assert populate_db.APPLICABILITY_BATCH_ADS <= 500
+    assert populate_db.APPLICABILITY_BATCH_ROWS * 2 <= 20000, \
+        "margen 2x bajo max_total_rows de la RPC"
+
+
+# ------------------------------------------------------------------- batching
+#
+# Un AD con varios approval holders puede aportar muchas filas (peor visto en
+# produccion: >1200 para un solo AD EASA), asi que un lote fijo por CANTIDAD DE
+# ADS puede igual pasarse del tope de filas de la RPC (max_total_rows). El
+# corte tiene que ir tambien por filas acumuladas.
+
+def _payload(n_ads, rows_each):
+    return [
+        {"ad_id": f"ad-{i}", "status": "success_with_rows",
+         "rows": [{"make": "M", "model": f"X{j}"} for j in range(rows_each)]}
+        for i in range(n_ads)
+    ]
+
+
+def test_batches_split_by_ad_count():
+    batches = populate_db._applicability_batches(_payload(650, 1))
+    assert [len(b) for b in batches] == [300, 300, 50]
+
+
+def test_batches_split_by_accumulated_rows_not_only_by_ad_count():
+    # 30 ADs de 1000 filas: por conteo de ADs cabrian todos en un lote, pero
+    # 30000 filas superan el limite del servidor.
+    batches = populate_db._applicability_batches(_payload(30, 1000))
+    assert len(batches) == 3
+    for b in batches:
+        assert sum(len(ad["rows"]) for ad in b) <= populate_db.APPLICABILITY_BATCH_ROWS
+
+
+def test_an_ad_bigger_than_the_batch_bound_travels_alone():
+    # Si aun asi la RPC lo rechaza, el fallo (ruidoso) queda acotado a ese AD
+    # en vez de tumbar a otros 299.
+    payload = _payload(2, 10) + _payload(1, populate_db.APPLICABILITY_BATCH_ROWS + 1)
+    batches = populate_db._applicability_batches(payload)
+    assert len(batches) == 2
+    assert len(batches[1]) == 1
+    assert len(batches[1][0]["rows"]) == populate_db.APPLICABILITY_BATCH_ROWS + 1
+
+
+def test_batches_preserve_every_ad_and_the_order():
+    payload = _payload(37, 7)
+    batches = populate_db._applicability_batches(payload)
+    flat = [ad for b in batches for ad in b]
+    assert flat == payload
