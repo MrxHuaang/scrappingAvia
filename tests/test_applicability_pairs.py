@@ -18,7 +18,7 @@ D-24: el primer fix de D-21 emitia `(make, None)` para ADs multi-fabricante
 recalcula `fleet_applicable_ads` desde el match de MODELO (una fila sin modelo
 nunca es `high`), ordena por confianza y corta en 500 por aeronave — en flotas
 cuyo make coincide con miles de ADs, bajar a `medium` no reordena el AD, lo
-expulsa del resultado. Control en el clon: un A330 paso de 3 ADs a 0. Los pares
+expulsa del resultado. Control en el clon: un A330 paso de 19 ADs a 0. Los pares
 del producto cartesiano son inertes (ninguna aeronave real cruza fabricantes),
 la ausencia no lo es.
 """
@@ -56,7 +56,7 @@ def test_several_makes_cross_every_model_so_none_loses_its_high_match():
     otro, y el matching exige AMBOS para `high`. El par (ROBINSON, R44) que el
     producto TAMBIEN emite es el que mantiene el AD dentro del corte de 500
     para un R44 real. La version anterior — (make, None) "para no inventar
-    datos" — hacia desaparecer el AD: 3 ADs -> 0 en el control del clon.
+    datos" — hacia desaparecer el AD: 19 ADs -> 0 en el control del clon.
     """
     pairs = _pairs("AIRBUS HELICOPTERS, BELL TEXTRON INC., ROBINSON", "AS 350, 407, R44")
     assert pairs == [

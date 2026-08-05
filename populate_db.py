@@ -476,7 +476,7 @@ def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
     bajar a `medium` no reordena el AD, lo EXPULSA del resultado. En
     aeronavegabilidad ese falso negativo es la direccion peligrosa: un AD que
     no aparece se lee igual que "no aplica". Control del 2026-08-04 en el
-    clon: 3 ADs `high` -> 0 filas con la forma `(make, None)`.
+    clon: 19 ADs `high` -> 0 filas con la forma `(make, None)`.
     """
     make_field = (row.get("make") or "").strip()
     model_field = (row.get("model") or "").strip()
