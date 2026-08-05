@@ -512,6 +512,10 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     # ad_id -> filas de applicability deduplicadas por clave natural.
     applic_by_ad: dict[str, list[dict]] = {}
     applic_seen: dict[str, set] = {}
+    # ADs con al menos una fila descartada por sobredimension: van como
+    # `failed`, nunca como `success_empty` — un descarte no es evidencia de
+    # "no aplica", y `success_empty` BORRARIA lo almacenado para ese AD.
+    applic_dropped: set[str] = set()
     sb_rows: list[dict] = []
     sb_seen: set[tuple[str, str]] = set()
     # (ad_id_to_update, target_ad_number) — the row at ad_id is superseded BY target.
@@ -539,6 +543,7 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                     f"{APPLICABILITY_TEXT_MAX} chars, fila descartada "
                     f"(make={len(mk)}, model={len(mod or '')})"
                 )
+                applic_dropped.add(ad_id)
                 continue
             applic_by_ad[ad_id].append({
                 "make": mk,
@@ -582,11 +587,16 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     # ad_applicability: reemplazo transaccional por lote via RPC (INT-3). Cada
     # llamada es una transaccion en Postgres: un proceso muerto entre lotes deja
     # los anteriores completos y los posteriores intactos, nunca un AD a medias.
+    # Un AD con filas descartadas viaja como `failed`: sus filas almacenadas se
+    # conservan tal cual. Mandar las restantes haria que el prune del RPC
+    # borrara las descartadas, y `success_empty` borraria todas — ambas
+    # convierten un descarte del cliente en perdida de datos declarada exito.
     applic_payload = [
         {
             "ad_id": aid,
-            "status": "success_with_rows" if rows else "success_empty",
-            "rows": rows,
+            "status": "failed" if aid in applic_dropped
+                      else ("success_with_rows" if rows else "success_empty"),
+            "rows": [] if aid in applic_dropped else rows,
         }
         for aid, rows in applic_by_ad.items()
     ]
@@ -649,9 +659,11 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                 except Exception as e:
                     _record_write_error(f"  supersede: update fallo target {tgt}: {e}")
 
+    n_empty = sum(1 for p in applic_payload if p["status"] == "success_empty")
+    n_failed = sum(1 for p in applic_payload if p["status"] == "failed")
     logger.info(
-        f"[{source}] relaciones: {sum(len(v) for v in applic_by_ad.values())} applicability "
-        f"({sum(1 for v in applic_by_ad.values() if not v)} declarados success_empty), "
+        f"[{source}] relaciones: {sum(len(p['rows']) for p in applic_payload)} applicability "
+        f"({n_empty} declarados success_empty, {n_failed} failed por descarte), "
         f"{len(sb_rows)} service bulletins, {len(supersede_updates)} supersession"
     )
 

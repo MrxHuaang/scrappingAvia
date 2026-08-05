@@ -142,6 +142,10 @@ def test_an_unsplittable_oversized_field_is_dropped_loudly(fake):
 
     ...pero tampoco desaparece en silencio: `_record_write_error` fuerza
     status='error' y salida != 0, que es la regla de todo este plan.
+
+    Y el AD viaja como `failed`, NUNCA como `success_empty`: un descarte del
+    cliente no es evidencia de "no aplica", y `success_empty` le ordenaria a
+    la RPC borrar la applicability almacenada de ese AD.
     """
     rows = [{"ad_number": "EASA-4", "make": "X" * 300, "model": "A320", "raw_data": {}}]
     populate_db.populate_relations(fake, "easa", rows)
@@ -149,5 +153,8 @@ def test_an_unsplittable_oversized_field_is_dropped_loudly(fake):
     payloads = [params["p_ads"] for (name, params) in fake.rpcs if name == "replace_ad_applicability"]
     sent = [row for chunk in payloads for ad in chunk for row in ad["rows"]]
     assert sent == [], "la fila sobredimensionada no debe viajar a la RPC"
+    statuses = [ad["status"] for chunk in payloads for ad in chunk]
+    assert statuses == ["failed"], \
+        f"un AD con filas descartadas debe declararse failed, no {statuses}"
     assert any("mas de 256 chars" in e for e in populate_db._write_errors), \
         "descartarla en silencio seria el defecto que este plan combate"
