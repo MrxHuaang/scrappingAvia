@@ -195,19 +195,58 @@ def is_ad_identifier(term: str) -> bool:
     return bool(_AD_QUERY_RE.match(s) or _DOCKET_QUERY_RE.match(s))
 
 
+#: Tope de entradas por filtro multivalor. Es el mismo numero que impone la RPC
+#: `search_ads` (22023 si se pasa); rechazarlo aqui evita un viaje al servidor
+#: para recibir el mismo no.
+MAX_FILTER_VALUES = 40
+
+
+def normalize_filter_values(values, cap: int = MAX_FILTER_VALUES) -> list[str]:
+    """
+    Limpia una lista de valores de filtro: descarta vacios, quita duplicados
+    (sin distinguir mayusculas, que es como matchea el ILIKE) preservando el
+    orden en que el usuario los eligio, y corta en `cap`.
+
+    Un valor en blanco no se deja pasar: en la RPC se convertiria en '%%' y
+    matchearia todo, o sea lo contrario de lo que significa agregar un filtro.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values or []:
+        v = (raw or "").strip()
+        if not v:
+            continue
+        key = v.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(v)
+        if len(out) >= cap:
+            break
+    return out
+
+
 def validate_search_filters(keyword="", make="", model="", product_type="",
-                            date_from="", date_to="") -> str | None:
+                            date_from="", date_to="", makes=None,
+                            models=None) -> str | None:
     """
     Mensaje de error si la combinacion de filtros no alcanza, o None si pasa.
     Unica fuente de la regla: la usan /api/search y /api/search/stream, que
     antes validaban cada uno lo suyo y no coincidian.
+
+    `makes`/`models` son las listas multivalor. Cuentan exactamente igual que
+    los escalares: lo que la regla pide es "algun fabricante mas otro filtro",
+    no "un" fabricante — elegir tres Airbus no deja la busqueda mas abierta que
+    elegir uno.
     """
     if is_ad_identifier(keyword):
         return None
-    if not (make or "").strip():
+    has_make = bool((make or "").strip()) or any((v or "").strip() for v in (makes or []))
+    if not has_make:
         return SEARCH_FILTER_HINT
-    others = [keyword, model, product_type, date_from, date_to]
-    if not any((v or "").strip() for v in others):
+    has_model = bool((model or "").strip()) or any((v or "").strip() for v in (models or []))
+    others = [keyword, product_type, date_from, date_to]
+    if not (has_model or any((v or "").strip() for v in others)):
         return SEARCH_FILTER_HINT
     return None
 
