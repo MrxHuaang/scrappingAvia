@@ -71,13 +71,41 @@ _TC_NUMBER = re.compile(r"^CF-", re.I)
 _EASA_FOREIGN_PREFIX = re.compile(r"^(US|CF)-", re.I)
 
 
-def issuing_authority(ad_number: str, source_key: str) -> str:
+# Transport Canada pone el pais de origen en el enlace del documento: cn=US,
+# cn=CF, cn=EU, cn=BZ. Es la autoridad DICIENDO de donde viene la directiva, que
+# vale mas que inferirlo de la forma del numero. Sobre las 4.798 filas
+# canadienses: US 2.068, CF 911, EU 524, FR 242, BZ 161, UK 2, GY 2, IL 1, y 887
+# sin enlace. La forma del numero y el codigo discrepan en 34 de las 3.503 con
+# codigo: ahi esta el valor — "2024-08-01" en la base canadiense es una
+# directiva de EMBRAER, y la forma la leeria como de la FAA.
+#
+# Solo se mapean los cinco codigos que tienen corpus propio. FR, GY e IL quedan
+# a la regla del numero: atribuirlos a una autoridad que no indexamos seria
+# afirmar mas de lo que podemos mostrar.
+_TC_LINK_COUNTRY = re.compile(r"[?&]cn=([A-Za-z]+)", re.I)
+_TC_COUNTRY_SOURCE = {
+    "US": "federal_register",
+    "CF": "transport_canada",
+    "EU": "easa",
+    "BZ": "anac_brazil",
+    "UK": "uk_caa",
+}
+
+
+def issuing_authority(ad_number: str, source_key: str, pdf_link: str | None = None) -> str:
     """
     Source key de la autoridad que EMITIO el AD.
 
     Devuelve `source_key` cuando no puede probar otra cosa: esta funcion corrige
-    una atribucion solo con la evidencia del numero, nunca la inventa.
+    una atribucion solo con la evidencia disponible, nunca la inventa.
     """
+    if source_key == "transport_canada" and pdf_link:
+        m = _TC_LINK_COUNTRY.search(pdf_link)
+        if m:
+            mapped = _TC_COUNTRY_SOURCE.get(m.group(1).upper())
+            if mapped:
+                return mapped
+
     n = (ad_number or "").strip()
     if not n:
         return source_key
