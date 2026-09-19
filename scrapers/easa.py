@@ -27,7 +27,8 @@ _PAGE_SIZE = 20
 HEADERS = browser_headers()
 
 
-def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None, date_to=None, max_pages=50):
+def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None, date_to=None,
+               max_pages=50, stop_when=None):
     """
     Busca ADs en EASA.
 
@@ -38,6 +39,11 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
         date_from: Fecha inicio (DD/MM/YYYY)
         date_to: Fecha fin (DD/MM/YYYY)
         max_pages: Maximo de paginas a recorrer
+        stop_when: Callback opcional `(rows_de_esta_pagina) -> bool`. Cuando
+            devuelve True el recorrido para ahi. La lista viene ordenada de la
+            mas nueva a la mas vieja, asi que quien llama puede decidir que ya
+            no hay nada que aprender mas abajo. Sin callback el comportamiento
+            es el de siempre: recorrer hasta max_pages o hasta el total.
 
     Returns:
         Lista de diccionarios con los ADs encontrados.
@@ -104,6 +110,13 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
 
             # FIXED: parar cuando ya tenemos todos o llegamos al limite
             if len(all_results) >= (total_available or 0) or page >= effective_max:
+                break
+
+            # Parada incremental: quien llama sabe que hay en la BD y decide.
+            # El callback se consulta DESPUES de acumular la pagina, asi que lo
+            # que ya se leyo nunca se pierde por parar.
+            if stop_when is not None and stop_when(results):
+                log.info(f"[EASA] Pagina {page}: el llamador pidio parar (recorrido incremental).")
                 break
 
             page += 1
