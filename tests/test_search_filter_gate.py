@@ -14,7 +14,12 @@ import json
 
 import pytest
 
-from utils import is_ad_identifier, validate_search_filters
+from utils import (
+    SEARCH_FILTER_HINT,
+    is_ad_identifier,
+    normalize_filter_values,
+    validate_search_filters,
+)
 
 
 # ------------------------------------------------------- forma de identificador
@@ -109,3 +114,32 @@ def test_ad_number_search_reaches_the_scrapers(client, monkeypatch):
     monkeypatch.setattr(search_mod, "build_scrapers", lambda *a, **k: [])
     r = client.post("/api/search", json={"source": "all", "keyword": "2023-12-03"})
     assert r.status_code == 200
+
+
+# ------------------------------------------------- filtros multivalor (makes) --
+# Elegir tres Airbus no deja la busqueda mas abierta que elegir uno, asi que la
+# regla cuenta las listas igual que los escalares.
+@pytest.mark.parametrize("kwargs", [
+    {"makes": ["Airbus"], "model": "A320"},
+    {"makes": ["Textron", "Cessna"], "models": ["172"]},
+    {"make": "Airbus", "models": ["A330", "A340"]},
+    {"makes": ["Airbus"], "keyword": "fuel"},
+])
+def test_multi_value_accepted(kwargs):
+    assert validate_search_filters(**kwargs) is None
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"makes": ["Airbus"]},                 # fabricante solo: falta un filtro mas
+    {"makes": [], "models": ["A320"]},     # modelo sin fabricante
+    {"makes": ["", "   "], "model": "737"},  # entradas vacias no son fabricante
+    {"models": ["A330", "A340"]},
+])
+def test_multi_value_rejected(kwargs):
+    assert validate_search_filters(**kwargs) == SEARCH_FILTER_HINT
+
+
+def test_normalize_drops_blanks_dedupes_and_caps():
+    assert normalize_filter_values([" Airbus ", "airbus", "", "  ", "Boeing"]) == ["Airbus", "Boeing"]
+    assert normalize_filter_values([f"m{i}" for i in range(60)]) == [f"m{i}" for i in range(40)]
+    assert normalize_filter_values(None) == []

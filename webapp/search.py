@@ -24,6 +24,7 @@ from utils import (
     MAX_RESULTS_PER_SOURCE,
     VALID_SOURCES,
     map_product_type,
+    normalize_filter_values,
     run_with_timeout,
     validate_search_filters,
 )
@@ -62,7 +63,8 @@ class DbResults(list):
 
 # -------------------------------------------------------- service: DB search --
 def search_supabase(source, keyword="", make="", model="", product_type="",
-                    date_from="", date_to="", max_results=10000) -> list[dict]:
+                    date_from="", date_to="", max_results=10000,
+                    makes=None, models=None) -> list[dict]:
     """
     Busca ADs en la tabla 'ads' de Supabase vía la RPC parametrizada `search_ads`.
 
@@ -74,6 +76,13 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
     chars (más largos → 22023, que aquí se reporta como error y retorna []).
     La RPC resuelve el self-join de supersesión y devuelve `superseded_by`.
     Retorna lista de dicts con el mismo formato que los scrapers.
+
+    `makes`/`models` son los filtros multivalor (`p_makes`/`p_models`). Un AD
+    casa si coincide CUALQUIER entrada; entre las dos listas se sigue sumando
+    (make Y model), igual que con los escalares. Existen porque un mismo
+    fabricante se escribe distinto en cada autoridad y las familias que más
+    importan no comparten ni un token: la FAA archiva Cessna, Beechcraft y
+    Hawker aparte de "Textron Aviation".
     """
     sb = get_supabase_admin()
     if not sb:
@@ -97,6 +106,12 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
                 "p_date_to": date_to or None,
                 "p_limit": batch_size,
                 "p_offset": offset,
+                # Listas vacías no se mandan: la RPC trata `{}` como "sin
+                # filtro", igual que `''`, pero enviar el parámetro sólo cuando
+                # hay algo deja el payload idéntico al de antes en el caso de
+                # una sola marca.
+                **({"p_makes": makes} if makes else {}),
+                **({"p_models": models} if models else {}),
             }).execute()
             rows = resp.data or []
             all_rows.extend(rows)
@@ -163,10 +178,16 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
 
 # --------------------------------------------------- service: scraper plan --
 def _make_db_search_fn(src_key, keyword, make, model, product_type, date_from,
-                       date_to, max_results, live_fn=None):
+                       date_to, max_results, live_fn=None, makes=None, models=None):
     """
     Crea una función que busca primero en Supabase.
     Si Supabase retorna resultados, los usa.  Si no, intenta live_fn como fallback.
+
+    Sólo la ruta de BD entiende listas: los scrapers en vivo hablan con
+    formularios de las autoridades, que aceptan un fabricante a la vez. El
+    fallback busca con el primero de la lista (ver build_scrapers), y por eso
+    devuelve menos de lo pedido — es el mismo trato que ya tenía, no una
+    regresión nueva.
     """
     def _db_search():
         db_results = search_supabase(
@@ -178,6 +199,8 @@ def _make_db_search_fn(src_key, keyword, make, model, product_type, date_from,
             date_from=date_from,
             date_to=date_to,
             max_results=max_results,
+            makes=makes,
+            models=models,
         )
         if db_results:
             return db_results
@@ -190,8 +213,15 @@ def _make_db_search_fn(src_key, keyword, make, model, product_type, date_from,
 
 
 def build_scrapers(source, keyword, make, model, product_type, date_from,
-                   date_to, max_results=20000) -> list[tuple]:
-    """Devuelve lista de (source_key, label, fn) a ejecutar."""
+                   date_to, max_results=20000, makes=None, models=None) -> list[tuple]:
+    """
+    Devuelve lista de (source_key, label, fn) a ejecutar.
+
+    `make`/`model` siguen siendo escalares porque los scrapers en vivo sólo
+    saben pedir uno (y Transport Canada exige fabricante). Las rutas rellenan
+    el escalar con la primera entrada de la lista cuando no viene suelto, así
+    que el fallback en vivo nunca se queda sin fabricante.
+    """
     scrapers = []
     fr_max_pages = ceil(max_results / 100)
 
@@ -207,7 +237,8 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
                 max_pages=fr_max_pages,
             )
         fn = _make_db_search_fn("federal_register", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _fr_live)
+                                product_type, date_from, date_to, max_results, _fr_live,
+                                makes=makes, models=models)
         scrapers.append(("federal_register", "Federal Register", fn))
 
     if source in ("easa", "all"):
@@ -219,7 +250,8 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
             else:
                 return easa_main_page(max_pages=2)
         fn = _make_db_search_fn("easa", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _easa_live)
+                                product_type, date_from, date_to, max_results, _easa_live,
+                                makes=makes, models=models)
         scrapers.append(("easa", "EASA", fn))
 
     if source in ("anac_brazil", "all"):
@@ -234,7 +266,8 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
                 max_results=_anac_limit,
             )
         fn = _make_db_search_fn("anac_brazil", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _anac_live)
+                                product_type, date_from, date_to, max_results, _anac_live,
+                                makes=makes, models=models)
         scrapers.append(("anac_brazil", "ANAC Brasil", fn))
 
     if source in ("transport_canada", "all"):
@@ -246,12 +279,14 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
                     search_type=map_product_type(product_type),
                 )
             fn = _make_db_search_fn("transport_canada", keyword, make, model,
-                                    product_type, date_from, date_to, max_results, _tc_live)
+                                    product_type, date_from, date_to, max_results, _tc_live,
+                                    makes=makes, models=models)
             scrapers.append(("transport_canada", "Transport Canada", fn))
         else:
             # Sin make: buscar solo en BD (TC live requiere fabricante)
             fn = _make_db_search_fn("transport_canada", keyword, make, model,
-                                    product_type, date_from, date_to, max_results, None)
+                                    product_type, date_from, date_to, max_results, None,
+                                    makes=makes, models=models)
             scrapers.append(("transport_canada", "Transport Canada", fn))
 
     if source in ("dgac_chile", "all"):
@@ -329,7 +364,8 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
         # live scrape (each doc needs its own detail-page fetch for the PDF
         # link, ~60s+ for the full corpus) instead of an instant DB read.
         fn = _make_db_search_fn("uk_caa", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _uk_caa_live)
+                                product_type, date_from, date_to, max_results, _uk_caa_live,
+                                makes=makes, models=models)
         scrapers.append(("uk_caa", "UK CAA", fn))
 
     return scrapers
@@ -363,6 +399,13 @@ def api_search() -> RouteResult:
         keyword = data.get("keyword", "").strip()
         make = data.get("make", "").strip()
         model = data.get("model", "").strip()
+        # Multivalor. El escalar se rellena con la primera entrada cuando no
+        # viene suelto: los scrapers en vivo y el gate de Transport Canada
+        # piden un fabricante, no una lista.
+        makes = normalize_filter_values(data.get("makes") or [])
+        models = normalize_filter_values(data.get("models") or [])
+        make = make or (makes[0] if makes else "")
+        model = model or (models[0] if models else "")
         product_type = data.get("product_type", "").strip()
         date_from = data.get("date_from", "").strip()
         date_to = data.get("date_to", "").strip()
@@ -370,7 +413,8 @@ def api_search() -> RouteResult:
 
         if source not in VALID_SOURCES:
             return jsonify({"error": f"Invalid source: '{source}'."}), 400
-        gate = validate_search_filters(keyword, make, model, product_type, date_from, date_to)
+        gate = validate_search_filters(keyword, make, model, product_type, date_from,
+                                       date_to, makes=makes, models=models)
         if gate:
             return jsonify({"error": gate}), 400
 
@@ -379,7 +423,8 @@ def api_search() -> RouteResult:
         truncated_sources = []
         total_matched = 0
 
-        scrapers = build_scrapers(source, keyword, make, model, product_type, date_from, date_to, max_results=max_results)
+        scrapers = build_scrapers(source, keyword, make, model, product_type, date_from,
+                                  date_to, max_results=max_results, makes=makes, models=models)
 
         if source == "transport_canada" and not make:
             errors.append("Transport Canada requiere un fabricante.")
@@ -427,6 +472,14 @@ def api_search_stream() -> RouteResult:
     keyword = request.args.get("keyword", "").strip()
     make = request.args.get("make", "").strip()
     model = request.args.get("model", "").strip()
+    # Repetido, no separado por comas: un fabricante del catálogo puede llevar
+    # coma dentro ("AIRBUS S.A.S., ELBE FLUGZEUGWERKE GmbH", "REVO, Inc."), así
+    # que partir por coma rompería justo los nombres que este filtro existe
+    # para alcanzar.
+    makes = normalize_filter_values(request.args.getlist("makes"))
+    models = normalize_filter_values(request.args.getlist("models"))
+    make = make or (makes[0] if makes else "")
+    model = model or (models[0] if models else "")
     product_type = request.args.get("product_type", "").strip()
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
@@ -444,7 +497,8 @@ def api_search_stream() -> RouteResult:
 
     # Mismo gate que /api/search (utils.validate_search_filters): un make mas un
     # filtro, salvo que el keyword sea un numero de AD o un docket.
-    gate = validate_search_filters(keyword, make, model, product_type, date_from, date_to)
+    gate = validate_search_filters(keyword, make, model, product_type, date_from,
+                                   date_to, makes=makes, models=models)
     if gate:
         def empty_gen():
             event = {"source": source, "results": [], "count": 0, "error": gate}
@@ -453,7 +507,8 @@ def api_search_stream() -> RouteResult:
         return Response(empty_gen(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    scrapers = build_scrapers(source, keyword, make, model, product_type, date_from, date_to, max_results=max_results)
+    scrapers = build_scrapers(source, keyword, make, model, product_type, date_from,
+                              date_to, max_results=max_results, makes=makes, models=models)
 
     def generate():
         total = 0
