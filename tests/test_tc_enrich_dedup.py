@@ -49,7 +49,7 @@ def test_one_fetch_per_ad_number(monkeypatch):
 
 
 def test_every_duplicate_gets_the_enriched_fields(monkeypatch):
-    monkeypatch.setattr(tc, "_fetch_tc_pdf", lambda n, l, s: {
+    monkeypatch.setattr(tc, "_fetch_tc_pdf", lambda num, link, session: {
         "unsafe_condition": "cracking", "corrective_action": "inspect",
         "compliance_time": "within 600 hours", "amoc": True,
         "service_bulletins": ["SB-1"], "supersedes": "CF-2019-11"})
@@ -72,7 +72,7 @@ def test_no_courtesy_sleep_on_a_cache_hit(monkeypatch):
     slept = []
     monkeypatch.setattr(tc, "FETCH_PDF", True)
     monkeypatch.setattr(tc, "_save_tc_cache", lambda: None)
-    monkeypatch.setattr(tc, "_fetch_tc_pdf", lambda n, l, s: {"amoc": False})
+    monkeypatch.setattr(tc, "_fetch_tc_pdf", lambda num, link, session: {"amoc": False})
     monkeypatch.setattr(tc.time, "sleep", lambda s: slept.append(s))
     # Ambos ADs ya en cache con el esquema nuevo.
     monkeypatch.setattr(tc, "_load_tc_cache", lambda: {
