@@ -59,3 +59,39 @@ def test_normalize_leaves_an_own_ad_alone():
     row = normalize({"AD_Number": "2026-0177", "Subject": "x"}, "easa")
     assert row["issuing_authority"] == "easa"
     assert row["state_of_design"] == "European Union"
+
+
+# ------------------------------------------------- el enlace manda sobre la forma
+# Transport Canada pone el pais de origen en la URL del documento. Es la
+# autoridad diciendo de donde viene, y le gana a inferirlo del numero: la forma
+# lee "2024-08-01" como de la FAA cuando el enlace dice BZ (EMBRAER).
+@pytest.mark.parametrize("ad_number,link,expected", [
+    ("2024-08-01", "https://wwwapps.tc.gc.ca/x?ad=2024-08-01&cn=BZ&ft=pdf", "anac_brazil"),
+    ("2008-17-14", "https://wwwapps.tc.gc.ca/x?ad=2008-17-14&cn=US", "federal_register"),
+    ("CF-2026-45", "https://wwwapps.tc.gc.ca/x?ad=CF-2026-45&cn=CF", "transport_canada"),
+    ("2011-0021", "https://wwwapps.tc.gc.ca/x?ad=2011-0021&cn=EU", "easa"),
+    # FR/GY/IL no tienen corpus nuestro: cae a la regla del numero, no se
+    # inventa una autoridad que no indexamos.
+    ("2011-0021", "https://wwwapps.tc.gc.ca/x?ad=2011-0021&cn=FR", "easa"),
+    ("CF-2011-06", "https://wwwapps.tc.gc.ca/x?ad=CF-2011-06&cn=FR", "transport_canada"),
+    # Sin enlace, la forma sigue siendo lo unico que hay.
+    ("2024-08-01", None, "federal_register"),
+    ("2024-08-01", "", "federal_register"),
+])
+def test_link_country_beats_number_shape(ad_number, link, expected):
+    assert enrich.issuing_authority(ad_number, "transport_canada", link) == expected
+
+
+def test_link_is_ignored_for_other_corpora():
+    # Solo Transport Canada usa ese parametro; nadie mas debe leerlo.
+    assert enrich.issuing_authority("2026-0177", "easa", "https://x?cn=US") == "easa"
+
+
+def test_normalize_uses_the_link():
+    row = normalize(
+        {"AD_Number": "2024-08-01", "Subject": "x", "Make": "EMBRAER",
+         "PDF_Link": "https://wwwapps.tc.gc.ca/x?ad=2024-08-01&cn=BZ&ft=pdf"},
+        "transport_canada",
+    )
+    assert row["issuing_authority"] == "anac_brazil"
+    assert row["state_of_design"] == "Brazil"

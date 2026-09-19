@@ -216,7 +216,9 @@ def normalize(row: dict, source_key: str) -> dict | None:
     # autoridad republica lo que reconoce. El estado de diseno se deriva del
     # emisor, no del corpus — antes un AD canadiense leido en EASA quedaba
     # guardado como "European Union". Ver enrich.issuing_authority().
-    issuer = enrich.issuing_authority(ad_number, source_key)
+    issuer = enrich.issuing_authority(
+        ad_number, source_key, (row.get("PDF_Link") or "").strip() or None
+    )
 
     return {
         "source": source_key,
