@@ -919,9 +919,74 @@ def run_federal_register(since: str | None = None, with_govinfo: bool = False) -
     return all_results
 
 
+#: Paginas seguidas sin un solo AD desconocido antes de dar el recorrido por
+#: terminado. A 20 ADs por pagina son 100 directivas de margen por encima de la
+#: ultima novedad — EASA publica del orden de 5 al dia.
+EASA_QUIET_PAGES = 5
+
+
+def _easa_known_ad_numbers(supabase) -> set[str]:
+    """Los ad_number de EASA que ya estan en la BD, paginados de a 1000."""
+    known: set[str] = set()
+    page = 0
+    while True:
+        resp = (
+            supabase.table("ads")
+            .select("ad_number")
+            .eq("source", "easa")
+            .range(page * 1000, page * 1000 + 999)
+            .execute()
+        )
+        rows = resp.data or []
+        known.update((r.get("ad_number") or "").strip() for r in rows if r.get("ad_number"))
+        if len(rows) < 1000:
+            break
+        page += 1
+    return known
+
+
 def run_easa() -> list[dict]:
-    logger.info("Scraping easa (search)...")
-    results = easa_search(max_pages=910)  # FASE 2 produccion completa
+    """
+    Recorrido incremental por defecto; completo los domingos o con EASA_FULL=1.
+
+    El recorrido completo son 910 paginas a ~1,25 s cada una: 19 minutos de
+    runner cada dia para encontrar las cinco directivas nuevas que EASA publica.
+    La lista viene ordenada de la mas nueva a la mas vieja, asi que basta bajar
+    hasta que deje de aparecer algo que no tengamos, con EASA_QUIET_PAGES de
+    margen.
+
+    El completo sigue corriendo una vez por semana y no es ceremonia: una
+    revision puede reaparecer mas abajo de lo que el margen cubre, y un
+    recorrido incremental que nunca se contrasta con el corpus entero es una
+    forma lenta de quedarse sin darse cuenta.
+
+    Si no hay BD que consultar (dry-run, primer arranque), el recorrido es
+    completo: no saber que tenemos no es razon para asumir que lo tenemos todo.
+    """
+    full = os.environ.get("EASA_FULL", "").strip() == "1"
+    known: set[str] = set()
+    if not full:
+        try:
+            known = _easa_known_ad_numbers(get_supabase_client())
+            logger.info(f"easa: {len(known)} ADs ya en BD; recorrido incremental")
+        except Exception as e:
+            logger.info(f"easa: no se pudo leer el corpus ({e}); recorrido completo")
+            full = True
+
+    stop_when = None
+    if not full and known:
+        quiet = {"pages": 0}
+
+        def stop_when(rows: list[dict]) -> bool:
+            fresh = [r for r in rows if (r.get("AD_Number") or "").strip() not in known]
+            if fresh:
+                quiet["pages"] = 0
+                return False
+            quiet["pages"] += 1
+            return quiet["pages"] >= EASA_QUIET_PAGES
+
+    logger.info(f"Scraping easa (search, {'completo' if full else 'incremental'})...")
+    results = easa_search(max_pages=910, stop_when=stop_when)
     if not results:
         logger.info("easa search devolvio 0 resultados, usando fallback main page...")
         results = easa_main(max_pages=10)

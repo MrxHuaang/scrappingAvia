@@ -140,6 +140,14 @@ jobs:
             outputs-${{ matrix.source }}-
             outputs-
 
+      - name: What day is it
+        id: weekday
+        run: |
+          {
+            echo "dow=$(date -u +%w)"
+            echo "today=$(date -u +%F)"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Run scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -149,6 +157,21 @@ jobs:
           GOVINFO_API_KEY: ${{ secrets.GOVINFO_API_KEY }}
           SCRAPE_SOURCE: ${{ matrix.source }}
           SOFT_MINUTES: ${{ matrix.soft_minutes }}
+          # EASA walks 910 pages (~19 min) to find the ~5 directives it
+          # publishes in a day. The daily run stops once new numbers stop
+          # appearing; Sunday's re-reads the whole corpus, because a revision
+          # can surface below that margin and an incremental walk that is never
+          # checked against the whole thing is a slow way to fall behind.
+          # A manual dispatch is always full: someone asking by hand is asking
+          # for the thorough one.
+          #
+          # TEMPORARY, remove after 2026-10-01: the account is at 1,845 of its
+          # 2,000 monthly Actions minutes with 12 days to go, and each full walk
+          # is ~19 of them. The weekly full resumes when the quota resets; the
+          # last one ran on 2026-09-19, so the gap is two Sundays, covered by
+          # the daily incremental. A `workflow_dispatch` still forces one, which
+          # is the escape hatch if anything looks stale before then.
+          EASA_FULL: ${{ (github.event_name == 'workflow_dispatch' || (fromJSON(steps.weekday.outputs.dow) == 0 && steps.weekday.outputs.today >= '2026-10-01')) && '1' || '' }}
         # A job killed by `timeout-minutes` is reported as **cancelled**, and a
         # cancelled run fires no Actions failure notification. That is precisely
         # how a 40-day outage stayed invisible: 40 consecutive nights of
