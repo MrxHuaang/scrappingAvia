@@ -237,8 +237,17 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
     saben pedir uno (y Transport Canada exige fabricante). Las rutas rellenan
     el escalar con la primera entrada de la lista cuando no viene suelto, así
     que el fallback en vivo nunca se queda sin fabricante.
+
+    **El fallback en vivo no corre en "all".** Medido contra producción, un
+    `source=all` con make=Airbus y model=A320 tardaba 23,7 s: las cuatro
+    autoridades sin coincidencias (ANAC BR, DGAC CL, ANAC AR, UK CAA) se iban a
+    raspar sus sitios, y lo que traen en ese caso son filas sin Make ni Model.
+    Barrer todas las fuentes es justo cuando NO se puede pagar cuatro scrapes
+    seguidos; elegir una autoridad concreta sigue teniendo su fallback, que es
+    donde de verdad sirve (esa fuente es la pregunta, no una de siete).
     """
     scrapers = []
+    live_ok = source != "all"
     fr_max_pages = ceil(max_results / 100)
 
     if source in ("federal_register", "all"):
@@ -253,7 +262,7 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
                 max_pages=fr_max_pages,
             )
         fn = _make_db_search_fn("federal_register", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _fr_live,
+                                product_type, date_from, date_to, max_results, _fr_live if live_ok else None,
                                 makes=makes, models=models, offset=offset)
         scrapers.append(("federal_register", "Federal Register", fn))
 
@@ -266,7 +275,7 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
             else:
                 return easa_main_page(max_pages=2)
         fn = _make_db_search_fn("easa", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _easa_live,
+                                product_type, date_from, date_to, max_results, _easa_live if live_ok else None,
                                 makes=makes, models=models, offset=offset)
         scrapers.append(("easa", "EASA", fn))
 
@@ -282,7 +291,7 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
                 max_results=_anac_limit,
             )
         fn = _make_db_search_fn("anac_brazil", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _anac_live,
+                                product_type, date_from, date_to, max_results, _anac_live if live_ok else None,
                                 makes=makes, models=models, offset=offset)
         scrapers.append(("anac_brazil", "ANAC Brasil", fn))
 
@@ -295,7 +304,7 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
                     search_type=map_product_type(product_type),
                 )
             fn = _make_db_search_fn("transport_canada", keyword, make, model,
-                                    product_type, date_from, date_to, max_results, _tc_live,
+                                    product_type, date_from, date_to, max_results, _tc_live if live_ok else None,
                                     makes=makes, models=models, offset=offset)
             scrapers.append(("transport_canada", "Transport Canada", fn))
         else:
@@ -380,7 +389,7 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
         # live scrape (each doc needs its own detail-page fetch for the PDF
         # link, ~60s+ for the full corpus) instead of an instant DB read.
         fn = _make_db_search_fn("uk_caa", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _uk_caa_live,
+                                product_type, date_from, date_to, max_results, _uk_caa_live if live_ok else None,
                                 makes=makes, models=models, offset=offset)
         scrapers.append(("uk_caa", "UK CAA", fn))
 
