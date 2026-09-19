@@ -5,6 +5,12 @@ on:
     branches: [main, "hardening/**"]
   pull_request:
 
+# A newer push cancels the run it supersedes. `main` is excluded: a cancelled
+# run there leaves no verdict on a commit that is already deployed.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 permissions:
   contents: read
   # gitleaks-action reads GET /repos/{o}/{r}/pulls/{n}/commits on pull_request
