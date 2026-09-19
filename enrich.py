@@ -39,6 +39,75 @@ def state_of_design(source_key: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Autoridad emisora (quien firmo el AD) vs base donde lo leimos
+# ---------------------------------------------------------------------------
+# Cada autoridad republica las directivas de los estados de diseno que reconoce,
+# y nosotros indexamos cada base por separado, asi que la fuente dice DONDE lo
+# encontramos, no QUIEN lo emitio. Medido en produccion (2026-09-19):
+#
+#   easa              18.470 filas - 3.972 numeradas US- (FAA) y 1.109 CF- (TC):
+#                     el 27% de ese corpus lo emitio otro.
+#   transport_canada   4.798 filas - solo 975 son CF-; el resto son ADs de FAA y
+#                     EASA que Canada adopto. Mas de la mitad.
+#
+# Para un operador no es cosmetico: quien emitio el AD decide de que autoridad
+# es el proceso de AMOC y que reglas de estado de diseno aplican.
+#
+# El numero es la evidencia: un AD republicado conserva el numero del emisor
+# —para eso se republica—. Por eso la regla lee el numero DENTRO de su corpus y
+# nunca de forma global: `2020-01-02` es un numero de FAA en la base canadiense
+# y uno brasileno en la de ANAC, y ninguna forma los distingue por si sola.
+#
+# Espejo exacto de lib/ads/issuingAuthority.ts en el repo del front (misma tabla
+# de casos en los tests de ambos lados).
+
+# FAA: 2024-01-02, legado 98-21-09, revision opcional (2018-23-51R1).
+_FAA_NUMBER = re.compile(r"^(?:\d{2}|\d{4})-\d{2}-\d{2}(?:R\d+)?$", re.I)
+# EASA: 2024-0195, 2024-0195R1 - cuatro digitos tras el ano, no dos.
+_EASA_NUMBER = re.compile(r"^\d{4}-\d{3,4}(?:R\d+)?$", re.I)
+# Transport Canada: CF-2015-19, CF-90-03, CF-2026-45-E.
+_TC_NUMBER = re.compile(r"^CF-", re.I)
+# Numero extranjero que EASA prefija con el estado de diseno.
+_EASA_FOREIGN_PREFIX = re.compile(r"^(US|CF)-", re.I)
+
+
+def issuing_authority(ad_number: str, source_key: str) -> str:
+    """
+    Source key de la autoridad que EMITIO el AD.
+
+    Devuelve `source_key` cuando no puede probar otra cosa: esta funcion corrige
+    una atribucion solo con la evidencia del numero, nunca la inventa.
+    """
+    n = (ad_number or "").strip()
+    if not n:
+        return source_key
+
+    if source_key == "easa":
+        # EASA guarda el origen en el prefijo: US-2026-17-08, CF-2026-45. Los
+        # numeros nacionales legado (F-, G-, D-) NO son extranjeros: son las
+        # directivas de los estados miembro que EASA absorbio y administra.
+        m = _EASA_FOREIGN_PREFIX.match(n)
+        if not m:
+            return source_key
+        return "federal_register" if m.group(1).upper() == "US" else "transport_canada"
+
+    if source_key == "transport_canada":
+        if _TC_NUMBER.match(n):
+            return source_key
+        if _FAA_NUMBER.match(n):
+            return "federal_register"
+        if _EASA_NUMBER.match(n):
+            return "easa"
+        return source_key
+
+    # El resto de los corpus indexados numera solo lo propio (ANAC "2025-09-01",
+    # DGAC "DA 84-01", ANAC AR "ADV 337-DAG", UK CAA "CAP747-055"). Afirmar mas
+    # de lo que la evidencia sostiene pondria la bandera equivocada en la otra
+    # direccion.
+    return source_key
+
+
+# ---------------------------------------------------------------------------
 # Status canonico (New | Revision | Superseded | Cancelled)
 # ---------------------------------------------------------------------------
 def canonical_status(raw: str | None, ad_number: str = "") -> str | None:

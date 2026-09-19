@@ -161,6 +161,10 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
                 "Docket": row.get("docket", "") or "",
                 "PDF_Link": row.get("pdf_link", "") or "",
                 "Superseded_By": row.get("superseded_by", "") or "",
+                # Quien EMITIO el AD, que no siempre es la base donde lo leimos:
+                # EASA lista ADs de la FAA y de Canada, y Canada lista los de la
+                # FAA y EASA. El cliente pinta esta autoridad, no `Source`.
+                "Issuing_Authority": row.get("issuing_authority", "") or row.get("source", "") or "",
             })
 
         out = DbResults(results)

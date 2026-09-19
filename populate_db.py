@@ -194,9 +194,9 @@ def normalize(row: dict, source_key: str) -> dict | None:
     Retorna None si ad_number esta vacio.
 
     Ademas del mapeo base, deriva el modelo de dominio AD completo via enrich:
-    state_of_design, status/priority/product_type canonicos, y best-effort de
-    unsafe_condition / corrective_action / compliance_time / amoc desde el texto
-    disponible (Subject + Abstract si el scraper lo aporta).
+    issuing_authority + state_of_design, status/priority/product_type canonicos,
+    y best-effort de unsafe_condition / corrective_action / compliance_time /
+    amoc desde el texto disponible (Subject + Abstract si el scraper lo aporta).
     """
     ad_number = normalize_ad_number(row.get("AD_Number") or "")
     if not ad_number:
@@ -212,11 +212,18 @@ def normalize(row: dict, source_key: str) -> dict | None:
     compliance_time = (row.get("Compliance_Time") or "").strip() or enrich.extract_compliance_time(abstract, subject or "")
     amoc = bool(row.get("AMOC_Available")) or enrich.detect_amoc(abstract, subject or "")
 
+    # Quien EMITIO el AD, que no siempre es la base donde lo leimos: cada
+    # autoridad republica lo que reconoce. El estado de diseno se deriva del
+    # emisor, no del corpus — antes un AD canadiense leido en EASA quedaba
+    # guardado como "European Union". Ver enrich.issuing_authority().
+    issuer = enrich.issuing_authority(ad_number, source_key)
+
     return {
         "source": source_key,
         "source_label": SOURCE_LABELS.get(source_key, source_key),
         "ad_number": ad_number,
-        "state_of_design": enrich.state_of_design(source_key),
+        "issuing_authority": issuer,
+        "state_of_design": enrich.state_of_design(issuer),
         "subject": subject,
         "make": (row.get("Make") or "").strip() or None,
         "model": (row.get("Model") or "").strip() or None,
