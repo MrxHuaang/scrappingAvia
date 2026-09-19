@@ -64,7 +64,7 @@ class DbResults(list):
 # -------------------------------------------------------- service: DB search --
 def search_supabase(source, keyword="", make="", model="", product_type="",
                     date_from="", date_to="", max_results=10000,
-                    makes=None, models=None) -> list[dict]:
+                    makes=None, models=None, offset=0) -> list[dict]:
     """
     Busca ADs en la tabla 'ads' de Supabase vía la RPC parametrizada `search_ads`.
 
@@ -83,6 +83,11 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
     fabricante se escribe distinto en cada autoridad y las familias que más
     importan no comparten ni un token: la FAA archiva Cessna, Beechcraft y
     Hawker aparte de "Textron Aviation".
+
+    `offset` es la fila desde la que empieza esta página, POR FUENTE. La RPC
+    ordena de forma total (effective_date DESC, id DESC), que es justo lo que
+    hace segura la paginación por offset: sin ese desempate la página 2 podría
+    repetir filas y saltarse otras.
     """
     sb = get_supabase_admin()
     if not sb:
@@ -90,11 +95,12 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
 
     try:
         all_rows = []
-        offset = 0
+        start = max(int(offset or 0), 0)
+        fetched = 0
         db_total = None
 
-        while offset < max_results:
-            batch_size = min(_SUPABASE_PAGE_SIZE, max_results - offset)
+        while fetched < max_results:
+            batch_size = min(_SUPABASE_PAGE_SIZE, max_results - fetched)
             resp = sb.rpc("search_ads", {
                 "p_source": source or "all",
                 "p_term": keyword or "",
@@ -105,7 +111,7 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
                 "p_date_from": date_from or None,
                 "p_date_to": date_to or None,
                 "p_limit": batch_size,
-                "p_offset": offset,
+                "p_offset": start + fetched,
                 # Listas vacías no se mandan: la RPC trata `{}` como "sin
                 # filtro", igual que `''`, pero enviar el parámetro sólo cuando
                 # hay algo deja el payload idéntico al de antes en el caso de
@@ -125,7 +131,7 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
             if len(rows) < batch_size:
                 break
 
-            offset += len(rows)
+            fetched += len(rows)
 
         # Map to scraper output format (PascalCase keys)
         source_labels = {
@@ -162,7 +168,11 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
         # Truncado = la BD tenía más de lo que este tope permitió traer. Sin esta
         # señal el bucle de arriba devolvía exactamente `max_results` filas y
         # parecían el total; el contrato de INT-6 exigía justamente exponerlo.
-        out.truncated = bool(db_total is not None and db_total > len(results))
+        # Truncado = la BD tiene más filas DESPUÉS de esta página. Se cuenta
+        # desde `start`, no desde cero: en la página 2 de un corpus de 5.108
+        # filas, `len(results)` son 500 y compararlo contra el total diría
+        # "truncado" incluso después de haberlo traído todo.
+        out.truncated = bool(db_total is not None and db_total > start + len(results))
         if out.truncated:
             logger.warning(
                 f"[DB] {source}: {len(results)} de {db_total} filas — resultado truncado por el tope {max_results}"
@@ -178,7 +188,8 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
 
 # --------------------------------------------------- service: scraper plan --
 def _make_db_search_fn(src_key, keyword, make, model, product_type, date_from,
-                       date_to, max_results, live_fn=None, makes=None, models=None):
+                       date_to, max_results, live_fn=None, makes=None, models=None,
+                       offset=0):
     """
     Crea una función que busca primero en Supabase.
     Si Supabase retorna resultados, los usa.  Si no, intenta live_fn como fallback.
@@ -201,11 +212,15 @@ def _make_db_search_fn(src_key, keyword, make, model, product_type, date_from,
             max_results=max_results,
             makes=makes,
             models=models,
+            offset=offset,
         )
         if db_results:
             return db_results
-        # Fallback al scraper en vivo si BD no retorna nada
-        if live_fn:
+        # Fallback al scraper en vivo si BD no retorna nada. Sólo en la primera
+        # página: "0 filas en el offset 500" significa que el corpus se acabó,
+        # no que la BD esté vacía, y raspar en vivo ahí devolvería otra vez la
+        # página 1 disfrazada de página 2.
+        if live_fn and not offset:
             logger.info(f"[DB] {src_key}: 0 resultados en BD, intentando scraping en vivo...")
             return live_fn()
         return []
@@ -213,7 +228,8 @@ def _make_db_search_fn(src_key, keyword, make, model, product_type, date_from,
 
 
 def build_scrapers(source, keyword, make, model, product_type, date_from,
-                   date_to, max_results=20000, makes=None, models=None) -> list[tuple]:
+                   date_to, max_results=20000, makes=None, models=None,
+                   offset=0) -> list[tuple]:
     """
     Devuelve lista de (source_key, label, fn) a ejecutar.
 
@@ -238,7 +254,7 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
             )
         fn = _make_db_search_fn("federal_register", keyword, make, model,
                                 product_type, date_from, date_to, max_results, _fr_live,
-                                makes=makes, models=models)
+                                makes=makes, models=models, offset=offset)
         scrapers.append(("federal_register", "Federal Register", fn))
 
     if source in ("easa", "all"):
@@ -251,7 +267,7 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
                 return easa_main_page(max_pages=2)
         fn = _make_db_search_fn("easa", keyword, make, model,
                                 product_type, date_from, date_to, max_results, _easa_live,
-                                makes=makes, models=models)
+                                makes=makes, models=models, offset=offset)
         scrapers.append(("easa", "EASA", fn))
 
     if source in ("anac_brazil", "all"):
@@ -267,7 +283,7 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
             )
         fn = _make_db_search_fn("anac_brazil", keyword, make, model,
                                 product_type, date_from, date_to, max_results, _anac_live,
-                                makes=makes, models=models)
+                                makes=makes, models=models, offset=offset)
         scrapers.append(("anac_brazil", "ANAC Brasil", fn))
 
     if source in ("transport_canada", "all"):
@@ -280,13 +296,13 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
                 )
             fn = _make_db_search_fn("transport_canada", keyword, make, model,
                                     product_type, date_from, date_to, max_results, _tc_live,
-                                    makes=makes, models=models)
+                                    makes=makes, models=models, offset=offset)
             scrapers.append(("transport_canada", "Transport Canada", fn))
         else:
             # Sin make: buscar solo en BD (TC live requiere fabricante)
             fn = _make_db_search_fn("transport_canada", keyword, make, model,
                                     product_type, date_from, date_to, max_results, None,
-                                    makes=makes, models=models)
+                                    makes=makes, models=models, offset=offset)
             scrapers.append(("transport_canada", "Transport Canada", fn))
 
     if source in ("dgac_chile", "all"):
@@ -365,7 +381,7 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
         # link, ~60s+ for the full corpus) instead of an instant DB read.
         fn = _make_db_search_fn("uk_caa", keyword, make, model,
                                 product_type, date_from, date_to, max_results, _uk_caa_live,
-                                makes=makes, models=models)
+                                makes=makes, models=models, offset=offset)
         scrapers.append(("uk_caa", "UK CAA", fn))
 
     return scrapers
@@ -410,6 +426,7 @@ def api_search() -> RouteResult:
         date_from = data.get("date_from", "").strip()
         date_to = data.get("date_to", "").strip()
         max_results = min(int(data.get("max_results", MAX_RESULTS_PER_SOURCE)), 20000)
+        offset = min(max(int(data.get("offset", 0) or 0), 0), 100000)
 
         if source not in VALID_SOURCES:
             return jsonify({"error": f"Invalid source: '{source}'."}), 400
@@ -424,7 +441,7 @@ def api_search() -> RouteResult:
         total_matched = 0
 
         scrapers = build_scrapers(source, keyword, make, model, product_type, date_from,
-                                  date_to, max_results=max_results, makes=makes, models=models)
+                                  date_to, max_results=max_results, makes=makes, models=models, offset=offset)
 
         if source == "transport_canada" and not make:
             errors.append("Transport Canada requiere un fabricante.")
@@ -484,6 +501,11 @@ def api_search_stream() -> RouteResult:
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
     max_results = min(int(request.args.get("max_results", MAX_RESULTS_PER_SOURCE)), 20000)
+    # Fila inicial de esta página, POR FUENTE: cada autoridad pagina su propio
+    # corpus. Un offset único para todas es lo que permite que el cliente guarde
+    # una sola lista plana; una fuente con menos filas que el offset simplemente
+    # no aporta nada a esa página.
+    offset = min(max(int(request.args.get("offset", 0) or 0), 0), 100000)
 
     # Validación de source
     if source not in VALID_SOURCES:
@@ -508,7 +530,7 @@ def api_search_stream() -> RouteResult:
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     scrapers = build_scrapers(source, keyword, make, model, product_type, date_from,
-                              date_to, max_results=max_results, makes=makes, models=models)
+                              date_to, max_results=max_results, makes=makes, models=models, offset=offset)
 
     def generate():
         total = 0
