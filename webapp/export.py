@@ -8,11 +8,14 @@ import traceback
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-import pandas as pd
 import requests as http_requests
 from flask import Blueprint, jsonify, request, send_file
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from webapp.core import (
     PDF_DOWNLOAD_TIMEOUT,
@@ -40,8 +43,14 @@ _PDF_ALLOWED_EXACT = {
 
 
 # ---------------------------------------------------------------- services --
-def _build_dataframe(results) -> pd.DataFrame:
+def _build_dataframe(results) -> "pd.DataFrame":
     """Construye un DataFrame ordenado a partir de resultados."""
+    # Import perezoso: pandas (+numpy) es ~la mitad del import de toda la app,
+    # y en Vercel cada cold start lo pagaba antes de responder cualquier cosa,
+    # búsquedas incluidas, aunque sólo el export lo usa. Medido en local: 1,0 s
+    # de 2,1 s de `import app`.
+    import pandas as pd
+
     if not results:
         return pd.DataFrame()
     df = pd.DataFrame(results)

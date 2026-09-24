@@ -5,6 +5,7 @@ vivo como fallback. Rutas: /api/env, /api/health, /api/search (POST) y
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from math import ceil
 
@@ -400,6 +401,36 @@ def build_scrapers(source, keyword, make, model, product_type, date_from,
     return scrapers
 
 
+def _run_scrapers_concurrently(scrapers, max_results):
+    """
+    Corre cada fuente en su propio hilo y entrega `(src_key, label, results,
+    err)` a medida que terminan, no en el orden de `scrapers`.
+
+    Antes las fuentes iban una detrás de otra: "All authorities" son siete RPC
+    y el usuario esperaba la SUMA de todas (cada una puede tardar varios
+    segundos con la caché de Postgres fría) mirando un skeleton. En paralelo
+    espera sólo a la más lenta, y el stream pinta cada autoridad en cuanto
+    contesta. Cada `fn` ya corre con su propio timeout dentro de
+    `run_with_timeout`, así que un hilo colgado no retiene a los demás.
+    """
+    if not scrapers:
+        return
+    pool = ThreadPoolExecutor(max_workers=len(scrapers))
+    try:
+        futures = {
+            pool.submit(run_with_timeout, fn, SCRAPER_TIMEOUT, label, max_results=max_results): (src_key, label)
+            for src_key, label, fn in scrapers
+        }
+        for fut in as_completed(futures):
+            src_key, label = futures[fut]
+            results, err = fut.result()
+            yield src_key, label, results, err
+    finally:
+        # wait=False por la misma razón que en run_with_timeout: no bloquear la
+        # respuesta esperando a un hilo que ya se dio por perdido.
+        pool.shutdown(wait=False)
+
+
 # ------------------------------------------------------------------- rutas --
 @bp.route("/api/env")
 def api_env() -> RouteResult:
@@ -459,8 +490,12 @@ def api_search() -> RouteResult:
         if source == "transport_canada" and not make:
             errors.append("Transport Canada requiere un fabricante.")
 
-        for _src_key, label, fn in scrapers:
-            results, err = run_with_timeout(fn, SCRAPER_TIMEOUT, label, max_results=max_results)
+        # Concurrente, pero la respuesta se arma en el orden de `scrapers` para
+        # que no cambie según qué autoridad contestó primero.
+        by_key = {src_key: (label, results, err)
+                  for src_key, label, results, err in _run_scrapers_concurrently(scrapers, max_results)}
+        for src_key, _label, _fn in scrapers:
+            label, results, err = by_key[src_key]
             if err:
                 errors.append(err)
             # `getattr` con default: solo la ruta de BD devuelve DbResults; un
@@ -557,8 +592,7 @@ def api_search_stream() -> RouteResult:
                 }
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-            for src_key, label, fn in scrapers:
-                results, err = run_with_timeout(fn, SCRAPER_TIMEOUT, label, max_results=max_results)
+            for src_key, _label, results, err in _run_scrapers_concurrently(scrapers, max_results):
                 count = len(results) if results else 0
                 total += count
 
