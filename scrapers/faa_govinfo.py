@@ -30,6 +30,7 @@ from datetime import date, timedelta, datetime
 import requests
 
 from utils import extract_make_model, normalize_ad_number
+from scrapers.federal_register import classify_product_type
 from scrapers.common.http import get_with_backoff
 from scrapers.common.cache import load_json_cache, save_json_cache
 
@@ -330,12 +331,10 @@ def _parse_granule(g: dict, pkg_id: str, mods: dict | None = None) -> dict | Non
         else:
             status = "Final Rule"
 
-        if re.search(r"\bengine\b", title_lower):
-            product_type = "Engine"
-        elif re.search(r"\bpropeller\b", title_lower):
-            product_type = "Propeller"
-        else:
-            product_type = "Aircraft"
+        # Misma regla que el Federal Register. La de aquí buscaba `\bengine\b`,
+        # que no casa el plural con el que la FAA titula ("Turbofan Engines"):
+        # los ADs de motor salían como Aircraft.
+        product_type = classify_product_type(subject) or "Aircraft"
 
         return {
             "Source": "FAA (GovInfo)",

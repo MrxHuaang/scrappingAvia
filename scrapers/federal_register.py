@@ -389,6 +389,70 @@ def search_ads(keyword=None, make=None, model=None, product_type=None,
     return _collapse_by_ad_number(all_results)
 
 
+# Sustantivo de producto con el que la FAA cierra el título del AD ("The Boeing
+# Company Airplanes", "CFM International S.A. Turbofan Engines", "Hamilton
+# Sundstrand Propellers"). Plurales incluidos: `\bengine\b` no casa "Engines".
+_TITLE_PRODUCT_NOUNS = re.compile(
+    r"\b(?P<aircraft>airplanes?|aircraft|helicopters?|rotorcraft|gliders?|sailplanes?"
+    r"|airships?|balloons?|gyroplanes?)\b"
+    r"|\b(?P<engine>engines?|turbofans?|turbojets?|turboprops?|turboshafts?)\b"
+    r"|\b(?P<propeller>propellers?)\b"
+    r"|\b(?P<appliance>appliances?)\b",
+    re.I,
+)
+
+# "... Airplanes Equipped With General Electric CF6-80C2 Series Engines" es un
+# AD de avión: el motor viene DESPUÉS del producto, como calificativo. Se corta
+# el título en esa frase antes de leer el último sustantivo. Misma regla que la
+# migración 20260923180000_fr_product_type_from_title.sql de ad-scrapper.
+_AIRCRAFT_QUALIFIER = re.compile(
+    r"(\b(?:airplanes?|helicopters?|rotorcraft|aircraft|gliders?|sailplanes?)\b)"
+    r"\s+(?:equipped|powered|fitted|having|with)\b.*$",
+    re.I,
+)
+
+
+def classify_product_type(subject: str, abstract: str = "", cfr_refs=()) -> str:
+    """
+    Tipo de producto de un AD de la FAA a partir de su título.
+
+    El título es el campo que declara el producto; el abstract sólo lo
+    describe. Antes se buscaba "engine" en título + abstract, y el resumen de
+    un AD de avión casi siempre menciona un motor ("...engine fuel pump...",
+    "...an engine fire..."): 1.138 ADs cuyo título termina en "Airplanes" o
+    "Helicopters" quedaron como Engine, y filtrar por Product type = Aircraft
+    los escondía.
+
+    Gana el ÚLTIMO sustantivo de producto del título, porque la FAA lo pone al
+    final y el nombre del titular puede llevar otro antes ("Airbus Helicopters
+    Model EC135 Helicopters", "Rolls-Royce Deutschland Ltd & Co KG Turbofan
+    Engines"). Sin sustantivo en el título se cae a la regla vieja sobre el
+    abstract, y luego a CFR parte 39.
+    """
+    last = None
+    title = _AIRCRAFT_QUALIFIER.sub(r"\1", subject or "", count=1)
+    for m in _TITLE_PRODUCT_NOUNS.finditer(title):
+        last = m.lastgroup
+    if last:
+        return {"aircraft": "Aircraft", "engine": "Engine",
+                "propeller": "Propeller", "appliance": "Appliance"}[last]
+
+    text = (abstract or "").lower()
+    if re.search(r"\bengines?\b", text):
+        return "Engine"
+    if re.search(r"\bpropellers?\b", text):
+        return "Propeller"
+    if re.search(r"\bappliances?\b", text):
+        return "Appliance"
+    if re.search(r"\baircraft\b|\bairplanes?\b|\bhelicopters?\b|\bairships?\b|\bgliders?\b", text):
+        return "Aircraft"
+    for ref in cfr_refs or ():
+        part = str(ref.get("part", "") if isinstance(ref, dict) else "")
+        if part == "39":
+            return "Aircraft"
+    return ""
+
+
 def _parse_document(doc) -> dict | None:
     """Parsea un documento del Federal Register a formato estandar."""
     try:
@@ -447,23 +511,9 @@ def _parse_document(doc) -> dict | None:
         else:
             status = "Final Rule"
 
-        cfr_refs = doc.get("cfr_references") or []
-        product_type = ""
-        combined = f"{title_lower} {abstract_lower}"
-        if re.search(r"\bengine\b", combined):
-            product_type = "Engine"
-        elif re.search(r"\bpropeller\b", combined):
-            product_type = "Propeller"
-        elif re.search(r"\bappliance\b", combined):
-            product_type = "Appliance"
-        elif re.search(r"\baircraft\b|\bairplane\b|\bhelicopter\b|\bairship\b|\bglider\b", combined):
-            product_type = "Aircraft"
-        if not product_type and cfr_refs:
-            for ref in cfr_refs:
-                part = str(ref.get("part", "") if isinstance(ref, dict) else "")
-                if part == "39":
-                    product_type = "Aircraft"
-                    break
+        product_type = classify_product_type(
+            subject, abstract_lower, doc.get("cfr_references") or []
+        )
 
         out = {
             "Source": "FAA (Federal Register)",
