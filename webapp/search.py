@@ -232,6 +232,42 @@ def _query_sources_concurrently(sources, max_results, **filters):
         pool.shutdown(wait=False)
 
 
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _v1_stream(sources, max_results, filters):
+    """
+    Eventos SSE v1: uno por autoridad a medida que contesta y un solo `done`
+    al final; si algo revienta a mitad, `error` y luego ese mismo `done`.
+
+    Nada de `yield` dentro de un `finally`: cuando el cliente corta, el
+    servidor cierra el generador (GeneratorExit en el `yield` pendiente) y un
+    `yield` en la limpieza lo ignoraria ("generator ignored GeneratorExit").
+    `except Exception` no atrapa GeneratorExit, asi que el cierre sale limpio.
+    """
+    total = 0
+    try:
+        for src_key, _label, results, err in _query_sources_concurrently(sources, max_results, **filters):
+            count = len(results) if results else 0
+            total += count
+
+            # Mismo par que /api/search: por fuente, cuántas casaron en la BD
+            # y si lo enviado es solo una parte. `getattr` con default porque
+            # una fuente que falló devuelve una lista pelada.
+            yield _sse({
+                "source": src_key,
+                "results": results if results else [],
+                "count": count,
+                "total_matched": getattr(results, "total", None),
+                "truncated": getattr(results, "truncated", False),
+                "error": err,
+            })
+    except Exception as e:
+        yield _sse({"event": "error", "message": str(e)})
+    yield _sse({"event": "done", "total": total})
+
+
 # ------------------------------------------------------------------- rutas --
 @bp.route("/api/env")
 def api_env() -> RouteResult:
@@ -404,34 +440,8 @@ def _api_search_stream_v1() -> RouteResult:
     filters = dict(keyword=keyword, make=make, model=model, product_type=product_type,
                    date_from=date_from, date_to=date_to, makes=makes, models=models, offset=offset)
 
-    def generate():
-        total = 0
-        try:
-            for src_key, _label, results, err in _query_sources_concurrently(sources, max_results, **filters):
-                count = len(results) if results else 0
-                total += count
-
-                # Mismo par que /api/search: por fuente, cuántas casaron en la BD
-                # y si lo enviado es solo una parte. `getattr` con default porque
-                # una fuente que falló devuelve una lista pelada.
-                event = {
-                    "source": src_key,
-                    "results": results if results else [],
-                    "count": count,
-                    "total_matched": getattr(results, "total", None),
-                    "truncated": getattr(results, "truncated", False),
-                    "error": err,
-                }
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-            yield f"data: {json.dumps({'event': 'done', 'total': total})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'event': 'error', 'message': str(e)})}\n\n"
-        finally:
-            yield f"data: {json.dumps({'event': 'done', 'total': total})}\n\n"
-
     return Response(
-        generate(),
+        _v1_stream(sources, max_results, filters),
         mimetype="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

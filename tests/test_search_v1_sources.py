@@ -1,12 +1,16 @@
 """
 Contrato v1: una consulta a la BD por autoridad, en paralelo, sin scraping en
-vivo. Las fuentes corren concurrentemente, no una tras otra.
+vivo. Las fuentes corren concurrentemente, no una tras otra, y el stream
+termina con un solo `done` aunque el cliente corte a mitad.
 """
 
+import json
 import time
 
+import pytest
+
 from webapp import search as search_mod
-from webapp.search import _query_sources_concurrently, _v1_sources
+from webapp.search import _query_sources_concurrently, _v1_sources, _v1_stream
 
 
 def _fake_search(delays, calls=None):
@@ -63,3 +67,38 @@ def test_a_failing_source_reports_its_error_without_sinking_the_rest(monkeypatch
 
 def test_no_sources_yields_nothing():
     assert list(_query_sources_concurrently([], 10)) == []
+
+
+# ----------------------------------------------------- stream v1: cierre --
+def _events(chunks):
+    return [json.loads(c[len("data: "):]) for c in chunks]
+
+
+def test_stream_emits_one_event_per_source_and_a_single_done(monkeypatch):
+    monkeypatch.setattr(search_mod, "search_supabase", _fake_search({}))
+    events = _events(_v1_stream([("easa", "EASA"), ("uk_caa", "UK CAA")], 10, {}))
+    assert sorted(e["source"] for e in events[:-1]) == ["easa", "uk_caa"]
+    assert [e for e in events if e.get("event") == "done"] == [{"event": "done", "total": 2}]
+    assert events[-1] == {"event": "done", "total": 2}
+
+
+def test_a_failure_mid_stream_is_error_then_one_done(monkeypatch):
+    def boom(*_a, **_k):
+        raise RuntimeError("pool gone")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(search_mod, "_query_sources_concurrently", boom)
+    events = _events(_v1_stream([("easa", "EASA")], 10, {}))
+    assert events == [{"event": "error", "message": "pool gone"}, {"event": "done", "total": 0}]
+
+
+def test_client_disconnect_closes_the_stream_cleanly(monkeypatch):
+    monkeypatch.setattr(search_mod, "search_supabase", _fake_search({}))
+    gen = _v1_stream([("easa", "EASA"), ("uk_caa", "UK CAA")], 10, {})
+    first = json.loads(next(gen)[len("data: "):])
+    assert "source" in first
+    # Lo que hace el servidor cuando el cliente corta. Con un `yield` en el
+    # `finally` esto lanzaba RuntimeError("generator ignored GeneratorExit").
+    gen.close()
+    with pytest.raises(StopIteration):
+        next(gen)
