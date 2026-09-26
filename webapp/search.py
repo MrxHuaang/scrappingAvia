@@ -40,6 +40,7 @@ from webapp.core import (
     logger,
     require_proxy,
 )
+from webapp.search_rows import row_to_result
 
 bp = Blueprint("search", __name__)
 
@@ -134,39 +135,7 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
 
             fetched += len(rows)
 
-        # Map to scraper output format (PascalCase keys)
-        source_labels = {
-            "easa": "EASA",
-            "federal_register": "FAA (Federal Register)",
-            "transport_canada": "Transport Canada",
-            "anac_brazil": "ANAC Brasil",
-            "dgac_chile": "DGAC Chile",
-            "anac_argentina": "ANAC Argentina",
-            "aerocivil_colombia": "AEROCIVIL Colombia",
-            "casa_australia": "CASA Australia",
-            "gcaa_uae": "GCAA UAE",
-            "uk_caa": "UK CAA",
-        }
-
-        results = []
-        for row in all_rows:
-            results.append({
-                "Source": source_labels.get(row.get("source", ""), row.get("source_label", "")),
-                "AD_Number": row.get("ad_number", ""),
-                "Subject": row.get("subject", "") or "",
-                "Make": row.get("make", "") or "",
-                "Model": row.get("model", "") or "",
-                "Effective_Date": row.get("effective_date", "") or "",
-                "Status": row.get("status", "") or "",
-                "Product_Type": row.get("product_type", "") or "",
-                "Docket": row.get("docket", "") or "",
-                "PDF_Link": row.get("pdf_link", "") or "",
-                "Superseded_By": row.get("superseded_by", "") or "",
-                # Quien EMITIO el AD, que no siempre es la base donde lo leimos:
-                # EASA lista ADs de la FAA y de Canada, y Canada lista los de la
-                # FAA y EASA. El cliente pinta esta autoridad, no `Source`.
-                "Issuing_Authority": row.get("issuing_authority", "") or row.get("source", "") or "",
-            })
+        results = [row_to_result(row) for row in all_rows]
 
         out = DbResults(results)
         out.total = db_total
