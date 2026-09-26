@@ -13,7 +13,7 @@ import sys
 # Antes de importar app: entorno limpio y determinista.
 for var in (
     "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_KEY",
-    "INTERNAL_PROXY_SECRET", "ALLOWED_ORIGINS",
+    "INTERNAL_PROXY_SECRET",
     "VERCEL",
 ):
     os.environ.pop(var, None)

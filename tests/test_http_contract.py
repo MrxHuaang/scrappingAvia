@@ -1,6 +1,6 @@
 """
 Suite de contrato HTTP (Fase 3b) — por ruta: metodo, status esperado, forma
-del JSON, headers CORS y comportamiento sin auth. Es el criterio de que el
+del JSON, headers y comportamiento sin auth. Es el criterio de que el
 refactor a blueprints no cambia el comportamiento observable: debe pasar
 identica antes y despues de cada commit del refactor.
 
@@ -32,11 +32,11 @@ def test_api_health_shape(client):
     assert "timestamp" in body
 
 
-def test_api_health_cors_echo_without_credentials(client):
-    # Sin ALLOWED_ORIGINS, flask-cors ecoa el Origin (con Vary: Origin) pero
-    # NUNCA con credenciales — esa combinacion es la que SEC-5 prohibe.
+def test_no_cors_headers(client):
+    # El proxy llama servidor a servidor: ningun origen de navegador recibe
+    # permiso para leer la API.
     r = client.get("/api/health", headers={"Origin": "https://example.com"})
-    assert r.headers.get("Access-Control-Allow-Origin") == "https://example.com"
+    assert "Access-Control-Allow-Origin" not in r.headers
     assert "Access-Control-Allow-Credentials" not in r.headers
 
 

@@ -33,13 +33,6 @@ SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
 # rejects any request lacking the matching X-Internal-Secret header.
 INTERNAL_PROXY_SECRET = os.environ.get("INTERNAL_PROXY_SECRET", "")
 
-# CORS allowlist (SEC-5): never combine wildcard origins with credentials.
-_raw_origins = os.environ.get("ALLOWED_ORIGINS", "").strip()
-if _raw_origins and _raw_origins != "*":
-    ALLOWED_ORIGINS: list[str] | str = [o.strip() for o in _raw_origins.split(",") if o.strip()]
-else:
-    ALLOWED_ORIGINS = "*"
-
 SCRAPER_TIMEOUT = 45  # timeout maximo por fuente (segundos)
 
 # --------------------------------------------------------- supabase clients --
