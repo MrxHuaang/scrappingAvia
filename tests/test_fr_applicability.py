@@ -101,6 +101,14 @@ def test_models_from_abstract_are_not_borrowed_from_another_holder():
     assert r.models == ()
 
 
+def test_a_part_number_is_never_part_of_the_holder():
+    """E6-14636 daba el titular "Goodyear Aviation Tires, Part": el número de
+    parte se consumía como modelo y arrastraba "Part". El abstract no nombra a
+    Goodyear, así que sin titular inequívoco el AD viaja `failed`."""
+    assert extract_applicability(**_doc_args("E6-14636")).holder is None
+    assert extract_applicability(**_doc_args("98-25124")).holder == "SAFT America Inc."
+
+
 def test_scalars_come_from_the_same_extraction():
     doc = _by_doc("2024-08105")
     fields = applicability_fields(doc["title"], doc["abstract"])

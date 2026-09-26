@@ -54,7 +54,7 @@ modelos en el título (1998, 2006) y moderno con modelos solo en el abstract
 
 ## Resultados
 
-### Fixtures (`tests/fixtures/fr_applicability.json`, 32 documentos reales)
+### Fixtures (`tests/fixtures/fr_applicability.json`, 34 documentos reales)
 
 Elegidos a propósito entre los casos difíciles (motores legados, hélices,
 appliances, "Type Certificate Previously Held by", "Various ..."), así que no
@@ -62,18 +62,18 @@ representan la distribución real: sirven de regresión, no de estimación.
 
 | | legado | nuevo |
 |---|---:|---:|
-| titular + modelos | 16 (50,0 %) | 26 (81,2 %) |
-| titular sin modelo (unknown) | 4 (12,5 %) | 2 (6,2 %) |
-| sin titular (failed) | 12 (37,5 %) | 4 (12,5 %) |
-| titular previo conservado | — | 5 (15,6 %) |
+| titular + modelos | 17 (50,0 %) | 26 (76,5 %) |
+| titular sin modelo (unknown) | 5 (14,7 %) | 3 (8,8 %) |
+| sin titular (failed) | 12 (35,3 %) | 5 (14,7 %) |
+| titular previo conservado | — | 5 (14,7 %) |
 
 ### Muestra de 1754 documentos (1998, 2006, 2015, 2024)
 
 | | legado | nuevo |
 |---|---:|---:|
 | titular + modelos | 1101 (62,8 %) | 1690 (96,4 %) |
-| titular sin modelo (unknown) | 180 (10,3 %) | 42 (2,4 %) |
-| sin titular (failed) | 473 (27,0 %) | 22 (1,3 %) |
+| titular sin modelo (unknown) | 180 (10,3 %) | 41 (2,3 %) |
+| sin titular (failed) | 473 (27,0 %) | 23 (1,3 %) |
 | titular previo conservado | — | 90 (5,1 %) |
 
 Además, en 984 ADs (56,1 %) el nuevo lista más de un modelo, donde el legado
@@ -93,9 +93,9 @@ Transiciones legado -> nuevo sobre la muestra:
 | sin titular -> titular sin modelo | 26 |
 | titular sin modelo -> titular sin modelo | 11 |
 | sin titular -> sin titular | 11 |
-| titular + modelos -> sin titular | 6 |
+| titular + modelos -> sin titular | 7 |
 | titular sin modelo -> sin titular | 5 |
-| titular + modelos -> titular sin modelo | 5 |
+| titular + modelos -> titular sin modelo | 4 |
 
 ## Pérdidas conocidas
 
@@ -120,10 +120,14 @@ titular viaja `failed` y conserva sus filas.
   "Goodrich" sin modelos: los modelos Airbus del título son de la aeronave, no
   del appliance, y el legado los atribuía a Airbus. Lo mismo con "Arrow Falcon
   Exporters, Inc. (Previously Utah State University); ..." (06-7577).
-- **Titular cortado en appliances con número de parte**. "Goodyear Aviation
-  Tires, Part Number 217K22-1, Installed on ..." (E6-14636) produce el titular
-  "Goodyear Aviation Tires, Part": es un titular incorrecto, no solo una
-  pérdida. Pocos casos, todos appliances con "Part Number" en el título.
+- **Appliances con número de parte en el título**. "Goodyear Aviation Tires,
+  Part Number 217K22-1, Installed on ..." (E6-14636) daba el titular "Goodyear
+  Aviation Tires, Part", y "SAFT America Inc. Part Number (P/N) ..." (98-25124)
+  "SAFT America Inc. Part Number (P/N)". Ahora el título se corta en "Part
+  Number"/"P/N": SAFT queda "SAFT America Inc."; Goodyear queda sin titular
+  (`failed`), porque el abstract no nombra a Goodyear y "Goodyear Aviation
+  Tires" no es un titular inequívoco. Es la transición extra de
+  *titular + modelos -> sin titular*.
 - **Calificativo que corta un segundo grupo de modelos**. "Boeing Model
   777-200LR Series Airplanes Powered by ... Engines, and Model 777-300ER Series
   Airplanes ..." se queda con 777-200LR: el corte en "Powered by" evita tomar

@@ -510,5 +510,27 @@
    ],
    "previously_held_by": []
   }
+ },
+ {
+  "document_number": "E6-14636",
+  "publication_date": "2006-09-06",
+  "title": "Airworthiness Directives; Goodyear Aviation Tires, Part Number 217K22-1, Installed on Various Transport Category Airplanes, Including But Not Limited to Bombardier Model BD-700-1A10 and BD-700-1A11 Airplanes; and Gulfstream Model G-1159, G-1159A, G-1159B, G-IV, GIV-X, GV, and GV-SP Series Airplanes",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain aviation tires installed on various transport category airplanes. This AD requires a one-time inspection of the nosewheel tires to determine if they are within a designated serial number range, and replacement if necessary. This AD results from reports of tread separations and tread-area bulges on the nosewheel tires. We are issuing this AD to prevent tread separation from a nosewheel tire during takeoff or landing, which could result in compromised nosewheel steering or ingestion of separated tread by an engine, and consequent reduced controllability of the airplane on the runway or in the air.",
+  "expected": {
+   "holder": null,
+   "models": [],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "98-25124",
+  "publication_date": "1998-09-24",
+  "title": "Airworthiness Directives; SAFT America Inc. Part Number (P/N) 021929-000 (McDonnell Douglas P/N 43BO34LB02) and P/N 021904-000 (McDonnell Douglas P/N 43BO34LB03) Nickel Cadmium Batteries",
+  "abstract": "This amendment adopts a new airworthiness directive (AD) that applies to certain SAFT America Inc. P/N 021929-000 (McDonnell Douglas P/N 43BO34LB02) and P/N 021904-000 (McDonnell Douglas P/N 43BO34LB03) nickel cadmium batteries that are installed on aircraft. This AD requires replacing all battery terminal screws, verifying that the battery contains design specification cells, and replacing the cells if the battery contains non-design specification cells. This AD is the result of an incident where the cell screws on one of the affected batteries were exposed to chloride, which caused the heads of some fasteners to shear off and eventually resulted in the battery exploding. The actions specified by this AD are intended to prevent such an occurrence, which could result in loss of emergency power to electrical flight components or other emergency power systems required in the event of loss of the aircraft primary power source.",
+  "expected": {
+   "holder": "SAFT America Inc.",
+   "models": [],
+   "previously_held_by": []
+  }
  }
 ]

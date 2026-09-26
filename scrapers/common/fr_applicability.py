@@ -73,6 +73,7 @@ _SUFFIX_RE = re.compile(
     r"|LLC|L\.L\.C\.|GmbH|AG|KG|S\.A\.S\.?|SAS|S\.A\.|plc|PLC|S\.p\.[Aa]\.?|SpA|srl|S\.r\.l\."
     r"|s\.r\.o\.|a\.s\.|AB|ULC|LP|Partnership|N\.V\.|B\.V\.|Oy|Division)(?![\w])"
 )
+_PART_NUMBER_RE = re.compile(r"[\s,]+(?:Part\s+Numbers?|P/Ns?)(?![\w/])", re.I)
 _PREVIOUS_RE = re.compile(
     r"^\(\s*(?:Type\s+Certificate\s+)?(?:Previously\s+Held\s+by|Previously|Formerly(?:\s+Known\s+as)?)\s+",
     re.I,
@@ -392,6 +393,12 @@ def _holder_from_title(subject: str, abstract: str) -> tuple[str | None, tuple[s
     q = _QUALIFIER_RE.search(_mask_parens(work))
     if q:
         work = work[: q.start()]
+    # "Goodyear Aviation Tires, Part Number 217K22-1": un número de parte
+    # identifica la pieza, no al titular ni a un modelo. Sin cortarlo, el
+    # consumo de modelos hacia atrás dejaba "Part" pegado al titular.
+    pn = _PART_NUMBER_RE.search(_mask_parens(work))
+    if pn:
+        work = work[: pn.start()]
     semi = re.search(r";", _mask_parens(work))
     seg = work[: semi.start()] if semi else work
     seg = seg.rstrip(" ,")
