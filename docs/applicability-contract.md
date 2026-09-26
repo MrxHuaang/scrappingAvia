@@ -39,6 +39,28 @@ normalizada:
 - En ningún camino se parte `make` por coma (los nombres de holder traen comas
   propias; ver el docstring de `_applicability_pairs`).
 
+### FAA anterior a 1994, desde DRS (`scrapers/faa_drs_ads.py`)
+
+Los AD anteriores a la FR API entran como filas `federal_register` desde
+`drs_documents` (docs/drs-sync.md). Su applicability sale de los arrays Make
+y Model de DRS, que **no son paralelos** (de 1.372 documentos con varias
+marcas, solo 97 tienen tantas marcas como modelos), así que nunca se
+emparejan:
+
+- **una marca**: un elemento `{make, models[]}` con todos los modelos, que
+  viaja como una fila `listed` (confianza `high`). Si los modelos unidos pasan
+  de `APPLICABILITY_MODEL_MAX`, se reparten en varias filas de esa misma
+  marca en vez de descartar la fila;
+- **varias marcas**: un elemento por marca con `models` vacío, una fila
+  `unknown` (confianza `medium`) por marca. Adivinar el par cruzaría modelos
+  de un fabricante con otro;
+- **ninguna marca**: sin `Applicability`; el AD viaja `failed` (DRS sin marca
+  no es la fuente declarando que el AD no aplica a nada).
+
+Las marcas se limpian antes: sin repetidos, sin "N/A", y con los sufijos
+societarios que DRS separó por la coma ("Inc.", "a.s.") pegados otra vez a
+la marca anterior. Nunca se parte una marca por coma.
+
 ### FAA (`scrapers/common/fr_applicability.py`)
 
 Única extracción para Federal Register y GovInfo, sobre título + abstract y,

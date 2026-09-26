@@ -375,9 +375,9 @@ python populate_db.py --source federal_register --since 2026-01-01
 ```
 
 Los ADs pre-1994 no estan en la FR API ni en GovInfo. Si estan en DRS, que
-ahora se sincroniza por su API oficial (ver abajo) hacia `drs_documents`; no
-entran en `ads`. El scraper viejo de DRS (drs.faa.gov via Playwright) se
-elimino: Akamai lo bloqueaba y devolvia 0 en cada corrida.
+se sincroniza por su API oficial (ver abajo): la sync DRS los crea en `ads`
+con source `federal_register`. El scraper viejo de DRS (drs.faa.gov via
+Playwright) se elimino: Akamai lo bloqueaba y devolvia 0 en cada corrida.
 
 ### Reset completo
 
@@ -385,7 +385,7 @@ elimino: Akamai lo bloqueaba y devolvia 0 en cada corrida.
 python populate_db.py --source federal_register --reset   # borra y repobla
 ```
 
-## FAA DRS (`drs_documents`, no es una fuente de `ads`)
+## FAA DRS (`drs_documents`, ADs pre-1994 y texto)
 
 `python populate_db.py --drs` sincroniza la API data-pull de DRS (ADFRAWD =
 AD finales, ADFREAD = de emergencia) hacia `drs_documents` y enlaza cada AD
@@ -393,14 +393,30 @@ FAA con `ads.drs_document_guid`, por las RPCs `upsert_drs_documents`,
 `advance_drs_cursor` y `link_ads_to_drs` (repo ad-scrapper). Cliente en
 `scrapers/faa_drs_api.py`, sync en `scrapers/faa_drs_sync.py`, detalle
 completo en [docs/drs-sync.md](docs/drs-sync.md). No escribe `scrape_runs`
-y corre en su propio job (`drs`) del workflow.
+y corre en su propio job (`drs`) del workflow. Entre la subida y el enlace:
+
+- **ADs anteriores a 1994** (6.826, desde 41-47-01) entran en `ads` con source
+  `federal_register` por `normalize` -> `upsert_ads` -> `populate_relations`
+  (`scrapers/faa_drs_ads.py`). Entra un AD si su numero es anterior a 1994 y
+  ningun documento DRS suyo se publico desde 1994-01-01; nunca se pisa una
+  fila que no creo este camino (`raw_data.Origin = "drs"`). Applicability
+  **sin emparejar** Make/Model de DRS: una marca -> una fila con todos sus
+  modelos; varias -> una fila por marca sin modelo (`unknown`).
+- **Texto DRS**: los ADs FAA sin texto de GovInfo conservado reciben las
+  secciones de `regulatory_text` (provider `drs`) con
+  `enrich.split_ad_sections(..., plain=True)`, el mismo parser en modo texto
+  plano, anclado al numero del propio AD.
+- **Alias**: `scripts/tcds_alias_candidates.py` (TCDSMODEL) escribe un CSV de
+  candidatos contra el seed de grupos de ad-scrapper, sin modificarlo.
 
 > **Requisito antes de encenderlo en produccion:** Hyvento tiene que
 > contactar a la FAA (equipo DRS) y obtener **autorizacion escrita para el
 > uso comercial** de la API. La API no publica terminos, cuotas ni limites;
 > lo unico aplicable es el aviso generico de faa.gov, "provided for U.S.
 > Government-authorized use only". Hasta entonces `DRS_API_ENABLED` (y la
-> variable de repositorio del mismo nombre) se queda apagado.
+> variable de repositorio del mismo nombre) se queda apagado. Vale para todo
+> lo que sale de DRS: `drs_documents`, las filas pre-1994, el texto `drs` y
+> el script de TCDS.
 
 - **Primera carga = barrido por `offset` sin filtro de fecha.** El filtro
   `docLastModifiedDate` es estricto y compara por segundo, y 14.193 documentos

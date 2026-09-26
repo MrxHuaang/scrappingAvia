@@ -43,6 +43,15 @@ decide si el texto está completo: lo decide `ad_text_is_complete` en la base
 | `empty` | Respuesta vacía o página "request access" | Sí, en la corrida siguiente | No | `empty`; no toca secciones |
 | `error` | HTTP distinto de 2xx, red, bloque sin secciones o parseo fallido | Sí, en la corrida siguiente | No | `error`; no toca secciones |
 
+Los AD FAA sin texto de GovInfo conservado (los anteriores a 1994 y los que
+GovInfo no pudo anclar) reciben el texto regulatorio de DRS con el mismo
+parser en modo texto plano (`split_ad_sections(..., plain=True)`), los mismos
+estados y la misma RPC, con `provider: "drs"`, `document_id` = guid de DRS y
+`source_url` = `documentURL`. Un texto de GovInfo conservado nunca se
+reemplaza con uno de DRS; un intento `ok` de GovInfo en una corrida sí
+reemplaza al de DRS.
+Detalle y medición: [drs-sync.md](drs-sync.md).
+
 `ad_text_documents` separa el **texto conservado** (`text_provider`,
 `text_document_id`, `text_source_url`, `text_sha256`, `text_anchor`,
 `text_fetched_at`: solo cambian cuando un intento lo reemplaza) del **último
