@@ -1,7 +1,7 @@
 """
 Busqueda de ADs, solo contra la BD: el scraping vive en populate_db, que
 carga las autoridades a diario; la busqueda no raspa sitios en vivo. Rutas:
-/api/env, /api/health, /api/search (POST) y /api/search/stream (SSE).
+/api/health, /api/search (POST) y /api/search/stream (SSE).
 
 Las dos rutas de busqueda hablan dos contratos: sin `v` (o v=1) el de siempre,
 un evento por autoridad; con v=2 el paginado global de webapp.search_v2.
@@ -12,7 +12,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-from flask import Blueprint, Response, jsonify, request, session
+from flask import Blueprint, Response, jsonify, request
 
 from utils import (
     MAX_RESULTS_PER_SOURCE,
@@ -24,7 +24,6 @@ from utils import (
 
 from webapp.core import (
     APP_VERSION,
-    IS_SERVERLESS,
     SCRAPER_TIMEOUT,
     RouteResult,
     check_rate_limit,
@@ -269,11 +268,6 @@ def _v1_stream(sources, max_results, filters):
 
 
 # ------------------------------------------------------------------- rutas --
-@bp.route("/api/env")
-def api_env() -> RouteResult:
-    return jsonify({"serverless": IS_SERVERLESS, "plan": session.get("plan", "anonymous")})
-
-
 @bp.route("/api/health")
 def api_health() -> RouteResult:
     return jsonify({

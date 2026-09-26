@@ -1,10 +1,10 @@
 """
-Zephr - Servidor Web (entry point).
+Zephr - API web (entry point).
 
-Interfaz web para busqueda de Airworthiness Directives.
-Vercel construye este archivo (@vercel/python, ver vercel.json); la app real
-se compone en webapp/ (Fase 3b): core (config/guards/servicios) + blueprints
-pages, auth, billing, search, export y status. La suite de contrato HTTP en
+API de busqueda de Airworthiness Directives que consume el proxy de Next.js
+(Ad-Scrapper). Vercel construye este archivo (@vercel/python, ver vercel.json);
+la app real se compone en webapp/ (Fase 3b): core (config/guards/servicios) +
+blueprints search y export. La suite de contrato HTTP en
 tests/test_http_contract.py fija el comportamiento observable.
 """
 
@@ -18,10 +18,8 @@ app = create_app()
 
 if __name__ == "__main__":
     log.info("=" * 55)
-    log.info("  Zephr - Airworthiness Directives")
+    log.info("  Zephr - Airworthiness Directives API")
     log.info("  Fuentes activas: FAA | EASA | TC | ANAC BR | DGAC CL | ANAC AR")
     log.info("=" * 55)
-    log.info("  Landing:  http://127.0.0.1:5000/")
-    log.info("  App:      http://127.0.0.1:5000/app")
     log.info("  Health:   http://127.0.0.1:5000/api/health")
     app.run(host="127.0.0.1", port=5000, debug=False)
