@@ -29,8 +29,8 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
 
-# Shared secret injected by the Next.js proxy (SEC-3). When set, /api/search*,
-# /api/export* reject any request lacking the matching X-Internal-Secret header.
+# Shared secret injected by the Next.js proxy (SEC-3). When set, /api/search*
+# rejects any request lacking the matching X-Internal-Secret header.
 INTERNAL_PROXY_SECRET = os.environ.get("INTERNAL_PROXY_SECRET", "")
 
 # CORS allowlist (SEC-5): never combine wildcard origins with credentials.
@@ -41,9 +41,6 @@ else:
     ALLOWED_ORIGINS = "*"
 
 SCRAPER_TIMEOUT = 45  # timeout maximo por fuente (segundos)
-PDF_DOWNLOAD_TIMEOUT = 15
-PDF_MAX_WORKERS = 5
-PDF_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 # --------------------------------------------------------- supabase clients --
 _supabase = None

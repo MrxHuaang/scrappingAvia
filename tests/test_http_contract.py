@@ -470,7 +470,7 @@ def test_v1_keeps_its_403_guard(client, proxied):
     assert client.post("/api/search", json={"source": "all"}).status_code == 403
 
 
-# ----------------------------------------------------------------- export --
+# ------------------------------------------------------- datos de prueba --
 
 # Consulta que satisface el gate de filtros (utils.validate_search_filters):
 # make + otro filtro. Los tests de truncado no prueban el gate, solo necesitan
@@ -482,42 +482,3 @@ _ROW = {
     "Make": "Boeing", "Model": "737", "Effective_Date": "2026-01-01",
     "Status": "New", "Product_Type": "Aircraft", "Docket": "", "PDF_Link": "",
 }
-
-
-def test_export_without_results_is_400(client):
-    r = client.post("/api/export/csv", json={"results": []})
-    assert r.status_code == 400
-
-
-def test_export_unknown_format_is_400(client):
-    r = client.post("/api/export/parquet", json={"results": [_ROW]})
-    assert r.status_code == 400
-    assert "Formato no soportado" in r.get_json()["error"]
-
-
-def test_export_csv_attachment(client):
-    r = client.post("/api/export/csv", json={"results": [_ROW]})
-    assert r.status_code == 200
-    assert r.mimetype == "text/csv"
-    assert "attachment" in r.headers["Content-Disposition"]
-    assert b"2026-01-01" in r.get_data()
-
-
-def test_export_excel_attachment(client):
-    r = client.post("/api/export/excel", json={"results": [_ROW]})
-    assert r.status_code == 200
-    assert "spreadsheet" in r.mimetype
-    assert r.get_data()[:2] == b"PK"
-
-
-def test_export_zip_without_pdfs(client):
-    # Sin PDF_Link no se descarga nada: el ZIP (csv+xlsx+readme) sale offline.
-    r = client.post("/api/export/zip", json={"results": [_ROW]})
-    assert r.status_code == 200
-    assert r.mimetype in ("application/zip", "application/x-zip-compressed")
-    assert r.get_data()[:2] == b"PK"
-
-
-def test_export_proxy_guard(client, proxied):
-    r = client.post("/api/export/csv", json={"results": [_ROW]})
-    assert r.status_code == 403

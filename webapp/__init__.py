@@ -4,7 +4,7 @@ Fabrica de la app web de Zephr (Fase 3b).
 app.py (el entry point que Vercel construye) solo hace
 `app = create_app()`; toda la composicion vive aqui: configuracion, CORS,
 ProxyFix y el registro de los blueprints. La app es solo la API que llama el
-proxy de Next.js (busqueda y export) mas el health check: no sirve HTML, ni
+proxy de Next.js (busqueda) mas el health check: no sirve HTML, ni
 plantillas, ni archivos estaticos. La suite de contrato HTTP
 (tests/test_http_contract.py) fija el comportamiento observable.
 """
@@ -13,7 +13,7 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from webapp import core, export, search
+from webapp import core, search
 
 
 def create_app() -> Flask:
@@ -31,8 +31,7 @@ def create_app() -> Flask:
     else:
         CORS(app, origins=core.ALLOWED_ORIGINS, supports_credentials=True)
 
-    for module in (search, export):
-        app.register_blueprint(module.bp)
+    app.register_blueprint(search.bp)
 
     @app.errorhandler(404)
     def not_found(e):

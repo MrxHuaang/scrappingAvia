@@ -4,7 +4,7 @@ Zephr - API web (entry point).
 API de busqueda de Airworthiness Directives que consume el proxy de Next.js
 (Ad-Scrapper). Vercel construye este archivo (@vercel/python, ver vercel.json);
 la app real se compone en webapp/ (Fase 3b): core (config/guards/servicios) +
-blueprints search y export. La suite de contrato HTTP en
+el blueprint search. La suite de contrato HTTP en
 tests/test_http_contract.py fija el comportamiento observable.
 """
 
