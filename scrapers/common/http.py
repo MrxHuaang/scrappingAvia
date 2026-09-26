@@ -41,6 +41,51 @@ def browser_headers(extra: dict | None = None) -> dict:
     return h
 
 
+def request_with_backoff(
+    method: str,
+    url: str,
+    *,
+    session: requests.Session | None = None,
+    params: dict | None = None,
+    json: dict | None = None,
+    headers: dict | None = None,
+    timeout: float = 30,
+    retries: int = 3,
+    delay: float = 2.0,
+    tag: str = "http",
+):
+    """Peticion con backoff exponencial en 429/5xx y errores de red (timeouts
+    incluidos).
+
+    Devuelve el Response final (cualquier status < 500 distinto de 429) o
+    None si todos los intentos fallaron. Los 4xx NO se reintentan (no se
+    curan solos): cada llamador conserva su propia semantica para ellos.
+
+    Existe aparte de `get_with_backoff` para las APIs que consultan por POST
+    (el endpoint `filtered` de DRS): el bucle de reintentos es el mismo y no
+    debe volver a copiarse. Los logs solo llevan el metodo y el status, nunca
+    headers: por ahi viajan las API keys.
+    """
+    getter = session or requests
+    call = getattr(getter, method.lower())
+    kwargs: dict = {"params": params, "headers": headers, "timeout": timeout}
+    if json is not None:
+        kwargs["json"] = json
+    for attempt in range(retries):
+        try:
+            resp = call(url, **kwargs)
+        except requests.RequestException as e:
+            log.warning(f"[{tag}] {method.upper()} error: {type(e).__name__}: {e} (intento {attempt + 1}/{retries})")
+        else:
+            if resp.status_code != 429 and resp.status_code < 500:
+                return resp
+            log.warning(f"[{tag}] HTTP {resp.status_code} (intento {attempt + 1}/{retries})")
+        if attempt < retries - 1:
+            time.sleep(delay)
+            delay *= 2
+    return None
+
+
 def get_with_backoff(
     url: str,
     *,
@@ -52,23 +97,9 @@ def get_with_backoff(
     delay: float = 2.0,
     tag: str = "http",
 ):
-    """GET con backoff exponencial en 429/5xx y errores de red.
-
-    Devuelve el Response final (cualquier status < 500 distinto de 429) o
-    None si todos los intentos fallaron. Los 4xx NO se reintentan (no se
-    curan solos): cada llamador conserva su propia semantica para ellos.
-    """
-    getter = session or requests
-    for attempt in range(retries):
-        try:
-            resp = getter.get(url, params=params, headers=headers, timeout=timeout)
-        except requests.RequestException as e:
-            log.warning(f"[{tag}] GET error: {e} (intento {attempt + 1}/{retries})")
-        else:
-            if resp.status_code != 429 and resp.status_code < 500:
-                return resp
-            log.warning(f"[{tag}] HTTP {resp.status_code} (intento {attempt + 1}/{retries})")
-        if attempt < retries - 1:
-            time.sleep(delay)
-            delay *= 2
-    return None
+    """GET con backoff exponencial en 429/5xx y errores de red; ver
+    `request_with_backoff`."""
+    return request_with_backoff(
+        "GET", url, session=session, params=params, headers=headers,
+        timeout=timeout, retries=retries, delay=delay, tag=tag,
+    )
