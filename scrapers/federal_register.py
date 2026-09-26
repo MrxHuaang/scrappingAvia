@@ -21,11 +21,11 @@ import requests
 import enrich
 from utils import (
     ad_identity_from_docket_ids,
-    extract_make_model,
     normalize_ad_number,
 )
 
 from scrapers.common.cache import load_json_cache, save_json_cache
+from scrapers.common.fr_applicability import applicability_fields
 from scrapers.common.http import API_HEADERS, get_with_backoff
 
 from scrapers.common.log import get_logger
@@ -486,7 +486,6 @@ def _parse_document(doc) -> dict | None:
             return None
 
         docket = ident.get("docket") or ft.get("docket") or doc_number
-        make, model = extract_make_model(title, abstract)
 
         subject = re.sub(r"^Airworthiness Directives[;:]\s*", "", title, flags=re.I)
 
@@ -522,8 +521,6 @@ def _parse_document(doc) -> dict | None:
             # Abstract = FAA AD summary; enrich.py mines it for unsafe_condition,
             # corrective_action and Service Bulletin refs.
             "Abstract": abstract.strip(),
-            "Make": make.strip(),
-            "Model": model.strip(),
             "Publication_Date": pub_date,
             "Effective_Date": effective_date,
             "Status": status,
@@ -547,6 +544,12 @@ def _parse_document(doc) -> dict | None:
                 else (doc.get("correction_of") or "")
             ) or "",
         }
+
+        # Titular y modelos: Make/Model escalares (ads.make/ads.model) y
+        # Applicability [{make, models[]}] para ad_applicability, de una sola
+        # extraccion sobre titulo + abstract. Sin titular inequivoco no hay
+        # Applicability ni Make y el AD viaja `failed` (docs/applicability-contract.md).
+        out.update(applicability_fields(title, abstract))
 
         # compliance_time + AMOC ya vienen del full text bajado arriba (ft).
         if ft.get("compliance_time"):

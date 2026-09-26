@@ -1,0 +1,514 @@
+[
+ {
+  "document_number": "2024-08105",
+  "publication_date": "2024-04-17",
+  "title": "Airworthiness Directives; The Boeing Company Airplanes",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain The Boeing Company Model 737-8 and 737-9 airplanes. This AD was prompted by a determination that the loss of a ground through the P6 panel results in the failure of the standby power control unit (SPCU). The loss of the SPCU and ground through the P6 panel could result in the loss of significant flightcrew instrumentation and displays. This AD requires installing two bonding jumpers from the P6 panel structure to primary structure. The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": "The Boeing Company",
+   "models": [
+    "737-8",
+    "737-9"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2015-23117",
+  "publication_date": "2015-09-16",
+  "title": "Airworthiness Directives; The Boeing Company Airplanes",
+  "abstract": "We are adopting a new airworthiness directive (AD) for all The Boeing Company Model 737-600, -700, -700C, -800, -900, and -900ER series airplanes. This AD was prompted by reports of latently failed fuel shutoff valves discovered during fuel filter replacement. This AD requires revising the maintenance or inspection program to include new airworthiness limitations. We are issuing this AD to detect and correct latent failures of the fuel shutoff valve to the engine, which could result in the inability to shut off fuel to the engine and, in case of certain engine fires, an uncontrollable fire that could lead to wing failure.",
+  "expected": {
+   "holder": "The Boeing Company",
+   "models": [
+    "737-600",
+    "-700",
+    "-700C",
+    "-800",
+    "-900",
+    "-900ER series"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2024-24466",
+  "publication_date": "2024-10-24",
+  "title": "Airworthiness Directives; Airbus S.A.S Airplanes",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for all Airbus SAS Model A350-941 and -1041 airplanes. This AD was prompted by reports that engine nacelle anti-icing (NAI) forward bulkheads have been found with elongated locating holes. This AD requires a one-time detailed inspection of the engine NAI forward bulkhead locating holes for elongation and loose fasteners and applicable corrective actions, and prohibits the installation of affected parts under certain conditions, as specified in a European Union Aviation Safety Agency (EASA) AD, which is incorporated by reference (IBR). The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": "Airbus S.A.S",
+   "models": [
+    "A350-941",
+    "-1041"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2023-28800",
+  "publication_date": "2024-01-02",
+  "title": "Airworthiness Directives; Bombardier, Inc., Airplanes",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain Bombardier, Inc., Model BD-700-1A10 and BD-700-1A11 airplanes. This AD was prompted by reports that the nose wheel steering selector valve (SSV) can be slow to deactivate under low temperature conditions. This AD requires replacing the affected SSV with a re-designed SSV that has an improved response time. The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": "Bombardier, Inc.",
+   "models": [
+    "BD-700-1A10",
+    "BD-700-1A11"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2024-03920",
+  "publication_date": "2024-02-27",
+  "title": "Airworthiness Directives; Robinson Helicopter Company Helicopters",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain Robinson Helicopter Company Model R22, R22 Alpha, R22 Beta, R22 Mariner, R44, R44 II, and R66 helicopters. This AD was prompted by reports of helicopters losing a tail rotor blade (TRB) tip cap. This AD requires visually checking and inspecting certain part-numbered and serial-numbered TRB tip caps for evidence of corrosion and, depending on the results, removing the corrosion. This AD also requires removing all affected TRBs from service and prohibits installing them on any helicopter. The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": "Robinson Helicopter Company",
+   "models": [
+    "R22",
+    "R22 Alpha",
+    "R22 Beta",
+    "R22 Mariner",
+    "R44",
+    "R44 II",
+    "R66"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2015-01800",
+  "publication_date": "2015-02-02",
+  "title": "Airworthiness Directives; Airbus Helicopters (Previously Eurocopter France) Helicopters",
+  "abstract": "We are superseding Airworthiness Directive (AD) 2013-19-19 for certain Eurocopter France Model AS332C, AS332L, AS332L1, AS332L2, and EC225LP helicopters. AD 2013-19-19 required replacing certain serial- numbered main gearbox (MGB) bevel gear vertical shafts and inspecting and replacing, if necessary, each MGB bevel gear vertical shaft (shaft). This new AD requires the same actions as AD 2013-19-19 but corrects an error in the term used to identify an inspection qualification and updates the type certificate holder's name. This AD is prompted by two incidents of emergency ditching after warning indications of loss of MGB oil pressure. These actions are intended to detect a cracked shaft, which could result in loss of MGB oil pressure, loss of the MGB lubrication system, and subsequent loss of control of the helicopter.",
+  "expected": {
+   "holder": "Airbus Helicopters",
+   "models": [
+    "AS332C",
+    "AS332L",
+    "AS332L1",
+    "AS332L2",
+    "EC225LP"
+   ],
+   "previously_held_by": [
+    "Eurocopter France"
+   ]
+  }
+ },
+ {
+  "document_number": "2015-01803",
+  "publication_date": "2015-02-10",
+  "title": "Airworthiness Directives; Airbus Helicopters (Formerly Eurocopter France)",
+  "abstract": "We are publishing a new airworthiness directive (AD) for Airbus Helicopters (formerly Eurocopter France) Model EC130T2 helicopters, which was sent previously to all known U.S. owners and operators of these helicopters. This AD requires repetitively inspecting the attachment points where the fan attaches to the main gearbox (MGB) oil cooler hopper (hopper) and replacing any cracked hopper with an airworthy hopper. This AD is prompted by several cases of a cracked hopper. The cracks were found on the hopper at the fan attachment points. These actions are intended to detect a crack in the hopper at a fan attachment point to prevent failure of the fan attachment, interference of the fan with the control rod of the front servo-control or with the flight control bellcrank, and subsequent loss of control of the helicopter.",
+  "expected": {
+   "holder": "Airbus Helicopters",
+   "models": [
+    "EC130T2"
+   ],
+   "previously_held_by": [
+    "Eurocopter France"
+   ]
+  }
+ },
+ {
+  "document_number": "2023-28861",
+  "publication_date": "2024-01-03",
+  "title": "Airworthiness Directives; Rolls-Royce Deutschland Ltd & Co KG Engines",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for all Rolls-Royce Deutschland Ltd & Co KG (RRD) Model Trent 1000-AE3, Trent 1000-CE3, Trent 1000-D3, Trent 1000-G3, Trent 1000-H3, Trent 1000-J3, Trent 1000-K3, Trent 1000-L3, Trent 1000-M3, Trent 1000-N3, Trent 1000- P3, Trent 1000-Q3, and Trent 1000-R3 engines. This AD is prompted by a determination that certain intervals for visual inspection of the intermediate-pressure stage 8 (IP8) and high-pressure stage 3 (HP3) air transfer tubes and front bearing housing IP8 air feed tubes need to be reduced. This AD requires initial and repetitive visual inspections of the IP8 and HP3 air transfer tubes and front bearing housing IP8 air feed tubes for cracking, damage, or air leakage wear, and replacement, if necessary, as specified in a European Union Aviation Safety Agency (EASA) AD, which is incorporated by reference (IBR). The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": "Rolls-Royce Deutschland Ltd & Co KG",
+   "models": [
+    "Trent 1000-AE3",
+    "Trent 1000-CE3",
+    "Trent 1000-D3",
+    "Trent 1000-G3",
+    "Trent 1000-H3",
+    "Trent 1000-J3",
+    "Trent 1000-K3",
+    "Trent 1000-L3",
+    "Trent 1000-M3",
+    "Trent 1000-N3",
+    "Trent 1000-P3",
+    "Trent 1000-Q3",
+    "Trent 1000-R3"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "E6-18368",
+  "publication_date": "2006-11-02",
+  "title": "Airworthiness Directives; Pratt & Whitney PW4074, PW4074D, PW4077, PW4077D, PW4084D, PW4090, PW4090-3, and PW4098 Turbofan Engines",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for Pratt & Whitney PW4074, PW4074D, PW4077, PW4077D, PW4084D, PW4090, PW4090-3, and PW4098 turbofan engines, with certain front turbine hub part numbers installed. This AD requires a onetime visual inspection of the anti-rotation slots in the front turbine hub, for a machining nonconformance, and its replacement if the inspection failed. This AD results from a report of a crack found in an anti-rotation slot of a front turbine hub, during overhaul shop inspection. The anti-rotation slot geometry was not machined in conformance with the design drawing during manufacture. We are issuing this AD to prevent uncontained engine failure, damage to the airplane, and injury to passengers.",
+  "expected": {
+   "holder": "Pratt & Whitney",
+   "models": [
+    "PW4074",
+    "PW4074D",
+    "PW4077",
+    "PW4077D",
+    "PW4084D",
+    "PW4090",
+    "PW4090-3",
+    "PW4098"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "06-522",
+  "publication_date": "2006-01-24",
+  "title": "Airworthiness Directives; Turbomeca Arriel 1B, 1D, 1D1, and 1S1 Turboshaft Engines",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain Turbomeca Arriel 1B, 1D, 1D1, and 1S1 turboshaft engines. This AD requires initial and repetitive position checks of the gas generator 2nd stage turbine blades on all Turbomeca Arriel 1B, 1D, 1D1, and 1S1 turboshaft engines, and initial and repetitive replacements of 2nd stage turbines on 1B, 1D, and 1D1 engines only. This AD results from reports of the release of gas generator 2nd stage turbine blades while in service, with full containment of debris. We are issuing this AD to prevent inflight engine shutdown and subsequent forced autorotation landing or accident.",
+  "expected": {
+   "holder": "Turbomeca",
+   "models": [
+    "Arriel 1B",
+    "1D",
+    "1D1",
+    "1S1"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "06-5284",
+  "publication_date": "2006-06-13",
+  "title": "Airworthiness Directives; Hamilton Sundstrand Model 14RF-19 Propellers",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for Hamilton Sundstrand model 14RF-19 propellers. This AD requires replacing certain actuator yokes with improved actuator yokes. This AD results from certain propeller system actuator yoke arms breaking during flight. We are issuing this AD to prevent actuator yoke arms breaking during flight, which could cause high propeller vibration and contribute to reduced controllability of the airplane.",
+  "expected": {
+   "holder": "Hamilton Sundstrand",
+   "models": [
+    "14RF-19"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "E6-14691",
+  "publication_date": "2006-09-08",
+  "title": "Airworthiness Directives; Hartzell Propeller Inc. ( )HC-( )2Y( )-( ) Series Propellers",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for Hartzell Propeller Inc. ( )HC-( )2Y( )-( ) series propellers with non- suffix serial number (SN) propeller hubs installed on Lycoming O-, IO-, LO-, and AEIO-360 series reciprocating engines. This AD requires initial and repetitive eddy current inspections (ECI) of the front cylinder half of the propeller hub for cracks and removing cracked hubs from service before further flight. In addition, this AD allows installation of an improved design propeller hub (suffix SN \"A\" or \"B\") as terminating action to the repetitive ECI. This AD results from a report of a propeller blade separating from a propeller hub. We are issuing this AD to prevent failure of the propeller hub causing blade separation and subsequent loss of airplane control.",
+  "expected": {
+   "holder": "Hartzell Propeller Inc.",
+   "models": [
+    "( )HC-( )2Y( )-( ) Series"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "E6-18840",
+  "publication_date": "2006-11-09",
+  "title": "Airworthiness Directives; Dowty Propellers R321/4-82-F/8; R324/4-82-F/9; R333/4-82-F/12; and R334/4-82-F/13 Propellers",
+  "abstract": "We are adopting a new airworthiness directive (AD) for the products listed above. This AD results from mandatory continuing airworthiness information (MCAI) issued by an aviation authority of another country to identify and correct an unsafe condition on an aviation product. The MCAI describes the unsafe condition as:",
+  "expected": {
+   "holder": "Dowty Propellers",
+   "models": [
+    "R321/4-82-F/8",
+    "R324/4-82-F/9",
+    "R333/4-82-F/12",
+    "R334/4-82-F/13"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2015-19474",
+  "publication_date": "2015-08-11",
+  "title": "Airworthiness Directives; Kidde Graviner",
+  "abstract": "We are adopting a new airworthiness directive (AD) for certain Kidde Graviner hand-operated fire extinguishers. This AD was prompted by a report that a fire extinguisher failed to operate when the activation lever was pressed. This AD requires modifying the affected fire extinguishers. We are issuing this AD to prevent fire extinguishers from failing to operate in the event of a fire, which could jeopardize occupants' safety and continuation of safe flight and landing.",
+  "expected": {
+   "holder": "Kidde Graviner",
+   "models": [],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "E6-13911",
+  "publication_date": "2006-08-23",
+  "title": "Airworthiness Directives; RECARO Aircraft Seating GmbH & Co. (RECARO) Model 3410 Seats",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain RECARO Model 3410 302, 303, 306, 307, 314, 316, 317, 791, 792, and 795 series seats. This AD requires replacing the existing attachment bolts for the seat belts with longer attachment bolts. This AD results from a report of short attachment bolts that don't allow enough thread to properly secure the locknuts. We are issuing this AD to prevent a seat belt from detaching due to a loose locknut and attachment bolt, which could result in injury to an occupant during emergency conditions.",
+  "expected": {
+   "holder": "RECARO Aircraft Seating GmbH & Co. (RECARO)",
+   "models": [
+    "3410"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "98-70",
+  "publication_date": "1998-01-09",
+  "title": "Airworthiness Directives; Precision Airmotive Corporation Carburetors",
+  "abstract": "This amendment supersedes an existing airworthiness directive (AD), applicable to Precision Airmotive Corporation carburetors, that currently requires the inspection of those carburetors equipped with a two-piece venturi at each annual inspection to determine if the primary venturi is loose or missing, and requires the replacement of a two- piece venturi with a one-piece venturi within 48 months after the effective date of the existing AD. This amendment eliminates the requirement to install a one-piece venturi, and allows the installation of a one-piece venturi on affected carburetors as an optional terminating action; or, requires repetitive inspections of a two-piece venturi on affected carburetors. This AD also adds an additional carburetor model, and requires the installation of a new fuel nozzle on certain carburetors when a one-piece venturi is installed. This amendment is prompted by service difficulty reports describing engines that fail to attain rated power, run rough, or experience power loss after installation of a one-piece venturi in accordance with the existing AD, and by incidents of forced landings of aircraft powered by engines modified to comply with the existing AD. The actions specified by this AD are intended to prevent disruption of fuel flow to the engine resulting in failure to attain rated power, power loss in flight, and forced landings.",
+  "expected": {
+   "holder": "Precision Airmotive Corporation",
+   "models": [],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2024-21112",
+  "publication_date": "2024-09-17",
+  "title": "Airworthiness Directives; Textron Aviation Inc. (Type Certificate Previously Held by Cessna Aircraft Company) Airplanes",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for Textron Aviation Inc. (Textron) (type certificate previously held by Cessna Aircraft Company) Model 525, 525A, and 525B airplanes with Tamarack active technology load alleviation system (ATLAS) winglets installed per Supplemental Type Certificate (STC) No. SA03842NY. This AD was prompted by a report of the potential for a failure of the ATLAS system in which a loss of load alleviation would be un-annunciated. This AD requires installing placards on the left-hand inboard edge of the Tamarack active camber surface (TACS) and revising the existing airplane flight manual (AFM) for your airplane. The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": "Textron Aviation Inc.",
+   "models": [
+    "525",
+    "525A",
+    "525B"
+   ],
+   "previously_held_by": [
+    "Cessna Aircraft Company"
+   ]
+  }
+ },
+ {
+  "document_number": "2024-05193",
+  "publication_date": "2024-03-12",
+  "title": "Airworthiness Directives; Airbus Canada Limited Partnership (Type Certificate Previously Held by C Series Aircraft Limited Partnership (CSALP); Bombardier, Inc.) Airplanes",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain Airbus Canada Limited Partnership Model BD-500-1A11 airplanes. This AD was prompted by a manufacturing issue with an electrical connector that may prevent the connector from self-locking. This AD requires removing the affected connector, installing a new connector, and testing the emergency power supply units (EPSUs), as specified in a Transport Canada AD, which is incorporated by reference. The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": "Airbus Canada Limited Partnership",
+   "models": [
+    "BD-500-1A11"
+   ],
+   "previously_held_by": [
+    "C Series Aircraft Limited Partnership (CSALP)",
+    "Bombardier, Inc."
+   ]
+  }
+ },
+ {
+  "document_number": "2023-28801",
+  "publication_date": "2024-01-02",
+  "title": "Airworthiness Directives; MHI RJ Aviation ULC (Type Certificate Previously Held by Bombardier, Inc.) Airplanes",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain MHI RJ Model CL-600-2C10 (Regional Jet Series 700, 701 & 702), CL-600-2C11 (Regional Jet Series 550), CL-600-2D15 (Regional Jet Series 705), CL-600-2D24 (Regional Jet Series 900), and CL-600-2E25 (Regional Jet Series 1000) airplanes. This AD was prompted by a report of a passenger seat Y-belt (lap belt) re-installed in the wrong orientation, due to an incorrect maintenance manual. This AD requires inspecting certain Y-belts for correct installation and damage and corrective actions if necessary. This AD also prohibits the use of certain revisions of a maintenance task. The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": "MHI RJ Aviation ULC",
+   "models": [
+    "CL-600-2C10 (Regional Jet Series 700, 701 & 702)",
+    "CL-600-2C11 (Regional Jet Series 550)",
+    "CL-600-2D15 (Regional Jet Series 705)",
+    "CL-600-2D24 (Regional Jet Series 900)",
+    "CL-600-2E25 (Regional Jet Series 1000)"
+   ],
+   "previously_held_by": [
+    "Bombardier, Inc."
+   ]
+  }
+ },
+ {
+  "document_number": "2015-08732",
+  "publication_date": "2015-04-29",
+  "title": "Airworthiness Directives; Various Aircraft Equipped With Wing Lift Struts",
+  "abstract": "We are superseding Airworthiness Directive (AD) 99-01-05 R1, which applied to certain aircraft equipped with wing lift struts. AD 99-01-05 R1 required repetitively inspecting the wing lift struts for corrosion; repetitively inspecting the wing lift strut forks for cracks; replacing any corroded wing lift strut; replacing any cracked wing lift strut fork; and repetitively replacing the wing lift strut forks at a specified time for certain airplanes. This new AD retains all requirements of AD 99-01-05R1 and adds additional airplane models to the Applicability section. This AD was prompted by a report that additional Piper Aircraft, Inc. model airplanes should be added to the Applicability section. We are issuing this AD to correct the unsafe condition on these products.",
+  "expected": {
+   "holder": null,
+   "models": [],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2024-01932",
+  "publication_date": "2024-01-31",
+  "title": "Airworthiness Directives; Various Helicopters",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for all helicopters with certain Pacific Scientific Company rotary buckle assemblies (buckles) installed. This AD was prompted by a report of a manufacturing defect in the screws used inside the buckle. This AD requires inspecting the buckle screws and, depending on the results, reidentifying the buckle, replacing the screws and reidentifying the buckle, or replacing the buckle. This AD also prohibits installing certain buckles. The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": null,
+   "models": [],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2024-22095",
+  "publication_date": "2024-09-26",
+  "title": "Airworthiness Directives; Bell Textron Inc. and Various Restricted Category Helicopters",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for Bell Textron Inc. Model 204B, 205A, 205A-1, 205B, 210, and 212 helicopters and various restricted category helicopters with certain part-numbered tension torsion (TT) straps installed by supplemental type certificate (STC) No. SR03408CH. This AD was prompted by an accident involving failure of a TT strap. This AD requires removing the specified part-numbered TT straps from service and prohibits installing those TT straps. The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": null,
+   "models": [],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "98-22240",
+  "publication_date": "1998-08-20",
+  "title": "Airworthiness Directives; Textron Lycoming and Teledyne Continental Motors Reciprocating Engines",
+  "abstract": "This amendment adopts a new airworthiness directive (AD), applicable to certain Textron Lycoming and Teledyne Continental Motors reciprocating engines that had crankshafts repaired by Nelson Balancing Service, Repair Station Certificate No. NB7R820J, Bedford, Massachusetts, that requires removal from service of affected crankshafts, or a visual inspection, magnetic particle inspection, and dimensional check of the crankshaft journals, and, if necessary, rework or removal from service of affected crankshafts and replacement with serviceable parts. This amendment is prompted by reports of crankshafts exhibiting heat check cracking of the nitrided bearing surfaces which led to crankshaft cracking and subsequent failure. The actions specified by this AD are intended to prevent crankshaft failure due to cracking, which could result in an inflight engine failure and possible forced landing.",
+  "expected": {
+   "holder": null,
+   "models": [],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "06-404",
+  "publication_date": "2006-01-18",
+  "title": "Airworthiness Directives; McDonnell Douglas Model DC-9-14, DC-9-15, and DC-9-15F Airplanes; Model DC-9-20, DC-9-30, DC-9-40, and DC-9-50 Series Airplanes; Model DC-9-81 (MD-81), DC-9-82 (MD-82), DC-9-83 (MD-83), and DC-9-87 (MD-87) Airplanes; Model MD-88 Airplanes; and Model MD-90-30 Airplanes",
+  "abstract": "This amendment adopts a new airworthiness directive (AD), applicable to certain McDonnell Douglas transport category airplanes, that requires an inspection of the upper lock link assembly of the nose landing gear (NLG) to determine the manufacturer, repetitive eddy current inspections for cracking, and modification or replacement if necessary. This AD also provides for optional terminating action for the repetitive inspections. The actions specified by this AD are intended to prevent fracture of the upper lock link assembly of the NLG, which could result in failure of the NLG to extend following a gear-down selection, and consequent gear-up landing, structural damage, and possible injury to passengers and crew. This action is intended to address the identified unsafe condition.",
+  "expected": {
+   "holder": "McDonnell Douglas",
+   "models": [
+    "DC-9-14",
+    "DC-9-15",
+    "DC-9-15F",
+    "DC-9-20",
+    "DC-9-30",
+    "DC-9-40",
+    "DC-9-50 Series",
+    "DC-9-81 (MD-81)",
+    "DC-9-82 (MD-82)",
+    "DC-9-83 (MD-83)",
+    "DC-9-87 (MD-87)",
+    "MD-88",
+    "MD-90-30"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "98-24245",
+  "publication_date": "1998-09-16",
+  "title": "Airworthiness Directives; Boeing Model 727 and Model 737 Series Airplanes Equipped with J.C. Carter Company Fuel Valve Actuators",
+  "abstract": "This amendment adopts a new airworthiness directive (AD), applicable to certain Boeing Model 727 and Model 737 series airplanes, that requires replacement of the actuator of the engine fuel shutoff valve and the fuel system crossfeed valve with an improved actuator. This amendment is prompted by a report indicating that, during laboratory tests, the actuator clutch on the engine fuel shutoff and crossfeed valves failed to function properly. The actions specified by this AD are intended to prevent improper functioning of these actuators, which could result in a fuel imbalance due to the inability of the flightcrew to crossfeed fuel; improperly functioning actuators also could prevent the pilot from shutting off the fuel to the engine following an engine failure and/or fire.",
+  "expected": {
+   "holder": "Boeing",
+   "models": [
+    "727",
+    "737 Series"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2014-30917",
+  "publication_date": "2015-01-21",
+  "title": "Airworthiness Directives; Dassault Aviation Airplanes",
+  "abstract": "We are adopting a new airworthiness directive (AD) for all Dassault Aviation Model FAN JET FALCON and FAN JET FALCON SERIES C, D, E, F, and G airplanes. This AD was prompted by our determination of the need for a revision to the airplane airworthiness limitations to introduce changes to the maintenance requirements and airworthiness limitations. This AD requires revising the maintenance or inspection program, as applicable, to incorporate a new airworthiness limitations section. We are issuing this AD to prevent reduced structural integrity of the airplane.",
+  "expected": {
+   "holder": "Dassault Aviation",
+   "models": [
+    "FAN JET FALCON",
+    "FAN JET FALCON SERIES C",
+    "D",
+    "E",
+    "F",
+    "G"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2015-15615",
+  "publication_date": "2015-06-26",
+  "title": "Airworthiness Directives; ATR-GIE Avions de Transport Régional Airplanes",
+  "abstract": "We are adopting a new airworthiness directive (AD) for certain ATR-GIE Avions de Transport R[eacute]gional Model ATR42-500 and ATR72- 212A airplanes. This AD requires inspection of the affected control systems rods and, depending on findings, a replacement of the affected rods. This AD was prompted by reports of non-conformity of certain control rods, which could result in failure of the control rods. We are issuing this AD to detect and correct failure of an affected control rod, which, under certain circumstances, could result in reduced control of the airplane.",
+  "expected": {
+   "holder": "ATR-GIE Avions de Transport Régional",
+   "models": [
+    "ATR42-500",
+    "ATR72-212A"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2024-14072",
+  "publication_date": "2024-06-27",
+  "title": "Airworthiness Directives; Lindstrand Balloons Ltd. Hot Air Balloons",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain Lindstrand Balloons Ltd. Model 42A, 56A, 60A, 69A, 77A, 90A, 105A, 120A, 150A, 180A, 210A, 240A, 260A, 310A, 69B, 77B, 90B, 105B, and Drinks Can hot air balloons. This AD was prompted by a report of degraded polyester filled Aramid (Kevlar) load tapes where the Kevlar core was exposed to ultraviolet light, which could compromise the residual strength of the tapes and the structural integrity of the hot air balloon envelope. This AD requires repetitively checking the hot air balloon envelope for damage (degraded, stretched, or frayed load tapes or exposed Kevlar core) and removing any damaged hot air balloon envelope from service. The FAA is issuing this AD to address the unsafe condition on these products.",
+  "expected": {
+   "holder": "Lindstrand Balloons Ltd.",
+   "models": [
+    "42A",
+    "56A",
+    "60A",
+    "69A",
+    "77A",
+    "90A",
+    "105A",
+    "120A",
+    "150A",
+    "180A",
+    "210A",
+    "240A",
+    "260A",
+    "310A",
+    "69B",
+    "77B",
+    "90B",
+    "105B",
+    "Drinks Can"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2015-16584",
+  "publication_date": "2015-07-14",
+  "title": "Airworthiness Directives; GE Aviation Czech s.r.o. Turboprop Engines",
+  "abstract": "We are adopting a new airworthiness directive (AD) for certain serial number GE Aviation Czech s.r.o. M601E-11, M601E-11A, and M601F turboprop engines. This AD requires inspection of the reduction gearbox and supporting cone. This AD was prompted by the determination that wear or cracking, and subsequent misalignment of the quill shaft of the engine and the power turbine (PT) shaft, may lead to rupture of the quill shaft, overspeed of the PT, and uncontained engine failure. We are issuing this AD to prevent misalignment and rupture of the quill shaft, which could lead to overspeed of the PT, uncontained engine failure, and damage to the airplane.",
+  "expected": {
+   "holder": "GE Aviation Czech s.r.o.",
+   "models": [
+    "M601E-11",
+    "M601E-11A",
+    "M601F"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "98-10178",
+  "publication_date": "1998-04-20",
+  "title": "Airworthiness Directives; Twin Commander Aircraft Corporation 500, 680, 690, and 695 Series Airplanes",
+  "abstract": "This amendment supersedes Airworthiness Directive (AD) 96-12- 08 on certain Twin Commander Aircraft Corporation (Twin Commander) 500, 680, 690, and 695 series airplanes, which currently requires replacing the nose landing gear (NLG) drag link bolt with one that has been manufactured with the proper heat-treatment. This action will retain the requirements of AD 96-12-08, add an additional model and additional serial numbers to the applicability section of the AD, and require replacing bolt part number (P/N) ED10055 with bolt P/N 750076-1 on certain Models 690D and 695A airplanes. This action is prompted by a defective manufacture of a certain lot of drag link bolts used in the NLG. The actions specified by this AD are intended to prevent the NLG from collapsing caused by a failed drag link bolt, which could result in loss of control of the airplane during landing operations.",
+  "expected": {
+   "holder": "Twin Commander Aircraft Corporation",
+   "models": [
+    "500",
+    "680",
+    "690",
+    "695 Series"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "98-14607",
+  "publication_date": "1998-06-04",
+  "title": "Airworthiness Directives; Pilatus Aircraft Ltd. Models PC-6, PC- 6/A, PC-6/B, and PC-6/C Series Airplanes",
+  "abstract": "This amendment adopts a new airworthiness directive (AD) that applies to certain Pilatus Aircraft Ltd. (Pilatus) Models PC-6, PC-6/A, PC-6/B, and PC-6/C series airplanes equipped with turbo-prop engines. This AD requires modifying the fuel system to improve the venting between the collector tank, the main wing tanks, and the engine. This AD is the result of mandatory continuing airworthiness information (MCAI) issued by the airworthiness authority for Switzerland. The actions specified by this AD are intended to prevent engine fuel starvation during maximum climb and descent caused by poor fuel tank venting with low fuel levels, which could result in a loss of engine power during critical phases of flight.",
+  "expected": {
+   "holder": "Pilatus Aircraft Ltd.",
+   "models": [
+    "PC-6",
+    "PC-6/A",
+    "PC-6/B",
+    "PC-6/C Series"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "98-8582",
+  "publication_date": "1998-04-07",
+  "title": "Airworthiness Directives; Schempp-Hirth K.G. Models Nimbus-2B, Mini-Nimbus B, Discus a, and Discus b Sailplanes",
+  "abstract": "This document clarifies information in an existing airworthiness directive (AD) that applies to certain Schempp-Hirth K.G. (Schempp-Hirth) Models Standard-Cirrus, Nimbus-2, Nimbus-2B, Mini- Nimbus HS-7, Mini-Nimbus B, Discus a, and Discus b sailplanes. That AD currently requires accomplishing a load test of the elevator control system, and replacing the elevator vertical actuating tube either immediately or at a certain time period depending on the results of the load test. The actions specified in that AD are intended to prevent corrosion in the elevator caused by water entering the elevator control rod, which could result in elevator failure and consequent loss of control of the sailplane. The Schempp-Hirth Models Nimbus 2, Mini- Nimbus HS-7, and Standard Cirrus sailplanes are not equipped with elevator control systems, and should not be affected by the current AD. This action eliminates all reference to the Shempp-Hirth Models Nimbus 2, Mini-Nimbus HS-7, and Standard Cirrus sailplanes in the current AD.",
+  "expected": {
+   "holder": "Schempp-Hirth K.G.",
+   "models": [
+    "Nimbus-2B",
+    "Mini-Nimbus B",
+    "Discus a",
+    "Discus b"
+   ],
+   "previously_held_by": []
+  }
+ }
+]

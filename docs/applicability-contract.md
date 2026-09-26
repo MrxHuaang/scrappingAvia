@@ -25,18 +25,42 @@ En `populate_db.py`, `_applicability_pairs()` deriva pares (make, model) de la f
 normalizada:
 
 - **Camino estructurado** (`raw_data["Applicability"] = [{make, models[]}]`,
-  **solo EASA** hoy — `easa.py` lo construye recorriendo `li.tc_holder` del
-  listado/detalle): **una fila por approval holder**, con sus modelos unidos
+  **EASA y FAA** — `easa.py` lo construye recorriendo `li.tc_holder` del
+  listado/detalle; `federal_register.py` y `faa_govinfo.py` lo toman de
+  `scrapers/common/fr_applicability.py`, ver más abajo): **una fila por approval holder**, con sus modelos unidos
   por `", "` en el orden de la fuente — no una fila por modelo. La
   tokenización de listas como `"737-600, -700, -800"` la hace Postgres
   (`ad_model_index`/`ad_model_family`, migración `20260923160000`), no el
   cliente; partir aquí solo arriesgaba fabricantes inventados sin ganar nada
   de matching.
-- **Camino escalar** (FAA/Transport Canada/ANAC/DGAC/UK CAA, que nunca traen
+- **Camino escalar** (Transport Canada/ANAC/DGAC/UK CAA, que nunca traen
   más de un fabricante o no exponen la estructura por holder): `make` +
   `model` completo de la fila, también en una sola fila, sin partir por coma.
 - En ningún camino se parte `make` por coma (los nombres de holder traen comas
   propias; ver el docstring de `_applicability_pairs`).
+
+### FAA (`scrapers/common/fr_applicability.py`)
+
+Única extracción para Federal Register y GovInfo, sobre título + abstract:
+
+- **Titular** = el approval holder del título ("Airworthiness Directives;
+  <Titular> Airplanes|Helicopters|Turbofan Engines|Propellers|..."). Con "Type
+  Certificate Previously Held by X" / "(Formerly X)" el titular es el ACTUAL y
+  X viaja en `previously_held_by` dentro del mismo elemento — informativo,
+  `_applicability_pairs` lo ignora.
+- **Modelos** = la lista completa del título legado ("Boeing Model 747-100,
+  747-200B Series Airplanes") o, si el título no la trae, del abstract ("for
+  all/certain <Titular> Model A, B, and C airplanes"), tal como la escribe la
+  fuente. Sin modelo extraíble el elemento va con `models: []` →
+  `model_status=unknown`, nunca "aplica a todo".
+- **Sin titular inequívoco** ("Various Aircraft", "X and Various Restricted
+  Category Helicopters", dos fabricantes unidos por "and") no se emite
+  `Applicability` ni `Make`: el AD viaja `failed` y sus filas guardadas no se
+  tocan. No es `ApplicabilityError` (eso marcaría la corrida en error): es un
+  dato que la fuente no da de forma atribuible.
+- `Make`/`Model` escalares (`ads.make`/`ads.model`) salen del mismo resultado.
+  Los alias de fabricante (Cessna = Textron Aviation, etc.) los resuelve la BD
+  (`manufacturer_alias` + `ad_make_canonical`), no Python.
 
 Por AD:
 - **Pares válidos** (≥1 tras deduplicar y validar límites) → `success_with_rows`.
@@ -94,8 +118,8 @@ antes de emitirla.
 | Fuente | Qué autoriza `success_empty` | Qué es `failed` |
 |---|---|---|
 | `easa` | Nunca — `raw_data["Applicability"] == []` solo dice que `li.tc_holder` no coincidió con nada en la celda de holders: un cambio de clase o de estructura da la misma lista vacía que un AD sin holders, y el listado no trae ninguna declaración explícita de ausencia | Lista de holders vacía o ausente; un holder cuyo nombre no se lee (envuelto en otro elemento, sección cortada: `easa.py` lo emite con `make` vacío y el AD entero falla); ≥1 fila descartada por tamaño; timeout/HTTP ≠ 200; parse error; AD ausente de la salida |
-| `transport_canada` | Nunca — el scraper **no emite** `raw_data["Applicability"]` (solo EASA lo hace), así que no hay forma de distinguir "sin holders" de "no pude leerlo": ambiguo, no se emite evidencia | Cualquier make vacío; timeout/HTTP ≠ 200; layout de tabla no reconocido; AD ausente de la salida |
-| `federal_register` | Nunca — un AD de tipo `Appliance` **sí** tiene applicability (el fabricante/pieza del propio appliance); declararlo `success_empty` borraría filas reales. Ni el tipo de producto ni un título genérico son la fuente afirmando "no hay pares" | Cualquier make vacío (Appliance incluido); HTTP ≠ 200 de la API, JSON malformado, documento descartado por identidad (sin AD en `docket_ids` ni amendment); AD ausente de la salida |
+| `transport_canada` | Nunca — el scraper **no emite** `raw_data["Applicability"]`, así que no hay forma de distinguir "sin holders" de "no pude leerlo": ambiguo, no se emite evidencia | Cualquier make vacío; timeout/HTTP ≠ 200; layout de tabla no reconocido; AD ausente de la salida |
+| `federal_register` | Nunca — un AD de tipo `Appliance` **sí** tiene applicability (el fabricante/pieza del propio appliance); declararlo `success_empty` borraría filas reales. Ni el tipo de producto ni un título genérico son la fuente afirmando "no hay pares" | Cualquier make vacío (Appliance incluido), o sea título sin titular inequívoco ("Various ..."); HTTP ≠ 200 de la API, JSON malformado, documento descartado por identidad (sin AD en `docket_ids` ni amendment); AD ausente de la salida |
 | `anac_brazil`, `dgac_chile`, `anac_argentina`, `uk_caa` | Nunca — un listado sin make es el scraper **no extrayendo** el dato, no la fuente declarando que el AD no aplica a nada | Cualquier fila sin make; timeout/HTTP ≠ 200 del listado; layout no reconocido; AD ausente de la salida |
 
 En todas las fuentes **todo make vacío viaja `failed`**: las filas de

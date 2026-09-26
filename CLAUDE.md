@@ -83,9 +83,11 @@ Constraint único: `(source, ad_number)` → upsert usa `on_conflict=source,ad_n
 Un AD puede listar N approval holders, cada uno con SUS type designations (EASA
 lo hace en 765 ADs). Un scraper que pueda verlo emite
 `Applicability: [{make, models[]}]` en su record; `populate_db._applicability_pairs()`
-escribe una fila de `ad_applicability` por par real. Sin esa clave se usa el
-camino escalar (`Make` + `Model` separado por comas), correcto para
-FAA/TC/ANAC, que nunca traen mas de un fabricante.
+escribe una fila de `ad_applicability` por par real. EASA y FAA lo emiten (FAA
+via `scrapers/common/fr_applicability.py`, unica extraccion de titular + modelos
+para Federal Register y GovInfo; ver docs/applicability-contract.md). Sin esa
+clave se usa el camino escalar (`Make` + `Model`), correcto para TC/ANAC, que
+nunca traen mas de un fabricante.
 
 > **NUNCA** unir varios makes en un solo string (`", ".join`) ni volver a
 > partirlos por coma. Los nombres de holder traen comas propias ("REVO, Inc.",
