@@ -30,7 +30,7 @@ from datetime import date, timedelta, datetime
 import requests
 
 from utils import normalize_ad_number
-from scrapers.federal_register import classify_product_type
+from enrich import classify_product_type
 from scrapers.common.http import get_with_backoff
 from scrapers.common.cache import load_json_cache, save_json_cache
 from scrapers.common.fr_applicability import applicability_fields

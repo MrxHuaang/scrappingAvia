@@ -184,6 +184,96 @@ def normalize_product_type(pt: str | None) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Product type de la FAA desde el título
+# ---------------------------------------------------------------------------
+# Sustantivo de producto con el que la FAA cierra el título del AD ("The Boeing
+# Company Airplanes", "CFM International S.A. Turbofan Engines", "Hamilton
+# Sundstrand Propellers"). Plurales incluidos: `\bengine\b` no casa "Engines".
+_TITLE_PRODUCT_NOUNS = re.compile(
+    r"\b(?P<aircraft>airplanes?|aircraft|helicopters?|rotorcraft|gliders?|sailplanes?"
+    r"|airships?|balloons?|gyroplanes?)\b"
+    r"|\b(?P<engine>engines?|turbofans?|turbojets?|turboprops?|turboshafts?)\b"
+    r"|\b(?P<propeller>propellers?)\b"
+    r"|\b(?P<appliance>appliances?)\b",
+    re.I,
+)
+
+# "... Airplanes Equipped With General Electric CF6-80C2 Series Engines" es un
+# AD de avión: el motor viene DESPUÉS del producto, como calificativo. Se corta
+# el título en esa frase antes de leer el último sustantivo. Misma regla que la
+# migración 20260923180000_fr_product_type_from_title.sql de ad-scrapper.
+_AIRCRAFT_QUALIFIER = re.compile(
+    r"(\b(?:airplanes?|helicopters?|rotorcraft|aircraft|gliders?|sailplanes?)\b)"
+    r"\s+(?:equipped|powered|fitted|having|with)\b.*$",
+    re.I,
+)
+
+
+def _title_product_noun(subject: str) -> "re.Match | None":
+    """El sustantivo de producto que decide el tipo: el ÚLTIMO del título, tras
+    cortar el calificativo "<Airplanes> Equipped With ..."."""
+    title = _AIRCRAFT_QUALIFIER.sub(r"\1", subject or "", count=1)
+    last = None
+    for m in _TITLE_PRODUCT_NOUNS.finditer(title):
+        last = m
+    return last
+
+
+def classify_product_type(subject: str, abstract: str = "", cfr_refs=()) -> str:
+    """
+    Tipo de producto de un AD de la FAA a partir de su título.
+
+    El título es el campo que declara el producto; el abstract sólo lo
+    describe. Antes se buscaba "engine" en título + abstract, y el resumen de
+    un AD de avión casi siempre menciona un motor ("...engine fuel pump...",
+    "...an engine fire..."): 1.138 ADs cuyo título termina en "Airplanes" o
+    "Helicopters" quedaron como Engine, y filtrar por Product type = Aircraft
+    los escondía.
+
+    Gana el ÚLTIMO sustantivo de producto del título, porque la FAA lo pone al
+    final y el nombre del titular puede llevar otro antes ("Airbus Helicopters
+    Model EC135 Helicopters", "Rolls-Royce Deutschland Ltd & Co KG Turbofan
+    Engines"). Sin sustantivo en el título se cae a la regla vieja sobre el
+    abstract, y luego a CFR parte 39.
+    """
+    noun = _title_product_noun(subject)
+    if noun:
+        return {"aircraft": "Aircraft", "engine": "Engine",
+                "propeller": "Propeller", "appliance": "Appliance"}[noun.lastgroup]
+
+    text = (abstract or "").lower()
+    if re.search(r"\bengines?\b", text):
+        return "Engine"
+    if re.search(r"\bpropellers?\b", text):
+        return "Propeller"
+    if re.search(r"\bappliances?\b", text):
+        return "Appliance"
+    if re.search(r"\baircraft\b|\bairplanes?\b|\bhelicopters?\b|\bairships?\b|\bgliders?\b", text):
+        return "Aircraft"
+    for ref in cfr_refs or ():
+        part = str(ref.get("part", "") if isinstance(ref, dict) else "")
+        if part == "39":
+            return "Aircraft"
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Catálogo de la BD: product_type / product_subtype
+# ---------------------------------------------------------------------------
+# product_type canónico (normalize_product_type) -> código del catálogo
+# (tablas product_type/product_subtype, migración 20260926120000 de
+# ad-scrapper). Un AD sin tipo derivable no tiene código: el llamador omite el
+# campo y la RPC lo deriva server-side de ads.product_type.
+PRODUCT_TYPE_CODE = {
+    "Aircraft": "aircraft",
+    "Helicopter": "rotorcraft",
+    "Engine": "engine",
+    "Propeller": "propeller",
+    "Appliance": "appliance",
+}
+
+
+# ---------------------------------------------------------------------------
 # AMOC disponible
 # ---------------------------------------------------------------------------
 def detect_amoc(*texts: str) -> bool:

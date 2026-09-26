@@ -2,7 +2,7 @@
 
 import pytest
 
-from scrapers.federal_register import classify_product_type
+from enrich import classify_product_type
 
 
 @pytest.mark.parametrize("subject, expected", [

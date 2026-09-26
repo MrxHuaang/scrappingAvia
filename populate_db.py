@@ -622,19 +622,12 @@ def _send_applicability_batches(supabase, payload: list[dict]) -> dict[str, int]
 
 
 # ads.product_type (canonico via enrich.normalize_product_type) -> codigo del
-# catalogo de la BD (product_type/product_subtype, migracion 20260926120000).
-# None (AD sin tipo derivable) se omite del payload adrede: la RPC/el trigger
-# ya sabe derivarlo de `ads.product_type` (mismo valor, resuelto server-side),
-# y mandar 'unknown' explicito lo marcaria como product_type_source='explicit'
-# para siempre, impidiendo que una correccion futura de ads.product_type se
-# propague (eso solo pasa sobre filas 'derived').
-_PRODUCT_TYPE_CODE = {
-    "Aircraft": "aircraft",
-    "Helicopter": "rotorcraft",
-    "Engine": "engine",
-    "Propeller": "propeller",
-    "Appliance": "appliance",
-}
+# catalogo de la BD: enrich.PRODUCT_TYPE_CODE. None (AD sin tipo derivable) se
+# omite del payload adrede: la RPC/el trigger ya sabe derivarlo de
+# `ads.product_type` (mismo valor, resuelto server-side), y mandar 'unknown'
+# explicito lo marcaria como product_type_source='explicit' para siempre,
+# impidiendo que una correccion futura de ads.product_type se propague (eso
+# solo pasa sobre filas 'derived').
 
 
 # `success_empty` no lo declara ningun extractor (docs/applicability-contract.md).
@@ -698,7 +691,7 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
             applic_dropped.add(ad_id)
             pairs = []
 
-        pt_code = _PRODUCT_TYPE_CODE.get(r.get("product_type") or "")
+        pt_code = enrich.PRODUCT_TYPE_CODE.get(r.get("product_type") or "")
 
         for mk, mod in pairs:
             # La RPC rechaza el payload entero si un AD repite clave natural.
