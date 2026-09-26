@@ -52,17 +52,30 @@ See `.env.example` for the full annotated list. The scraping path needs:
 
 ```
 SUPABASE_URL=https://<project>.supabase.co
-SUPABASE_SERVICE_KEY=eyJ...       # service role (writes)
-SUPABASE_ANON_KEY=eyJ...          # anon (reads only)
+SUPABASE_SERVICE_KEY=eyJ...       # service role (writes) — required, no anon fallback
+SUPABASE_ANON_KEY=eyJ...          # anon, read-only reporting fallback (scripts/validate_ads.py only)
 GOVINFO_API_KEY=...               # free key https://api.govinfo.gov/signup/
                                   # without it FAA deep fields silently self-skip
 DRS_API_KEY=...                   # FAA DRS data-pull key (drs.faa.gov/drs-api), only for --drs
 DRS_API_ENABLED=                  # "true" turns the DRS sync on; off by default
 ```
 
+The database revokes write privileges on the `ads`/`rate_limits`/etc. tables
+for the `anon`/`authenticated` roles, so `SUPABASE_SERVICE_KEY` is required
+everywhere a script or the web app writes: every admin client (`populate_db.py`,
+`webapp/core.get_supabase_admin()`, `scripts/cleanup_faa_stale.py`, and the rest
+of `scripts/`) refuses to fall back to the anon key and instead errors out
+(scripts exit non-zero; the web app's rate limiter fails closed with 503, same
+as the proxy guard below). The one exception is `scripts/validate_ads.py`,
+which only runs `SELECT`s for its read-only quality report and may fall back
+to `SUPABASE_ANON_KEY` when the service key isn't set.
+
 The search API also needs `INTERNAL_PROXY_SECRET`, the value the Next.js proxy
 sends in `X-Internal-Secret`. For local development without it, set
 `ALLOW_UNAUTHENTICATED_LOCAL=1` (loopback requests only, ignored on Vercel).
+`SUPABASE_SERVICE_KEY` is required too: without it, `webapp.core.get_supabase_admin()`
+returns `None` and the rate limiter fails closed (503) on every data route,
+the same as the missing-proxy-secret case.
 
 Never commit `.env`.
 

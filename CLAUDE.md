@@ -145,6 +145,15 @@ real y `request.remote_addr` (tras ProxyFix) deben ser `127.0.0.1`/`::1`, asi
 que un `X-Forwarded-For: 127.0.0.1` desde fuera no abre nada. Con el secreto
 configurado el opt-in se ignora.
 
+**El rate limiter tambien falla cerrado.** `core.get_supabase_admin()`
+requiere `SUPABASE_SERVICE_KEY` — la BD revoca los privilegios de escritura de
+anon/authenticated sobre `rate_limits`/`profiles`/etc, asi que ya no hay
+respaldo funcional a la anon key ahi. Sin la service key, `get_supabase_admin()`
+devuelve `None`, `core.log_admin_key_state()` lo avisa al arrancar (mismo
+patron que `log_proxy_guard_state()`), y `check_rate_limit()` contesta 503
+`{"error": "Service unavailable"}` en vez de dejar pasar la request "sin rate
+limit".
+
 ### Contratos de `/api/search` y `/api/search/stream`
 
 Las dos rutas atienden dos contratos segun `v` (query en el stream, campo del
@@ -323,8 +332,10 @@ Luego: `python populate_db.py --source transport_canada`
 
 ```
 SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_SERVICE_KEY=eyJ...   # service role key (para writes)
-SUPABASE_ANON_KEY=eyJ...      # anon key (solo lectura)
+SUPABASE_SERVICE_KEY=eyJ...   # service role key — requerida en todo script y en la app web,
+                              # sin respaldo a la anon key (la BD revoca sus writes)
+SUPABASE_ANON_KEY=eyJ...      # anon key, solo lectura — unico consumidor: el respaldo
+                              # read-only de scripts/validate_ads.py
 GOVINFO_API_KEY=...           # gratis en https://api.govinfo.gov/signup/
                               # opcional: si falta, fase GovInfo se skipea
 DRS_API_KEY=...               # key de drs.faa.gov/drs-api (vence a los 12 meses)
