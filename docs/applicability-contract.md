@@ -62,7 +62,9 @@ normalizada:
   Los alias de fabricante (Cessna = Textron Aviation, etc.) los resuelve la BD
   (`manufacturer_alias` + `ad_make_canonical`), no Python.
 - `scripts/compare_applicability_coverage.py` compara esta extracción con la
-  heurística anterior sobre un volcado JSON (sin red ni BD).
+  heurística anterior sobre un volcado JSON (sin red ni BD). Resultados,
+  pérdidas conocidas y cómo correrlo antes de desplegar:
+  [applicability-coverage.md](applicability-coverage.md).
 
 Por AD:
 - **Pares válidos** (≥1 tras deduplicar y validar límites) → `success_with_rows`.
