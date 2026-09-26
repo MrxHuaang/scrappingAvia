@@ -200,3 +200,60 @@ jobs:
         with:
           path: outputs
           key: outputs-${{ matrix.source }}-${{ github.run_id }}
+
+  # FAA DRS is not an `ads` source: it fills drs_documents and the
+  # ads.drs_document_guid link (scrapers/faa_drs_sync.py), so it runs as its
+  # own job instead of a matrix entry and writes no scrape_runs row.
+  #
+  # OFF by default. It runs only when the repository variable
+  # DRS_API_ENABLED is "true" (Settings -> Secrets and variables -> Actions
+  # -> Variables). Do NOT set it until Hyvento holds written authorization
+  # from the FAA / DRS team for commercial use of the DRS API: the API
+  # publishes no terms of use or rate limits, and the only statement found
+  # is the generic faa.gov disclaimer ("provided for U.S.
+  # Government-authorized use only").
+  drs:
+    name: faa_drs
+    if: vars.DRS_API_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Two overlapping syncs would be harmless (idempotent upserts, a cursor
+    # that never moves backwards) but would pull the same pages twice.
+    concurrency:
+      group: drs-sync
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install dependencies (locked) and the package
+        run: |
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+
+      - name: Sync DRS
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DRS_API_KEY: ${{ secrets.DRS_API_KEY }}
+          DRS_API_ENABLED: ${{ vars.DRS_API_ENABLED }}
+          SOFT_MINUTES: "25"
+        # Same reason as the scrape job: bound the process below the job
+        # budget so an overrun exits 124 (failure, which notifies) instead
+        # of being cancelled. The first run pulls ~27 pages (~274 MB) in a
+        # few minutes; a daily incremental is usually one page.
+        run: |
+          set +e
+          timeout --signal=INT --kill-after=60s "${SOFT_MINUTES}m" python populate_db.py --drs
+          code=$?
+          set -e
+          if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
+            echo "::error title=DRS sync overran::did not finish within ${SOFT_MINUTES}m. The cursor was not advanced for the doctype in progress."
+          fi
+          exit "$code"

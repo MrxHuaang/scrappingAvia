@@ -6,6 +6,7 @@ Uso:
     python populate_db.py                        # todas las fuentes
     python populate_db.py --source easa          # fuente individual
     python populate_db.py --dry-run              # scrape pero no guarda
+    python populate_db.py --drs                  # sync FAA DRS (requiere DRS_API_ENABLED)
 """
 
 import argparse
@@ -26,7 +27,7 @@ import enrich
 
 # Agregar directorio raiz al path
 
-from scrapers import federal_register
+from scrapers import faa_drs_api, faa_drs_sync, federal_register
 from scrapers.federal_register import search_ads as fr_search
 from scrapers.faa_govinfo import search_ads as govinfo_search
 from scrapers.easa import (
@@ -1388,6 +1389,52 @@ RUNNERS = {
 
 
 # ---------------------------------------------------------------------------
+# FAA DRS: sincronizacion de drs_documents (no es una fuente de `ads`)
+# ---------------------------------------------------------------------------
+def run_drs_sync(doctypes: list[str], dry_run: bool = False, env: dict | None = None,
+                 client=None, store=None) -> int:
+    """Sincroniza DRS y devuelve el exit code (0 ok, 1 con errores).
+
+    DRS no escribe `ads` ni `scrape_runs`: alimenta `drs_documents` y el
+    vinculo `ads.drs_document_guid` (scrapers/faa_drs_sync.py). Una corrida
+    con cualquier error (pagina fallida, documento descartado, enlace
+    fallido) sale != 0 para que el job quede en rojo; el cursor solo avanza
+    tras recorrer todas las paginas de un doctype.
+
+    Con DRS_API_ENABLED apagado no hace nada y sale 0: el job queda verde y
+    el log dice por que no corrio.
+    """
+    if client is None:
+        if not faa_drs_api.is_enabled(env):
+            logger.info("[DRS] DRS_API_ENABLED apagado: la sincronizacion DRS no corre")
+            return 0
+        try:
+            client = faa_drs_api.DrsClient.from_env(env)
+        except faa_drs_api.DrsError as e:
+            logger.error(f"[DRS] {e}")
+            return 1
+    if store is None:
+        store = faa_drs_sync.DryRunStore() if dry_run else faa_drs_sync.SupabaseDrsStore(get_supabase_client())
+
+    report = faa_drs_sync.sync(client, store, doctypes)
+    errors = report.errors
+    for err in errors[:50]:
+        _record_write_error(f"[DRS] {err}")
+    if len(errors) > 50:
+        _record_write_error(f"[DRS] ... y {len(errors) - 50} errores mas")
+    lines = [f"Resumen DRS{' (DRY-RUN)' if dry_run else ''}"]
+    lines += [
+        f"  {r.doctype:8}: {r.mode or '-'}, {r.pages} paginas, {r.documents} documentos, "
+        f"cursor -> {r.advanced_to}{' ERROR' if r.error else ''}"
+        for r in report.results
+    ]
+    lines += [f"  ADs enlazados : {report.linked}", f"  Errores       : {len(errors)}"]
+    bar = "=" * 50
+    logger.info("\n".join(["", bar, *lines, bar]))
+    return 1 if errors else 0
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -1423,7 +1470,29 @@ def main():
         help="Solo federal_register: corre tambien la fase GovInfo MODS "
              "(lenta; solo completa docket/amendment, no la identidad)",
     )
+    parser.add_argument(
+        "--drs",
+        action="store_true",
+        help="Sincroniza FAA DRS (ADFRAWD + ADFREAD) hacia drs_documents en vez de "
+             "scrapear fuentes. Requiere DRS_API_ENABLED y DRS_API_KEY",
+    )
+    parser.add_argument(
+        "--drs-doctype",
+        choices=faa_drs_api.DOCTYPES,
+        default=None,
+        help="Solo con --drs: sincroniza un solo doctype (ADFREAD es una pagina)",
+    )
     args = parser.parse_args()
+
+    if args.drs_doctype and not args.drs:
+        parser.error("--drs-doctype requiere --drs")
+    if args.drs:
+        clashing = [flag for flag, on in (("--source", args.source), ("--reset", args.reset),
+                                          ("--since", args.since), ("--with-govinfo", args.with_govinfo)) if on]
+        if clashing:
+            parser.error(f"--drs no se combina con {', '.join(clashing)}")
+        doctypes = [args.drs_doctype] if args.drs_doctype else list(faa_drs_api.DOCTYPES)
+        sys.exit(run_drs_sync(doctypes, dry_run=args.dry_run))
 
     if args.since and not re.match(r"^\d{4}-\d{2}-\d{2}$", args.since):
         parser.error("--since debe tener formato YYYY-MM-DD")
