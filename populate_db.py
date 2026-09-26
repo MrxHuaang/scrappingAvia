@@ -28,7 +28,6 @@ import enrich
 
 from scrapers.federal_register import search_ads as fr_search
 from scrapers.faa_govinfo import search_ads as govinfo_search
-from scrapers.faa_drs import search_ads as drs_search
 from scrapers.easa import (
     search_ads as easa_search,
     search_main_page as easa_main,
@@ -982,30 +981,20 @@ def _merge_faa_results(fr_rows: list[dict], govinfo_rows: list[dict]) -> list[di
 def run_federal_register(since: str | None = None, with_govinfo: bool = False) -> list[dict]:
     """
     Source 'federal_register' consolida upstreams FAA bajo el mismo source key:
-      1. DRS (drs.faa.gov)        -> pre-1995 historicos (best-effort)
-      2. FR API (year-split)      -> 1994+ via federalregister.gov (contenido
+      1. FR API (year-split)      -> 1994+ via federalregister.gov (contenido
          E identidad: `docket_ids` trae numero AD, docket y amendment)
-      3. GovInfo API (MODS XML)   -> opcional (--with-govinfo). Ya no aporta
+      2. GovInfo API (MODS XML)   -> opcional (--with-govinfo). Ya no aporta
          identidad; solo completa Docket/Amendment faltantes.
 
     since (YYYY-MM-DD): acota FR API y GovInfo a publicaciones desde esa fecha
-    (runs incrementales); DRS no aplica (historicos pre-1995).
+    (runs incrementales).
     """
-    logger.info("Scraping federal_register (DRS + FR API%s)..." %
+    logger.info("Scraping federal_register (FR API%s)..." %
                 (" + GovInfo MODS" if with_govinfo else ""))
     all_results: list[dict] = []
 
-    # Fase 1: DRS pre-1995 (best-effort, no falla si Akamai bloquea)
-    logger.info("  [1] DRS (drs.faa.gov, pre-1995 historicos)...")
-    try:
-        drs_results = drs_search(pre_govinfo_only=True)
-        logger.info(f"  DRS: {len(drs_results)} ADs")
-        all_results.extend(drs_results)
-    except Exception as e:
-        logger.warning(f"  DRS fallo (continua pipeline): {e}")
-
-    # Fase 2: FR API year-split (1994 -> current)
-    logger.info("  [2] Federal Register API (year-split, identidad via docket_ids)...")
+    # Fase 1: FR API year-split (1994 -> current)
+    logger.info("  [1] Federal Register API (year-split, identidad via docket_ids)...")
     if since:
         from scrapers.federal_register import search_ads_by_year_range
         # Year-split desde el anio de --since; el filtro fino por fecha lo da
@@ -1015,16 +1004,16 @@ def run_federal_register(since: str | None = None, with_govinfo: bool = False) -
         fr_results = fr_search()
     logger.info(f"  FR API: {len(fr_results)} ADs")
 
-    # Fase 3 (opcional): GovInfo MODS. Solo completa Docket/Amendment; la
+    # Fase 2 (opcional): GovInfo MODS. Solo completa Docket/Amendment; la
     # identidad ya viene de docket_ids y NO debe pisarse con el MODS XML.
     gov_results: list[dict] = []
     if not with_govinfo:
-        logger.info("  [3] GovInfo MODS: omitido (--with-govinfo para habilitar)")
+        logger.info("  [2] GovInfo MODS: omitido (--with-govinfo para habilitar)")
         all_results.extend(_merge_faa_results(fr_results, gov_results))
         logger.info(f"federal_register: {len(all_results)} ADs encontrados (pre-dedupe)")
         return all_results
 
-    logger.info("  [3] GovInfo API (MODS XML: completa docket + amendment)...")
+    logger.info("  [2] GovInfo API (MODS XML: completa docket + amendment)...")
     try:
         # Mismo span que FR API (desde el 1 de enero del anio de --since) para
         # que el merge cubra los mismos documentos; el cache MODS hace baratos

@@ -60,17 +60,13 @@ GOVINFO_API_KEY=...               # free key https://api.govinfo.gov/signup/
 
 Never commit `.env`.
 
-### FAA: optional Playwright for pre-1995 ADs
+### FAA upstreams
 
-The `federal_register` source consolidates 3 upstreams: DRS (Playwright,
-pre-1995 historical), FR API (year-split, 1994+), and GovInfo (MODS XML,
-optional `--with-govinfo`). DRS is best-effort — the pipeline does not fail if
-the browser is missing.
-
-```bash
-pip install playwright
-playwright install chromium       # ~150MB
-```
+The `federal_register` source consolidates 2 upstreams: FR API (year-split,
+1994+) and GovInfo (MODS XML, optional `--with-govinfo`). Both take holder and
+models from `scrapers/common/fr_applicability.py`. ADs before 1994 are not in
+either; the DRS scraper that tried drs.faa.gov was removed (Akamai blocked it,
+it always returned 0).
 
 ## Usage
 
@@ -131,7 +127,6 @@ scrapers/
   common/                    Shared HTTP (headers + backoff), atomic JSON cache, logging
   federal_register.py        FAA via federalregister.gov API (identity from docket_ids)
   faa_govinfo.py             GovInfo MODS XML (docket/amendment backfill, optional)
-  faa_drs.py                 FAA DRS via Playwright (pre-1995, best-effort)
   transport_canada.py        TC CAWIS HTML scraping (+ PDF deep fields)
   easa.py                    EASA AD list paginated HTML (+ detail page + PDF)
   anac_brazil.py             ANAC Brazil HTML

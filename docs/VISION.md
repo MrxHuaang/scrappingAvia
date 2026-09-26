@@ -129,8 +129,8 @@ audit log, saved/notes/reviewed, watchlist (feed por flota), exports CSV, Stripe
 ## Limitaciones y riesgos conocidos
 
 - **Pre-1994 FAA**: ni FR API ni GovInfo indexan ADs anteriores a 1994 con metadata
-  de granulo. Única vía: FAA DRS (Akamai lo bloquea; el scraper Playwright es
-  best-effort y suele retornar 0) o solicitar bulk export a FAA. **No se evaden
+  de granulo. Única vía: FAA DRS (Akamai lo bloquea; el scraper Playwright que
+  lo intentaba se eliminó porque siempre retornaba 0) o solicitar bulk export a FAA. **No se evaden
   protecciones anti-bot** — decisión de diseño.
 - **CASA / GCAA / AEROCIVIL**: bloqueados o caídos. Documentado, no se insiste.
 - **Applicability v1 es ILIKE**: genera falsos positivos/negativos. No venderla

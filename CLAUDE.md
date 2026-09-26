@@ -260,16 +260,13 @@ correccion, que llega despues en orden cronologico.
 
 `run_federal_register()`:
 
-1. **DRS** (`scrapers/faa_drs.py`) — drs.faa.gov via Playwright, pre-1995.
-   Best-effort: si Akamai bloquea o falta playwright, retorna `[]`. En la
-   practica retorna 0.
-2. **FR API** (`scrapers/federal_register.py`) — year-split 1994→presente (evita
+1. **FR API** (`scrapers/federal_register.py`) — year-split 1994→presente (evita
    el cap de 10k por query). Aporta identidad Y contenido. El full text de
    GovInfo se sigue bajando para `compliance_time`, AMOC y supersession, con
    **prefetch concurrente** (`FULLTEXT_WORKERS`, 8 hilos): en serie son ~13.5k
    GETs de ~1s (horas), con prefetch ~10 min. Cache en
    `outputs/fr_fulltext_cache.json`.
-3. **GovInfo MODS** (`scrapers/faa_govinfo.py`) — **opcional**, `--with-govinfo`.
+2. **GovInfo MODS** (`scrapers/faa_govinfo.py`) — **opcional**, `--with-govinfo`.
    Ya NO aporta identidad (su regex tiene el mismo defecto); solo completa
    `Docket`/`Amendment` faltantes. Sin el flag no se corre.
 
@@ -294,12 +291,9 @@ python scripts/test_faa_identity.py           # self-check sin red ni DB
 python populate_db.py --source federal_register --since 2026-01-01
 ```
 
-### Setup adicional
-
-```bash
-pip install playwright
-playwright install chromium    # ~150MB, solo Phase DRS
-```
+Los ADs pre-1994 no estan en la FR API ni en GovInfo. El scraper de DRS
+(drs.faa.gov via Playwright) se elimino: Akamai lo bloqueaba y devolvia 0 en
+cada corrida.
 
 ### Reset completo
 
