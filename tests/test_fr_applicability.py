@@ -13,6 +13,7 @@ import os
 
 import pytest
 
+import enrich
 import populate_db
 from scrapers import faa_govinfo, federal_register
 from scrapers.common.fr_applicability import applicability_fields, extract_applicability
@@ -146,3 +147,80 @@ def test_govinfo_uses_the_same_extraction_from_the_title():
 def _doc_args(number: str) -> dict:
     d = _by_doc(number)
     return {"title": d["title"], "abstract": d["abstract"]}
+
+
+# ------------------------------------------------------------- sección Applicability
+
+with open(os.path.join(os.path.dirname(__file__), "fixtures", "fr_text.json"), encoding="utf-8") as _f:
+    TEXT_DOCS = {d["document_number"]: d for d in json.load(_f) if d.get("document_number")}
+
+
+def _text_split(number: str) -> dict:
+    d = TEXT_DOCS[number]
+    with open(os.path.join(os.path.dirname(__file__), "fixtures", "fr_text", d["file"]), encoding="utf-8") as f:
+        return enrich.split_ad_sections(f.read(), d["expected_ad"], d["expected_amendment"])
+
+
+def _applicability_body(number: str) -> str:
+    return next(s["body"] for s in _text_split(number)["sections"] if s["kind"] == "applicability")
+
+
+def test_models_come_from_the_applicability_section_before_the_abstract():
+    """2024-13013: el abstract resume la applicability de los ADs que reemplaza
+    (A330 y A340); la sección Applicability del rule solo lista A330."""
+    d = TEXT_DOCS["2024-13013"]
+    from_abstract = extract_applicability(d["title"], d["abstract"])
+    assert "A340-200" in from_abstract.models
+    r = extract_applicability(d["title"], d["abstract"], _applicability_body("2024-13013"))
+    assert r.holder == from_abstract.holder == "Airbus SAS"
+    assert r.models[:3] == ("A330-201", "-202", "-203")
+    assert r.models[-1] == "-941"
+    assert not any("A340" in m for m in r.models)
+
+
+def test_section_that_does_not_name_the_holder():
+    """Sección legada: "Model 737-300, -400, and -500 series airplanes ..."."""
+    title = "Airworthiness Directives; The Boeing Company Airplanes"
+    r = extract_applicability(title, "", _applicability_body("98-4716"))
+    assert (r.holder, r.models) == ("The Boeing Company", ("737-300", "-400", "-500 series"))
+    r = extract_applicability(title, "", "(c) This AD applies to Model 737-8 airplanes.")
+    assert r.models == ("737-8",)
+
+
+def test_section_without_models_falls_back_to_the_abstract():
+    r = extract_applicability(**_doc_args("2024-08105"),
+                              applicability_text="This AD applies to the airplanes identified in Table 1 of this AD.")
+    assert r.models == ("737-8", "737-9")
+
+
+def test_title_models_still_win_over_the_section():
+    """Un título legado que enumera modelos no cambia por la sección."""
+    d = TEXT_DOCS["98-4716"]
+    assert (extract_applicability(d["title"], d["abstract"], _applicability_body("98-4716")).models
+            == extract_applicability(d["title"], d["abstract"]).models)
+
+
+def test_federal_register_takes_models_from_the_anchored_section(monkeypatch):
+    d = TEXT_DOCS["2024-13013"]
+    split = _text_split("2024-13013")
+    monkeypatch.setattr(federal_register, "_fetch_fulltext_fields",
+                        lambda *a, **k: {"v": 2, **split})
+    rec = federal_register._parse_document({
+        "title": d["title"], "abstract": d["abstract"], "document_number": "2024-13013",
+        "publication_date": d["publication_date"], "type": "Rule", "docket_ids": d["docket_ids"],
+    })
+    assert rec["Make"] == "Airbus SAS"
+    assert rec["Model"].startswith("A330-201, -202") and "A340" not in rec["Model"]
+    assert rec["Applicability"] == [{"make": "Airbus SAS", "models": rec["Model"].split(", ")}]
+
+
+def test_an_unanchored_text_is_not_a_models_source(monkeypatch):
+    d = TEXT_DOCS["2024-13013"]
+    split = _text_split("2024-13013")
+    monkeypatch.setattr(federal_register, "_fetch_fulltext_fields",
+                        lambda *a, **k: {"v": 2, **split, "status": "unanchored"})
+    rec = federal_register._parse_document({
+        "title": d["title"], "abstract": d["abstract"], "document_number": "2024-13013",
+        "publication_date": d["publication_date"], "type": "Rule", "docket_ids": d["docket_ids"],
+    })
+    assert "A340-200" in rec["Model"]  # el abstract, como antes

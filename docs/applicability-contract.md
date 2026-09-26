@@ -41,7 +41,8 @@ normalizada:
 
 ### FAA (`scrapers/common/fr_applicability.py`)
 
-Única extracción para Federal Register y GovInfo, sobre título + abstract:
+Única extracción para Federal Register y GovInfo, sobre título + abstract y,
+en Federal Register, la sección Applicability del texto del rule:
 
 - **Titular** = el approval holder del título ("Airworthiness Directives;
   <Titular> Airplanes|Helicopters|Turbofan Engines|Propellers|..."). Con "Type
@@ -49,10 +50,17 @@ normalizada:
   X viaja en `previously_held_by` dentro del mismo elemento — informativo,
   `_applicability_pairs` lo ignora.
 - **Modelos** = la lista completa del título legado ("Boeing Model 747-100,
-  747-200B Series Airplanes") o, si el título no la trae, del abstract ("for
-  all/certain <Titular> Model A, B, and C airplanes"), tal como la escribe la
-  fuente. Sin modelo extraíble el elemento va con `models: []` →
-  `model_status=unknown`, nunca "aplica a todo".
+  747-200B Series Airplanes") o, si el título no la trae, de la **sección
+  Applicability** del rule ("This AD applies to The Boeing Company Model 737-8
+  and 737-9 airplanes", "Model 737-300, -400, and -500 series airplanes ...")
+  y, si no hay sección anclada o de ella no sale ningún modelo, del abstract
+  ("for all/certain <Titular> Model A, B, and C airplanes"), tal como la escribe
+  la fuente. La sección solo cuenta si el texto quedó anclado al encabezado de
+  identidad del AD (`status=extracted`, ver "Texto del AD en secciones" en
+  CLAUDE.md): el abstract resume y a veces describe la applicability de los ADs
+  que reemplaza (2024-13013 nombra modelos A340 que el AD no cubre). GovInfo
+  MODS no tiene texto y sigue con título. Sin modelo extraíble el elemento va
+  con `models: []` → `model_status=unknown`, nunca "aplica a todo".
 - **Sin titular inequívoco** ("Various Aircraft", "X and Various Restricted
   Category Helicopters", dos fabricantes unidos por "and") no se emite
   `Applicability` ni `Make`: el AD viaja `failed` y sus filas guardadas no se

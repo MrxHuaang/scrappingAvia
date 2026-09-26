@@ -509,8 +509,16 @@ def _holder_variants(holder: str, previous: tuple[str, ...]) -> list[str]:
 # comas, sufijos societarios ("Airbus SAS"), siglas y paréntesis ("(RR)",
 # "(type certificate previously held by ...)", "(now Bell Textron Inc.)").
 _AFTER_HOLDER_RE = re.compile(rf"(?:[\s,]+(?:{_SUFFIX_RE.pattern}))+")
-# Abstract que no repite al titular: "for all Model FAN JET FALCON ...".
+# Texto que no repite al titular. En el abstract: "for all Model FAN JET
+# FALCON ...". En la sección Applicability del rule, al principio: "Model
+# A320-111 series airplanes, ...", "All Model 747 and 767 series airplanes",
+# "This AD applies to Model 737-8 airplanes".
 _BARE_MODEL_RE = re.compile(r"\b(?:for|to)\s+(?:all|certain)\s+(?=Models?\s)")
+_SECTION_BARE_MODEL_RE = re.compile(
+    r"^(?:This AD (?:applies to|affects)\s+)?(?:(?i:all|certain)\s+)?(?=Models?\s)"
+)
+# "(c) This AD applies to ...": la letra del párrafo no es parte del texto.
+_PARAGRAPH_LETTER_RE = re.compile(r"^\s*\([a-z]\)\s+")
 
 
 def _skip_after_holder(text: str, p: int) -> int:
@@ -528,26 +536,32 @@ def _skip_after_holder(text: str, p: int) -> int:
         p = end
 
 
-def _models_from_abstract(abstract: str, holder: str, previous: tuple[str, ...]) -> tuple[str, ...]:
-    if not abstract:
+def _models_from_prose(text: str, holder: str, previous: tuple[str, ...],
+                       bare_re: "re.Pattern") -> tuple[str, ...]:
+    """Modelos del abstract o de la sección Applicability: la lista que sigue
+    al titular ("for certain The Boeing Company Model 737-8 and 737-9
+    airplanes") o, si el texto no lo nombra, la que marca `bare_re`."""
+    if not text:
         return ()
     for variant in _holder_variants(holder, previous):
-        for m in re.finditer(rf"(?<![\w-]){re.escape(variant)}(?![\w-])", abstract, re.I):
-            models = _parse_models(abstract, _skip_after_holder(abstract, m.end()),
+        for m in re.finditer(rf"(?<![\w-]){re.escape(variant)}(?![\w-])", text, re.I):
+            models = _parse_models(text, _skip_after_holder(text, m.end()),
                                    prose=True, allow_no_noun=False)
             if models:
                 return models
-    m = _BARE_MODEL_RE.search(abstract)
+    m = bare_re.search(text)
     if m:
-        return _parse_models(abstract, m.end(), prose=True, allow_no_noun=False)
+        return _parse_models(text, m.end(), prose=True, allow_no_noun=False)
     return ()
 
 
 # ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
-def extract_applicability(title: str, abstract: str = "") -> FRApplicability:
-    """Titular y modelos de un AD de la FAA a partir de su título y abstract."""
+def extract_applicability(title: str, abstract: str = "", applicability_text: str = "") -> FRApplicability:
+    """Titular y modelos de un AD de la FAA a partir de su título, su abstract
+    y, si se tiene, el cuerpo de la sección Applicability del rule
+    (`enrich.split_ad_sections`, kind 'applicability')."""
     subject = _subject(title)
     abstract = _clean_spaces(_fold(abstract or ""))
     holder, previous, work, models_at, no_noun = _holder_from_title(subject, abstract)
@@ -555,12 +569,16 @@ def extract_applicability(title: str, abstract: str = "") -> FRApplicability:
     # Un título legado que enumera modelos ("Boeing Model 747-100, 747-200B,
     # ... 747SP Series Airplanes") es más preciso que su abstract ("certain
     # Boeing Model 747 series airplanes"); el título moderno no trae modelos
-    # ("The Boeing Company Airplanes") y ahí manda el abstract.
+    # ("The Boeing Company Airplanes"). Ahí manda la sección Applicability,
+    # que es el texto regulatorio; el abstract (su resumen) solo cuando no hay
+    # sección o de ella no sale ningún modelo.
     models: tuple[str, ...] = ()
     if models_at is not None:
         models = _parse_models(work, models_at, prose=False, allow_no_noun=no_noun)
     if not models and holder:
-        models = _models_from_abstract(abstract, holder, previous)
+        section = _clean_spaces(_fold(_PARAGRAPH_LETTER_RE.sub("", applicability_text or "")))
+        models = (_models_from_prose(section, holder, previous, _SECTION_BARE_MODEL_RE)
+                  or _models_from_prose(abstract, holder, previous, _BARE_MODEL_RE))
     return FRApplicability(holder=holder, models=models, previously_held_by=previous)
 
 
@@ -572,11 +590,11 @@ def title_holders(title: str, abstract: str = "") -> tuple[str | None, tuple[str
     return holder, previous
 
 
-def applicability_fields(title: str, abstract: str = "") -> dict:
+def applicability_fields(title: str, abstract: str = "", applicability_text: str = "") -> dict:
     """Campos del registro del scraper derivados de una sola extracción:
     `Make`/`Model` escalares (columnas `ads.make`/`ads.model`) y, si hay
     titular, `Applicability` para `ad_applicability`."""
-    result = extract_applicability(title, abstract)
+    result = extract_applicability(title, abstract, applicability_text)
     out: dict = {"Make": result.holder or "", "Model": ", ".join(result.models)}
     applicability = result.raw_applicability()
     if applicability is not None:

@@ -221,6 +221,13 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str,
     return cache[doc_number]
 
 
+def _applicability_section(ft: dict) -> str:
+    """Cuerpo de la seccion Applicability del texto anclado, o ""."""
+    if ft.get("status") != "extracted":
+        return ""
+    return next((s["body"] for s in ft.get("sections") or [] if s.get("kind") == "applicability"), "")
+
+
 def _prefetch_fulltext(docs: list[dict]) -> None:
     """
     Calienta el cache full-text de una pagina de resultados en paralelo.
@@ -509,9 +516,11 @@ def _parse_document(doc) -> dict | None:
 
         # Titular y modelos: Make/Model escalares (ads.make/ads.model) y
         # Applicability [{make, models[]}] para ad_applicability, de una sola
-        # extraccion sobre titulo + abstract. Sin titular inequivoco no hay
-        # Applicability ni Make y el AD viaja `failed` (docs/applicability-contract.md).
-        out.update(applicability_fields(title, abstract))
+        # extraccion sobre titulo + abstract y, si el texto del rule quedo
+        # anclado, su seccion Applicability (los modelos salen de ahi antes
+        # que del abstract). Sin titular inequivoco no hay Applicability ni
+        # Make y el AD viaja `failed` (docs/applicability-contract.md).
+        out.update(applicability_fields(title, abstract, _applicability_section(ft)))
 
         # compliance_time + AMOC ya vienen del full text bajado arriba (ft).
         if ft.get("compliance_time"):

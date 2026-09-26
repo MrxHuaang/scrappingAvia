@@ -119,7 +119,7 @@ tienen prioridad sobre la derivacion automatica.
 
 | Fuente | Fuente del texto | Campos profundos | Cache |
 |--------|------------------|------------------|-------|
-| `federal_register` | GovInfo full-text (`api.govinfo.gov/.../htm`) + abstract FR | texto del AD en secciones (`enrich.split_ad_sections`), unsafe/corrective (abstract), compliance_time + AMOC (cuerpo), SBs | `outputs/fr_fulltext_cache.json` (v2) |
+| `federal_register` | GovInfo full-text (`api.govinfo.gov/.../htm`) + abstract FR | texto del AD en secciones (`enrich.split_ad_sections`), modelos de la sección Applicability, unsafe/corrective (abstract), compliance_time + AMOC (cuerpo), SBs | `outputs/fr_fulltext_cache.json` (v2) |
 | `easa` | pagina detalle `ad.easa.europa.eu/ad/{n}` + **PDF** (`pypdf`) | published_date/AMOC/SBs/supersesion (detalle) + unsafe/corrective/compliance (PDF: Reason / Required Action(s) and Compliance Time(s)) | `easa_detail_cache.json`, `easa_pdf_cache.json` |
 | `transport_canada` | **PDF** `AD_dl.aspx?...ft=pdf` (`pypdf`) | unsafe/corrective/compliance/SBs. 3 layouts: propia CF (Background/Corrective/Compliance), EU-adoptada (formato EASA), US-adoptada (FAA, best-effort) | `tc_pdf_cache.json` |
 | `anac_brazil` / `anac_argentina` | listado (+Action codes Brasil) | solo escalares: state_of_design, status canonico, priority, product_type, applicability. Prosa profunda **omitida** (PDFs PT/ES, volumen ~466, plataforma EN-only) | — |
@@ -320,8 +320,10 @@ corrida (`search_ads_by_year_range`), pero solo si ese año hubo algún intento
 nuevo: una corrida con todo cacheado no lo escribe. Se carga entero en
 memoria, también en `scripts/link_supersession.py`.
 
-Las tablas de texto en la base todavía no existen: por ahora el texto solo
-vive en el cache.
+La sección Applicability anclada es además la fuente de los **modelos** de
+`ad_applicability` (antes que el abstract; ver
+docs/applicability-contract.md). Las tablas de texto en la base todavía no
+existen: por ahora el texto solo vive en el cache.
 
 ### Verificar y reparar la identidad
 

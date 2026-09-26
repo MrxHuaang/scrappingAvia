@@ -147,6 +147,77 @@ titular viaja `failed` y conserva sus filas.
   Continental Motors Reciprocating Engines", "Schweizer Aircraft Corporation and
   Hughes Helicopters, Inc. Model 269A ..."): sin titular, como pide el contrato.
 
+## Texto del rule y modelos desde la sección Applicability
+
+Federal Register toma los modelos de la sección Applicability del texto del
+rule (`enrich.split_ad_sections`, ver CLAUDE.md) cuando el título no los trae;
+el abstract queda de respaldo. La muestra de 1754 documentos solo tiene título
+y abstract: medirla exige bajar 1754 granulos de GovInfo, así que la medición
+de este cambio se hizo sobre granulos reales descargados a mano y el corpus
+completo se mide con el cache de una corrida (más abajo).
+
+**Fixtures** (`tests/fixtures/fr_text/`, 12 granulos reales recortados y un
+compuesto; `tests/fixtures/fr_text.json` dice qué caso cubre cada uno): 10
+`extracted`, 2 `unanchored` (la corrección E8-2623, que cita los ADs sin su
+texto, y E7-1708, cuyo encabezado trae un amendment con errata). De los
+`extracted`, uno no tiene condición insegura (la rescisión 2017-25253): la base
+lo contará incompleto.
+
+**Muestra al azar** (99 documentos RULE de 1994-2026, sin elegir): 97
+`extracted` y 2 `unanchored` (una corrección y la errata de E7-1708). De los 97,
+96 traen applicability, condición insegura y compliance o acciones requeridas;
+el que no es la rescisión 2017-25253. Por formato: 1994-1999 23/23, 2000-2007
+20/20 (más 1 `unanchored`), 2008 en adelante 53/54 (más 1 `unanchored`).
+
+**Modelos**: sobre los 31 granulos descargados de los cuatro años de la
+muestra, 29 dan los mismos modelos que el abstract (el título legado ya los
+enumera, o el abstract repite la sección) y 2 cambian, los dos a mejor:
+
+| Documento | Abstract | Sección Applicability |
+|---|---|---|
+| 2024-13013 | A330-200 Freighter, A330-200, -300, **A340-200, -500, -600 series** (la applicability de los ADs que reemplaza) | A330-201, -202, ..., -841, -941 |
+| 2015-01257 | A318, A319, A320, A321 series | A318-111, -112, ..., A321-213 (las designaciones del AD) |
+
+Sin texto anclado (`unanchored`, `error`, `empty`, sin `GOVINFO_API_KEY`) la
+extracción es la de antes: título y abstract.
+
+### Medirlo sobre el corpus completo
+
+La corrida en seco llena el cache v2 sin tocar la base (con
+`GOVINFO_API_KEY` en `.env`; ~13.5k granulos la primera vez, ~10 min):
+
+```bash
+python populate_db.py --source federal_register --dry-run
+python -c "import json, collections; c = json.load(open('outputs/fr_fulltext_cache.json', encoding='utf-8')); \
+print(collections.Counter(e.get('status', 'v1') for e in c.values()))"
+```
+
+Modelos con y sin la sección, uniendo el cache con el índice de identidad
+(`scripts/fr_identity.py`, que trae título y abstract por document_number):
+
+```bash
+python scripts/fr_identity.py
+python -c "
+import json
+from scrapers.common.fr_applicability import extract_applicability
+from scrapers.federal_register import _applicability_section
+idx = json.load(open('outputs/fr_identity.json', encoding='utf-8'))
+cache = json.load(open('outputs/fr_fulltext_cache.json', encoding='utf-8'))
+changed = [(d, extract_applicability(v['title'], v.get('abstract') or '').models,
+            extract_applicability(v['title'], v.get('abstract') or '', _applicability_section(cache.get(d, {}))).models)
+           for d, v in idx.items()]
+changed = [c for c in changed if c[1] != c[2]]
+print(len(changed), 'de', len(idx))
+for d, old, new in changed[:30]: print(d, old, '->', new)
+"
+```
+
+Qué mirar: los `unanchored` deberían ser correcciones y erratas de encabezado;
+un `unanchored` en un rule normal es un formato de encabezado nuevo. En los
+cambios de modelos, la sección debería dar las designaciones del propio AD; un
+cambio que pierde modelos del AD es un caso nuevo para `tests/fixtures/fr_text`.
+La completitud del texto la decide la base, no este reporte.
+
 ## Tipo de producto FAA: antes y después
 
 `enrich.classify_product_type` (la regla única de FR y GovInfo) ahora tipa
