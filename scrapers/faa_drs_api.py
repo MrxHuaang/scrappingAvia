@@ -44,9 +44,11 @@ BASE_URL = "https://drs.faa.gov/api/drs/data-pull"
 DOCTYPES = ("ADFRAWD", "ADFREAD")
 PAGE_SIZE = 750
 
-#: Numeros de AD por POST `filtered`. La API devolvio exactos los 10 de una
-#: consulta de 10; no documenta un tope, asi que se queda holgado por debajo.
-FILTER_CHUNK = 25
+#: Numeros de AD por POST `filtered`. La API no documenta el tope, pero lo
+#: aplica: 10 valores en `drs:documentNumber` devuelven 200 y 11 devuelven 400
+#: ("One or more filters provided are invalid..."), el mismo error que una
+#: clave desconocida.
+FILTER_CHUNK = 10
 
 ENV_KEY = "DRS_API_KEY"
 ENV_ENABLED = "DRS_API_ENABLED"

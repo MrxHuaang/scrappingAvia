@@ -15,6 +15,8 @@ from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "drs"
 FAKE_KEY = "test-key-not-a-real-drs-key"
+#: The real API answers 400 to a filter with more than 10 values.
+FILTER_MAX_VALUES = 10
 
 
 def load_fixture(name: str) -> dict:
@@ -95,7 +97,7 @@ class FakeSession:
         doctype = url.rsplit("/", 2)[-2]
         filters = (json or {}).get("documentFilters") or {}
         unknown = [k for k in filters if k != "drs:documentNumber"]
-        if unknown:
+        if unknown or len(filters.get("drs:documentNumber") or []) > FILTER_MAX_VALUES:
             return FakeResponse(400, load_fixture("error_invalid_filter.json"))
         wanted = set(filters.get("drs:documentNumber") or [])
         docs = [d for d in self.corpus.get(doctype, []) if d.get("drs:documentNumber") in wanted]

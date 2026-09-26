@@ -196,7 +196,15 @@ def test_find_by_ad_numbers_chunks_long_lists():
     numbers = [f"2024-01-{i:02d}" for i in range(60)]
     docs = _client(session).find_by_ad_numbers("ADFRAWD", numbers)
     assert len(docs) == 60
-    assert [len(c["json"]["documentFilters"]["drs:documentNumber"]) for c in session.calls] == [25, 25, 10]
+    assert [len(c["json"]["documentFilters"]["drs:documentNumber"]) for c in session.calls] == [10] * 6
+
+
+def test_the_fake_rejects_more_than_ten_filter_values_like_the_api():
+    session = FakeSession({"ADFRAWD": _corpus(11)})
+    body = {"offset": 0, "documentFilters": {"drs:documentNumber": [f"2024-01-{i:02d}" for i in range(11)]}}
+    resp = session.post("https://drs.faa.gov/api/drs/data-pull/ADFRAWD/filtered", json=body,
+                        headers={"x-api-key": FAKE_KEY})
+    assert resp.status_code == 400
 
 
 def test_a_400_carries_the_api_error_message():
