@@ -82,7 +82,7 @@
     "expected_amendment": "39-14246",
     "title": "Airworthiness Directives; Bombardier Model CL-600-2B19 (Regional Jet Series 100 & 440) Airplanes",
     "abstract": "The FAA is superseding an existing airworthiness directive (AD), which applies to all Bombardier Model CL-600-2B19 series airplanes. That AD currently requires revising the airplane flight manual (AFM) to provide the flightcrew with operating limitations and procedures to enable them to maintain controllability of the airplane in the event that aileron control stiffness is encountered during flight. This new AD requires revising the Airworthiness Limitations section of the Instructions of Continued Airworthiness to incorporate certain repetitive tasks for the aileron control system and requires a briefing to advise flightcrews that certain aileron control checks are no longer required. After accomplishing the applicable initial tasks, the existing AFM revisions for the aileron control check may be removed from the AFM. This AD results from the development of terminating actions for the AFM revisions. We are issuing this AD to prevent aileron control stiffness during flight, which could result in reduced or possible loss of controllability of the airplane.",
-    "note": "2005, encabezados sin letra y parrafos (a)...; docket_ids trae 'AD-2005-18-06', que no se parsea: el AD esperado se fija a mano."
+    "note": "2005, encabezados sin letra y parrafos (a)...; docket_ids trae el AD con prefijo pegado, 'AD-2005-18-06'."
   },
   {
     "file": "05-2578.htm",

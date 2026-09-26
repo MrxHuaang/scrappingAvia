@@ -239,7 +239,11 @@ regulatorio del documento, ya estructurado.
 
 `utils.ad_identity_from_docket_ids()` devuelve `{ad, docket, amendment, project}`
 y cubre 13405 de los 13509 RULE (99%), incluidas las formas legadas de 1995-1999
-(`"Amendment 39-9206, AD 95-09-02"`, `"AD 95-01- 07"`, `"AD 98-18-12-AD"`).
+(`"Amendment 39-9206, AD 95-09-02"`, `"AD 95-01- 07"`, `"AD 98-18-12-AD"`) y
+el número con prefijo pegado (`"AD-2005-18-06"`, `"AD No. 2020-19-12"`, 4
+documentos). Siguen sin AD los números mal escritos en la fuente
+(`"AD 2000-0230"`, `"AD 200106-05"`, `"AD 2017-2017-19-16"`): no se
+reconstruyen.
 
 > **NUNCA** minar el numero AD del cuerpo del rule ni del MODS XML con
 > "el primer `AD nnnn-nn-nn` del texto". El rule cita al AD que **reemplaza**

@@ -57,8 +57,9 @@ def normalize_ad_number(raw: str) -> str:
 # ------------------------------------------------------------------
 # El sufijo "-AD" aparece en entradas legadas ("AD 98-18-12-AD"): se descarta.
 _AD_NUM_LOOSE = r"(?:\d{4}|\d{2})\s*-\s*\d{2}\s*-\s*\d{2,4}(?:\s*R\s*\d+)?(?:\s*-\s*AD\b)?"
-# "AD 2023-12-03" / "A.D. 95-09-02"
-_DOCKET_ID_AD_RE = re.compile(rf"\bA\.?\s?D\.?\s*({_AD_NUM_LOOSE})(?![-\d])", re.I)
+# "AD 2023-12-03" / "A.D. 95-09-02", y con prefijo pegado o "No.":
+# "AD-2005-18-06" (3 documentos RULE de 1994-2026), "AD No. 2020-19-12" (1).
+_DOCKET_ID_AD_RE = re.compile(rf"\bA\.?\s?D\.?\s*(?:-\s*|No\.\s*)?({_AD_NUM_LOOSE})(?![-\d])", re.I)
 # Entrada que es SOLO el numero ("2023-12-03"): la FR API a veces omite el
 # prefijo, y normalize_ad_number() lo quita cuando esta.
 _DOCKET_ID_AD_BARE_RE = re.compile(rf"^({_AD_NUM_LOOSE})$")
