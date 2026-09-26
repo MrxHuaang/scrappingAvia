@@ -119,7 +119,7 @@ tienen prioridad sobre la derivacion automatica.
 
 | Fuente | Fuente del texto | Campos profundos | Cache |
 |--------|------------------|------------------|-------|
-| `federal_register` | GovInfo full-text (`api.govinfo.gov/.../htm`) + abstract FR | texto del AD en secciones (`enrich.split_ad_sections`), modelos de la sección Applicability, unsafe/corrective (abstract), compliance_time + AMOC (cuerpo), SBs | `outputs/fr_fulltext_cache.json` (v2) |
+| `federal_register` | GovInfo full-text (`api.govinfo.gov/.../htm`) + abstract FR | texto del AD en secciones (`enrich.split_ad_sections`), modelos de la sección Applicability, unsafe/corrective (abstract), compliance_time + AMOC (secciones clasificadas, ver docs/fr-text.md), SBs | `outputs/fr_fulltext_cache.json` (v2) |
 | `easa` | pagina detalle `ad.easa.europa.eu/ad/{n}` + **PDF** (`pypdf`) | published_date/AMOC/SBs/supersesion (detalle) + unsafe/corrective/compliance (PDF: Reason / Required Action(s) and Compliance Time(s)) | `easa_detail_cache.json`, `easa_pdf_cache.json` |
 | `transport_canada` | **PDF** `AD_dl.aspx?...ft=pdf` (`pypdf`) | unsafe/corrective/compliance/SBs. 3 layouts: propia CF (Background/Corrective/Compliance), EU-adoptada (formato EASA), US-adoptada (FAA, best-effort) | `tc_pdf_cache.json` |
 | `anac_brazil` / `anac_argentina` | listado (+Action codes Brasil) | solo escalares: state_of_design, status canonico, priority, product_type, applicability. Prosa profunda **omitida** (PDFs PT/ES, volumen ~466, plataforma EN-only) | — |
@@ -312,9 +312,10 @@ declara el AD esperado (el de `docket_ids`, o el respaldo anclado al amendment):
   lo decide la base con una sola regla sobre los `kind`.
 
 **Cache v2** (`outputs/fr_fulltext_cache.json`, una entrada por
-document_number): `{v: 2, status, anchor, sections[], sha, detail,
-compliance_time, amoc, docket, supersedes[], ad_header}`; `sha` es el sha256
-del granulo y `detail` por qué el intento no dejó texto.
+document_number): `{v: 2, status, anchor, sections[], sha, detail, docket,
+supersedes[], ad_header}`; `sha` es el sha256 del granulo y `detail` por qué
+el intento no dejó texto. `compliance_time` y AMOC no se guardan: salen de
+las secciones al parsear (los de una entrada v1 ya no se leen).
 `extracted` y `unanchored` son definitivos; `empty` y `error` se reintentan en la
 corrida siguiente, una vez por corrida. Una entrada v1 (sin `v`) se sigue leyendo
 y se re-pide una vez para obtener sus secciones; si ese intento falla conserva

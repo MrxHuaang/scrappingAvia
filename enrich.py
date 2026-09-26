@@ -651,25 +651,31 @@ _COMPLIANCE_PHRASES = re.compile(
 )
 
 
-def extract_compliance_from_fulltext(text: str | None) -> str | None:
-    """
-    Extrae el plazo de cumplimiento del cuerpo COMPLETO del AD (no del abstract).
-    Localiza la seccion '(g) Compliance' y busca una frase de plazo; si no hay
-    patron explicito, cae a la primera oracion de esa seccion.
-    """
-    if not text:
-        return None
-    m = re.search(r"\([a-z]\)\s*Compliance\b(.{0,1500}?)(?:\([a-z]\)\s+[A-Z]|$)", text, re.I | re.S)
-    scope = m.group(1) if m else text
-    pm = _COMPLIANCE_PHRASES.search(scope)
-    if pm:
-        return re.sub(r"\s+", " ", pm.group(0)).strip()
-    if m:
-        first = re.split(r"(?<=[.])\s", re.sub(r"\s+", " ", scope).strip())[0]
-        first = first.strip()
-        if 8 <= len(first) <= 240:
-            return first
+_AMOC_PHRASE_RE = re.compile(r"alternative methods? of compliance", re.I)
+
+
+def compliance_time_from_sections(sections: list[dict] | None) -> str | None:
+    """Plazo de cumplimiento del texto anclado del AD: la primera frase de
+    `_COMPLIANCE_PHRASES` en sus secciones `compliance` o `required_actions`,
+    en el orden del documento. Sin frase no hay plazo: la oración "Comply
+    with this AD within the compliance times specified" no es uno."""
+    for s in sections or []:
+        if s.get("kind") in ("compliance", "required_actions"):
+            m = _COMPLIANCE_PHRASES.search(s.get("body") or "")
+            if m:
+                return re.sub(r"\s+", " ", m.group(0)).strip()
     return None
+
+
+def amoc_from_sections(sections: list[dict] | None) -> bool:
+    """El AD prevé AMOC: tiene una sección `amoc`, o sus acciones requeridas
+    la nombran. El preámbulo del documento FR ya no cuenta: discute AMOCs de
+    otros ADs y comentarios del público."""
+    return any(
+        s.get("kind") == "amoc"
+        or (s.get("kind") == "required_actions" and _AMOC_PHRASE_RE.search(s.get("body") or ""))
+        for s in sections or []
+    )
 
 
 # ---------------------------------------------------------------------------

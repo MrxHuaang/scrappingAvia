@@ -52,9 +52,9 @@ _FIELDS = [
 
 # ---------------------------------------------------------------------------
 # Full text de GovInfo: el texto del AD en secciones (enrich.split_ad_sections)
-# y, del cuerpo, compliance_time, AMOC, docket y supersession. Se baja una vez
-# por documento y se cachea en outputs/ el resultado del intento (secciones
-# incluidas), no el HTML.
+# y, del cuerpo, docket y supersession; compliance_time y AMOC se derivan de
+# las secciones al parsear. Se baja una vez por documento y se cachea en
+# outputs/ el resultado del intento (secciones incluidas), no el HTML.
 # ---------------------------------------------------------------------------
 FETCH_FULL_TEXT = True  # poner False para saltar el parseo del cuerpo (mas rapido)
 _FULLTEXT_CACHE_PATH = os.path.join(
@@ -70,8 +70,8 @@ _ft_local = threading.local()
 FULLTEXT_WORKERS = 8
 
 # Cache v2, una entrada por document_number:
-#   {v: 2, status, anchor, sections[], sha, detail, compliance_time, amoc,
-#    docket, supersedes[], ad_header}
+#   {v: 2, status, anchor, sections[], sha, detail, docket, supersedes[],
+#    ad_header}
 # `status` es el de enrich.split_ad_sections (extracted | unanchored | empty
 # | error), `sha` el sha256 del granulo bajado y `detail` por qué el intento no
 # dejó texto (None si lo dejó). `extracted` y `unanchored` son definitivos:
@@ -80,7 +80,8 @@ FULLTEXT_WORKERS = 8
 #
 # Una entrada v1 (sin `v`: solo los campos del cuerpo) se sigue leyendo tal
 # cual y se re-pide una vez para obtener sus secciones. Si ese intento falla,
-# conserva sus campos del cuerpo: un intento fallido nunca borra datos buenos.
+# conserva sus campos del cuerpo (docket, supersedes): un intento fallido
+# nunca borra datos buenos. Sus compliance_time/amoc de v1 ya no se leen.
 _FT_CACHE_VERSION = 2
 _FT_FINAL_STATUSES = ("extracted", "unanchored")
 # Documentos ya pedidos en esta corrida: el prefetch y el parseo no repiten
@@ -160,17 +161,10 @@ def _body_fields(html_text: str, ad: str | None, amendment: str | None) -> dict:
         "anchor": split["anchor"],
         "sections": split["sections"],
         "sha": hashlib.sha256(html_text.encode("utf-8")).hexdigest(),
-        "compliance_time": None, "amoc": False, "docket": None, "supersedes": [],
-        "ad_header": ad_header,
+        "docket": None, "supersedes": [], "ad_header": ad_header,
     }
     if split["status"] == "empty":
         return out
-    low = txt.lower()
-    out["amoc"] = (
-        "alternative method of compliance" in low
-        or "alternative methods of compliance" in low
-    )
-    out["compliance_time"] = enrich.extract_compliance_from_fulltext(txt)
     m = _FT_DOCKET_RE.search(txt)
     if m:
         out["docket"] = normalize_ad_number(m.group(1)).replace(" ", "-").upper()
@@ -225,8 +219,7 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str,
     result["detail"] = detail or _ATTEMPT_DETAIL.get((result["status"], bool(result.get("anchor"))))
 
     if result["status"] in _FT_FINAL_STATUSES or not cached:
-        cache[doc_number] = {"compliance_time": None, "amoc": False, "docket": None,
-                             "supersedes": [], "ad_header": None, **result}
+        cache[doc_number] = {"docket": None, "supersedes": [], "ad_header": None, **result}
     else:
         # Intento fallido sobre una entrada con datos: se registra el intento
         # (para reintentarlo) sin perder lo que ya tenia.
@@ -555,10 +548,15 @@ def _parse_document(doc) -> dict | None:
         # Make y el AD viaja `failed` (docs/applicability-contract.md).
         out.update(applicability_fields(title, abstract, _applicability_section(ft)))
 
-        # compliance_time + AMOC ya vienen del full text bajado arriba (ft).
-        if ft.get("compliance_time"):
-            out["Compliance_Time"] = ft["compliance_time"]
-        out["AMOC_Available"] = bool(ft.get("amoc"))
+        # compliance_time y AMOC salen de las secciones clasificadas del texto
+        # anclado, nunca del documento FR entero: su preambulo discute AMOCs
+        # y plazos de otros ADs y de los comentarios. Sin texto anclado no hay
+        # valor del cuerpo y normalize() cae al abstract.
+        sections = ft.get("sections") if ft.get("status") == "extracted" else None
+        compliance_time = enrich.compliance_time_from_sections(sections)
+        if compliance_time:
+            out["Compliance_Time"] = compliance_time
+        out["AMOC_Available"] = enrich.amoc_from_sections(sections)
 
         # Supersession: el rule nuevo declara a cuales ADs reemplaza. El resolver
         # de populate_relations() marca esos ADs viejos como Superseded -> este.

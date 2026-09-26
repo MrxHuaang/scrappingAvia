@@ -73,8 +73,9 @@ def test_extracted_entry_keeps_sections_status_and_sha(govinfo):
     assert entry["sha"] == hashlib.sha256(html.encode("utf-8")).hexdigest()
     assert [s["kind"] for s in entry["sections"]][:3] == ["effective_date", "affected_ads", "applicability"]
     assert entry["anchor"].startswith("2024-06-03 The Boeing Company")
-    # Campos del cuerpo que ya existían (link_supersession lee `supersedes`).
-    assert entry["amoc"] is True and entry["supersedes"] == []
+    # Campos del cuerpo que ya existían (link_supersession lee `supersedes`);
+    # compliance_time y AMOC se derivan de las secciones, no se guardan.
+    assert entry["supersedes"] == [] and "amoc" not in entry and "compliance_time" not in entry
     _new_run()
     fr._fetch_fulltext_fields("2024-08105", "2024-04-17", ad="2024-06-03", amendment="39-22708")
     assert govinfo.calls == ["2024-08105"]  # definitivo: no se vuelve a pedir
