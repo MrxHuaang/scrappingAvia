@@ -82,32 +82,6 @@ def _save_fulltext_cache() -> None:
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
-# Identidad del AD: viene de `docket_ids` (ver utils.ad_identity_from_docket_ids).
-#
-# El full text SOLO se usa como respaldo para los ~100 docs (casi todos 1998)
-# cuyo docket_ids no trae el AD, y el match esta ANCLADO al amendment del
-# header regulatorio: "[Docket No. ...; Amendment 39-10410; AD 98-06-27]".
-# Buscar el primer "AD nnnn-nn-nn" suelto del cuerpo es lo que rompio la base:
-# el rule cita al AD que reemplaza antes de nombrarse.
-_FT_HEADER_AD_RE = re.compile(
-    r"Amendment\s*(?:No\.?\s*)?39[-–—]\d{3,6}\s*[;,]?\s*"
-    r"(?:AD|A\.D\.)?\s*((?:\d{4}|\d{2})[-–—]\d{2}[-–—]\d{2,4}(?:R\d+)?)\b",
-    re.I,
-)
-# Solo para el respaldo anclado por amendment conocido (docket_ids lo trae aun
-# cuando omite el AD).
-def _header_ad_for_amendment(txt: str, amendment: str) -> str | None:
-    if not amendment:
-        return None
-    pat = re.compile(
-        re.escape(amendment).replace(r"\-", "[-–—]")
-        + r"\s*[;,]?\s*(?:AD|A\.D\.)?\s*((?:\d{4}|\d{2})[-–—]\d{2}[-–—]\d{2,4}(?:R\d+)?)\b",
-        re.I,
-    )
-    m = pat.search(txt)
-    return normalize_ad_number(m.group(1)) if m else None
-
-
 _FT_DOCKET_RE = re.compile(
     r"Docket\s*No\.?\s*[:,]?\s*(FAA[-\s]?\d{4}[-–—]\d{1,6})", re.I
 )
@@ -167,11 +141,14 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str,
                     or "alternative methods of compliance" in low
                 )
                 result["compliance_time"] = enrich.extract_compliance_from_fulltext(txt)
+                # Identidad: viene de `docket_ids`. El cuerpo SOLO es respaldo para
+                # los ~100 docs (casi todos 1998) cuyo docket_ids no trae el AD, y
+                # el match va ANCLADO al amendment del corchete del preambulo.
                 if want_ad:
                     header_ad = (
-                        _header_ad_for_amendment(txt, amendment or "")
+                        enrich.header_ad_for_amendment(txt, amendment or "")
                         or (lambda m: normalize_ad_number(m.group(1)) if m else None)(
-                            _FT_HEADER_AD_RE.search(txt)
+                            enrich.FT_HEADER_AD_RE.search(txt)
                         )
                     )
                     result["ad"] = header_ad

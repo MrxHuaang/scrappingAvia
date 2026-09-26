@@ -247,8 +247,8 @@ y cubre 13405 de los 13509 RULE (99%), incluidas las formas legadas de 1995-1999
 > 2026-07-28: la ficha de AD 2023-12-03 mostraba el PDF correcto pero, en otras
 > miles de filas, el numero pertenecia a un AD distinto (6075 de 10171 filas
 > verificables estaban mal). Si `docket_ids` no trae el AD, el respaldo va
-> **anclado al amendment** del header (`_header_ad_for_amendment`), y si tampoco
-> aparece, el documento se **descarta**: inventar un ad_number con el
+> **anclado al amendment** del header (`enrich.header_ad_for_amendment`), y si
+> tampoco aparece, el documento se **descarta**: inventar un ad_number con el
 > document_number es peor que no tener la fila.
 
 **Un AD = una fila.** Un rule y sus "Final rule; correction" comparten numero

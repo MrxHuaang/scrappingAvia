@@ -12,9 +12,13 @@ Campos canonicos esperados por la tabla `ads`:
   - amoc_available  : bool
   - unsafe_condition / corrective_action / compliance_time : texto best-effort
   - service_bulletins : lista de numeros SB referenciados
+  - secciones del texto de un rule FAA : split_ad_sections
 """
 
+import html
 import re
+
+from utils import normalize_ad_number
 
 
 # ---------------------------------------------------------------------------
@@ -666,3 +670,376 @@ def extract_compliance_from_fulltext(text: str | None) -> str | None:
         if 8 <= len(first) <= 240:
             return first
     return None
+
+
+# ---------------------------------------------------------------------------
+# Texto del rule FAA (GovInfo) en secciones, anclado al encabezado de identidad
+# ---------------------------------------------------------------------------
+# El granulo de GovInfo trae el documento FR entero: preámbulo, discusión y la
+# enmienda a 14 CFR 39.13 con el texto regulatorio del AD. Solo ese bloque es
+# el AD, y solo vale si su encabezado DECLARA el AD esperado:
+#
+#   2024-06-03 The Boeing Company: Amendment 39-22708; Docket No. FAA-...
+#   98-02-51  Boeing: Amendment 39-10362. Docket 98-NM-04-AD.
+#   Airbus: Amendment 39-10410. Docket 98-NM-22-AD.        (1998, sin número)
+#
+# Una cita en el cuerpo ("This AD replaces AD ...", la tabla "Affected ADs",
+# una corrección que reproduce el corchete del preámbulo) no declara nada: es
+# el error de identidad de 2026-07-28 (CLAUDE.md) pero con el texto en vez del
+# número. Sin encabezado propio el intento es `unanchored`, aunque el número
+# aparezca citado.
+
+# Identidad en el corchete del preámbulo: "[Docket No. ...; Amendment
+# 39-10410; AD 98-06-27]". La usa el respaldo de identidad de
+# federal_register (docket_ids sin AD) y, aquí, el encabezado regulatorio que
+# no trae número propio o lo trae mal escrito ("2005-NM-03-11 Boeing:").
+FT_HEADER_AD_RE = re.compile(
+    r"Amendment\s*(?:No\.?\s*)?39[-–—]\d{3,6}\s*[;,]?\s*"
+    r"(?:AD|A\.D\.)?\s*((?:\d{4}|\d{2})[-–—]\d{2}[-–—]\d{2,4}(?:R\d+)?)\b",
+    re.I,
+)
+
+
+def header_ad_for_amendment(txt: str, amendment: str) -> str | None:
+    """AD que el corchete del preámbulo empareja con `amendment`, o None."""
+    if not amendment:
+        return None
+    pat = re.compile(
+        re.escape(amendment).replace(r"\-", "[-–—]")
+        + r"\s*[;,]?\s*(?:AD|A\.D\.)?\s*((?:\d{4}|\d{2})[-–—]\d{2}[-–—]\d{2,4}(?:R\d+)?)\b",
+        re.I,
+    )
+    m = pat.search(txt)
+    return normalize_ad_number(m.group(1)) if m else None
+
+
+# Encabezado del bloque regulatorio: al inicio de línea, número (opcional en
+# 1998), titular hasta ":" (puede ocupar varias líneas: "Honeywell
+# International Inc. (formerly ...; and\nAiResearch ...): Amendment") y el
+# amendment, a veces tras el docket ("Rolls-Royce plc: Docket No. FAA
+# 2017-1117; Amendment 39-19112"). El titular puede traer corchetes
+# ("R[eacute]gional"), pero una línea que empieza con "["
+# o con comillas (el corchete del preámbulo, una corrección que lo cita) no
+# es un encabezado.
+_BLOCK_HEADER_RE = re.compile(
+    r"^(?:(?P<ad>\d{2,4}[-–—][\dA-Z]{2,4}[-–—]\d{2}(?:[-–—]\d{2})?(?:\s?R\d+)?)[ \t]+)?"
+    r"(?P<holder>[A-Za-z][^\n:`]{0,200}(?:\n(?![ \t]*\n)[^\n:`]{1,150}){0,3})"
+    r":\s*(?:Docket[^:\n]{0,60}?;\s*)?Amendment\s+(?:No\.?\s*)?(?P<amendment>39\s*[-–—]\s*\d{3,6})",
+    re.M,
+)
+# Fin del bloque: la firma ("Issued in Renton, Washington, on ...", "Issued
+# on May 2, 2024.") o el pie del documento FR.
+_BLOCK_END_RE = re.compile(r"^[ \t]*(?:Issued\s+(?:in|on)\b|\[FR\s+Doc\.)", re.M | re.I)
+_HEADER_END_RE = re.compile(r"\n(?=[ \t]*\n|[ \t]+\S|\*[ \t]*\*)")
+_PAGE_MARK_RE = re.compile(r"^[ \t]*\[\[Page \d+\]\][ \t]*\n?", re.M)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+# Tipo de sección por encabezado y por contenido: una sola tabla. El orden
+# importa: "Alternative Methods of Compliance" es amoc antes que compliance, y
+# "Actions and Compliance" es required_actions. El patrón de contenido mira el
+# principio del cuerpo (los párrafos legados no tienen encabezado propio).
+# required_actions por contenido solo vale después de compliance o de la
+# condición insegura: antes, un párrafo que empieza con "Within ..." no es una
+# acción requerida.
+SECTION_KINDS = {
+    "effective_date": (
+        r"effective date",
+        r"^this (?:ad|amendment|airworthiness directive)\b[^.]{0,40}?\b(?:becomes|is) effective",
+    ),
+    "affected_ads": (
+        r"affected ads?\b|ads? affected",
+        r"^this ad (?:supersedes|replaces|revises) (?:ad|airworthiness directive|emergency ad)\b",
+    ),
+    "applicability": (r"applicab", r"^this ad (?:applies to|affects)\b"),
+    "subject": (r"^subject\b", r"^(?:air transport association|joint aircraft system)"),
+    "unsafe_condition": (
+        r"unsafe condition|^reason\b",
+        r"^(?:this ad (?:was prompted|results from)|to (?:prevent|detect|correct|ensure|minimize"
+        r"|reduce|avoid|preclude)\b)",
+    ),
+    "amoc": (r"alternative method", r"alternative methods? of compliance|different method of compliance"),
+    "compliance": (
+        r"^compliance\b(?! and)|compliance times?",
+        r"^(?:comply with this ad|required as indicated|you are responsible for having the actions)",
+    ),
+    "material": (
+        r"incorporation by reference|material incorporated",
+        r"incorporation by reference|shall be (?:done|accomplished) in accordance with",
+    ),
+    "related_information": (r"related information|additional information", None),
+    "required_actions": (
+        r"required actions?|^requirements?\b|\bactions?\b|inspections?\b|\btests?\b|\bchecks?\b"
+        r"|replacement|corrective|modification|terminating",
+        r"^(?:within|before|prior to|at the|upon|after|when|thereafter|if\b)|\b(?:inspect|replace"
+        r"|perform|do|modify|remove|install|insert|accomplish|revise|repair)\b",
+    ),
+}
+_KIND_RES = {
+    kind: (re.compile(h, re.I), re.compile(c, re.I) if c else None)
+    for kind, (h, c) in SECTION_KINDS.items()
+}
+
+# Encabezado con letra (formato >= 2007): "(c) Applicability" solo en su
+# línea (o en hasta tres: "(h) Initial and Repetitive Inspections of ... at
+# the\nForward Keel Beam Attachment Joint"), seguido de una línea en blanco o
+# sangrada y sin puntuación final (un párrafo legado de una línea, "(d)
+# Special flight permits will not be issued.", no lo es).
+_LETTER_HEADING_RE = re.compile(
+    r"^[ \t]*\(([a-z])\)[ \t]+([A-Z][^\n]{0,150}?(?:\n(?!\([a-z]\))[A-Za-z(][^\n]{0,150}?){0,2})"
+    r"(?<![.:;,])[ \t]*\n"
+    r"(?=[ \t]*\n|[ \t]+\S)",
+    re.M,
+)
+# Encabezado sin letra (formato 2000-2007): "Unsafe Condition" solo en su
+# línea, entre líneas en blanco; los párrafos "(d) ..." van debajo. En 2005
+# también en pregunta: "What Is the Unsafe Condition Presented in This AD?".
+_PLAIN_HEADING_RE = re.compile(r"^[A-Z][A-Za-z0-9 ,&()/'\-]{1,100}\??$")
+# Párrafo legado: "    Applicability: ...", "    (a) Within 5 flight cycles ...".
+# La etiqueta también va sola en su línea ("Applicability", rotorcraft 2007).
+_LABEL_RE = re.compile(r"^(Applicability|Compliance)(?::\s*|\s*$)")
+_LETTER_PARA_RE = re.compile(r"^\(([a-z])\)(?:\s+|(?=\(\d))")
+_TABLE_LINE_RE = re.compile(r"-{8,}|\.{6,}|\S {3,}\S")
+_CLOSING_KINDS = ("amoc", "material", "effective_date")
+_EMBEDDED_UNSAFE_RE = re.compile(r"(?<=\.)\s+(?=To (?:prevent|detect|correct|ensure|minimize|reduce|avoid|preclude)\b)")
+
+
+def fr_document_text(html_text: str | None) -> str:
+    """Texto plano del granulo de GovInfo: sin etiquetas, entidades resueltas
+    y sin las marcas de página "[[Page 27375]]" que cortan los párrafos."""
+    text = html.unescape(_HTML_TAG_RE.sub("", html_text or "")).replace("\r\n", "\n")
+    return _PAGE_MARK_RE.sub("", text)
+
+
+def _ad_key(ad: str | None) -> str:
+    return re.sub(r"\s+", "", normalize_ad_number(ad or "")).upper()
+
+
+def _amendment_key(amendment: str | None) -> str:
+    return re.sub(r"\s+", "", (amendment or "").replace("–", "-").replace("—", "-"))
+
+
+def _declared_ad(m: "re.Match", text: str) -> str:
+    """AD que declara un encabezado: su número, o el que el preámbulo empareja
+    con su amendment cuando no trae uno bien formado."""
+    ad = _ad_key(m.group("ad"))
+    if _FAA_NUMBER.match(ad):
+        return ad
+    return _ad_key(header_ad_for_amendment(text, _amendment_key(m.group("amendment"))))
+
+
+def _header_end(text: str, m: "re.Match") -> int:
+    """Fin del párrafo del encabezado ("...; Docket No. FAA-2023-1400;
+    Project Identifier AD-2022-01374-T."): la línea en blanco, una línea
+    sangrada o la elisión "* * *" que le siga."""
+    end = _HEADER_END_RE.search(text, m.end())
+    return end.end() if end else len(text)
+
+
+def _is_excerpt(text: str, m: "re.Match") -> bool:
+    """Un encabezado entre elisiones "* * * * *" es la cita de una corrección
+    ("... is corrected to read as follows: * * * <encabezado> * * *"): nombra
+    al AD pero no trae su texto."""
+    return text[_header_end(text, m):].lstrip().startswith("*")
+
+
+def _paragraph_text(lines: list[str]) -> str:
+    """Un párrafo en una línea; las tablas conservan sus líneas."""
+    if any(_TABLE_LINE_RE.search(ln) for ln in lines[1:]):
+        return "\n".join(ln.rstrip() for ln in lines).strip("\n")
+    text = ""
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        # "FAA-\n2023-1400": el guion del corte es parte de la palabra.
+        text += ln if text.endswith("-") or not text else " " + ln
+    return text
+
+
+def _paragraphs(block: str) -> list[tuple[str, bool]]:
+    """(texto, es_encabezado_sin_letra) por párrafo. Un párrafo empieza en una
+    línea sangrada o tras una línea en blanco; las continuaciones van en la
+    columna 0."""
+    lines = block.split("\n")
+    out: list[tuple[str, bool]] = []
+    cur: list[str] = []
+
+    def flush():
+        if cur:
+            out.append((_paragraph_text(cur), False))
+            cur.clear()
+
+    for i, ln in enumerate(lines):
+        if not ln.strip():
+            flush()
+            continue
+        prev_blank = i == 0 or not lines[i - 1].strip()
+        next_blank = i + 1 >= len(lines) or not lines[i + 1].strip()
+        if prev_blank and next_blank and _PLAIN_HEADING_RE.match(ln.rstrip()):
+            flush()
+            out.append((ln.strip(), True))
+            continue
+        if ln[:1].isspace() and cur and not _TABLE_LINE_RE.search(ln):
+            flush()
+        cur.append(ln)
+    flush()
+    return out
+
+
+def _lead(text: str) -> str:
+    """Encabezado de un párrafo legado: hasta el primer '.' o ':' de fin de
+    frase, 120 caracteres como mucho."""
+    m = re.match(r"(.{1,120}?)[.:](?:\s|$)", text)
+    lead = m.group(1) if m else text if len(text) <= 120 else text[:120].rsplit(" ", 1)[0]
+    return lead.strip()
+
+
+def _raw_sections(block: str) -> list[dict]:
+    """[{letter, heading, body}] del bloque, en orden, según su formato."""
+    # 1) >= 2007: "(a) Effective Date" ... en secuencia desde (a). La
+    # secuencia descarta continuaciones que empiezan con "(h) of this AD".
+    headings, expected = [], "a"
+    for m in _LETTER_HEADING_RE.finditer(block):
+        if m.group(1) == expected:
+            headings.append(m)
+            expected = chr(ord(expected) + 1)
+    if len(headings) >= 2:
+        out = []
+        for i, m in enumerate(headings):
+            end = headings[i + 1].start() if i + 1 < len(headings) else len(block)
+            body = "\n\n".join(t for t, _ in _paragraphs(block[m.end():end]))
+            out.append({"letter": m.group(1), "heading": " ".join(m.group(2).split()), "body": body})
+        return out
+
+    # 2) Hasta 2007, por párrafos:
+    #   - legado: "Applicability:", "Compliance:", la frase "To prevent ...,
+    #     accomplish the following:" y cada párrafo (a), (b), ... es una sección
+    #     cuyo encabezado es su propia frase inicial (`lead`: el tipo sale solo
+    #     del contenido);
+    #   - 2000-2007: además, encabezados sin letra ("Unsafe Condition") que
+    #     agrupan los párrafos con letra que les siguen.
+    # Las notas y los subpárrafos (1), (2) van con la sección en curso. Los
+    # encabezados sin letra cuentan solo si al menos dos van seguidos de un
+    # párrafo con letra: un listado de modelos legado también tiene líneas
+    # sueltas ("General Aviation Airplanes").
+    paras = _paragraphs(block)
+    use_headings = sum(
+        1 for (_, is_heading), (nxt, _) in zip(paras, paras[1:])
+        if is_heading and _LETTER_PARA_RE.match(nxt)
+    ) >= 2
+    out, expected = [], "a"
+    for text, is_heading in paras:
+        label = _LABEL_RE.match(text)
+        letter = _LETTER_PARA_RE.match(text)
+        in_heading = bool(out) and out[-1].get("grouped", False)
+        if is_heading and use_headings:
+            out.append({"letter": None, "heading": text, "body": "", "grouped": True})
+        elif label:
+            out.append({"letter": None, "heading": label.group(1), "body": text[label.end():]})
+        elif letter and letter.group(1) == expected:
+            expected = chr(ord(expected) + 1)
+            # Un encabezado agrupa sus párrafos, pero el AMOC, la incorporación
+            # por referencia y la fecha efectiva que le siguen sin encabezado
+            # propio son secciones aparte ("New Requirements of This AD" y
+            # debajo, al final, "(e) An alternative method of compliance...").
+            if in_heading and out[-1]["letter"] and _section_kind(None, text, False) in _CLOSING_KINDS:
+                in_heading = False
+            if in_heading:
+                out[-1]["letter"] = out[-1]["letter"] or letter.group(1)
+                out[-1]["body"] = f"{out[-1]['body']}\n\n{text}".strip()
+            else:
+                out.append({"letter": letter.group(1), "heading": _lead(text[letter.end():]),
+                            "body": text, "lead": True})
+        elif _KIND_RES["unsafe_condition"][1].match(text) and not in_heading:
+            out.append({"letter": None, "heading": _lead(text), "body": text, "lead": True})
+        elif out:
+            out[-1]["body"] = f"{out[-1]['body']}\n\n{text}".strip()
+    # "Compliance: Required as indicated, unless already done. To prevent ...,
+    # accomplish the following:" en un solo párrafo: la condición insegura es
+    # su propia sección.
+    for i, sec in enumerate(out):
+        split = sec["heading"] == "Compliance" and _EMBEDDED_UNSAFE_RE.search(sec["body"])
+        if split:
+            unsafe = sec["body"][split.end():]
+            sec["body"] = sec["body"][:split.start()]
+            out.insert(i + 1, {"letter": None, "heading": _lead(unsafe), "body": unsafe, "lead": True})
+            break
+    return out
+
+
+def _section_kind(heading: str | None, body: str, after_compliance: bool) -> str:
+    """Tipo por encabezado y, si no lo da (o es la frase inicial de un párrafo
+    legado, `heading=None`), por el principio del cuerpo."""
+    for kind, (heading_re, _) in _KIND_RES.items():
+        if heading and heading_re.search(heading):
+            return kind
+    lead = _LETTER_PARA_RE.sub("", body[:300], count=1)
+    for kind, (_, content_re) in _KIND_RES.items():
+        if content_re is None or (kind == "required_actions" and not after_compliance):
+            continue
+        if content_re.search(lead):
+            return kind
+    return "other"
+
+
+def split_ad_sections(html_text: str | None, expected_ad: str | None,
+                      expected_amendment: str | None = None) -> dict:
+    """
+    Secciones del AD `expected_ad` dentro de un granulo de GovInfo.
+
+    Devuelve {status, anchor, sections[]}; cada sección es {position, letter,
+    heading, kind, body} con `position` desde 1 en el orden del documento y
+    `kind` de SECTION_KINDS (o 'other'). `status`:
+
+    - extracted: bloque anclado con al menos una sección.
+    - unanchored: ningún encabezado regulatorio declara `expected_ad`, o el
+      que lo declara trae otro amendment que `expected_amendment`. Es
+      determinista: el mismo documento da el mismo resultado.
+    - empty: respuesta vacía o la página "request access" de GovInfo.
+    - error: bloque anclado del que no sale ninguna sección, o el parseo falló.
+
+    Nunca decide si el texto está completo: eso lo decide la base con una
+    sola regla sobre los `kind` enviados.
+    """
+    result = {"status": "error", "anchor": None, "sections": []}
+    try:
+        if not (html_text or "").strip() or "request access" in html_text[:600].lower():
+            result["status"] = "empty"
+            return result
+        text = fr_document_text(html_text)
+        headers = list(_BLOCK_HEADER_RE.finditer(text))
+        want = _ad_key(expected_ad)
+        idx = next((i for i, m in enumerate(headers)
+                    if want and _declared_ad(m, text) == want and not _is_excerpt(text, m)), None)
+        if idx is None:
+            result["status"] = "unanchored"
+            return result
+        head = headers[idx]
+        if expected_amendment and _amendment_key(head.group("amendment")) != _amendment_key(expected_amendment):
+            result["status"] = "unanchored"
+            return result
+
+        body_start = _header_end(text, head)
+        ends = [len(text)]
+        if idx + 1 < len(headers):
+            ends.append(headers[idx + 1].start())
+        stop = _BLOCK_END_RE.search(text, body_start)
+        if stop:
+            ends.append(stop.start())
+        block = text[body_start:min(ends)]
+        result["anchor"] = re.sub(r"\s+", " ", text[head.start():body_start]).strip()
+
+        sections, after_compliance = [], False
+        for raw in _raw_sections(block):
+            body = raw["body"].strip()
+            if not body:
+                continue
+            kind = _section_kind(None if raw.get("lead") else raw["heading"], body, after_compliance)
+            after_compliance = after_compliance or kind in ("compliance", "unsafe_condition")
+            sections.append({"position": len(sections) + 1, "letter": raw["letter"],
+                             "heading": raw["heading"], "kind": kind, "body": body})
+        result["sections"] = sections
+        result["status"] = "extracted" if sections else "error"
+    except Exception:  # un documento raro no tumba la corrida
+        result.update(status="error", anchor=None, sections=[])
+    return result
