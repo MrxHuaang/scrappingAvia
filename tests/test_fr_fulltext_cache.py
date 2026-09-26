@@ -51,6 +51,7 @@ def govinfo(monkeypatch, tmp_path):
     monkeypatch.setattr(fr, "_FULLTEXT_CACHE_PATH", str(tmp_path / "fr_fulltext_cache.json"))
     monkeypatch.setattr(fr, "_fulltext_cache", {})
     monkeypatch.setattr(fr, "_ft_attempted", set())
+    monkeypatch.setattr(fr, "_fulltext_dirty", False)
     monkeypatch.setattr(fr, "_ft_local", threading.local())
     monkeypatch.setenv("GOVINFO_API_KEY", "clave-de-prueba")
     session = _Session({})
@@ -144,6 +145,21 @@ def test_cache_round_trips_through_disk(govinfo):
     fr._save_fulltext_cache()
     on_disk = load_json_cache(fr._FULLTEXT_CACHE_PATH)
     assert on_disk["2024-08105"] == json.loads(json.dumps(entry))
+
+
+def test_cache_is_written_only_when_an_attempt_changed_it(govinfo, monkeypatch):
+    """Una corrida sin documentos nuevos no reescribe los ~90 MB por anio."""
+    writes = []
+    monkeypatch.setattr(fr, "save_json_cache", lambda path, data: writes.append(path))
+    fr._fulltext_cache["2024-08105"] = {"v": 2, "status": "extracted", "anchor": None, "sections": []}
+    fr._fetch_fulltext_fields("2024-08105", "2024-04-17", ad="2024-06-03")  # definitivo: sin GET
+    fr._save_fulltext_cache()
+    assert writes == []
+    govinfo.responses["2024-00993"] = (200, _html("2024-00993.htm"))
+    fr._fetch_fulltext_fields("2024-00993", "2024-01-18", ad="2024-02-51")
+    fr._save_fulltext_cache()
+    fr._save_fulltext_cache()
+    assert writes == [fr._FULLTEXT_CACHE_PATH]
 
 
 def test_prefetch_is_concurrent_and_skips_final_entries(govinfo):

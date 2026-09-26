@@ -316,8 +316,9 @@ y se re-pide una vez para obtener sus secciones; si ese intento falla conserva
 sus campos. Sin `GOVINFO_API_KEY` no hay intento y el cache no se toca.
 Tamaño esperado con el corpus completo: ~90 MB (unos 6.6 KB de secciones por
 documento, ~13.5k documentos). Se reescribe entero al terminar cada año de la
-corrida (`search_ads_by_year_range`) y se carga entero en memoria, también en
-`scripts/link_supersession.py`.
+corrida (`search_ads_by_year_range`), pero solo si ese año hubo algún intento
+nuevo: una corrida con todo cacheado no lo escribe. Se carga entero en
+memoria, también en `scripts/link_supersession.py`.
 
 Las tablas de texto en la base todavía no existen: por ahora el texto solo
 vive en el cache.

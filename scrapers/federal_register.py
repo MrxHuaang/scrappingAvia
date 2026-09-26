@@ -85,6 +85,8 @@ _FT_FINAL_STATUSES = ("extracted", "unanchored")
 # Documentos ya pedidos en esta corrida: el prefetch y el parseo no repiten
 # el GET de un `error`/`empty` dentro de la misma corrida.
 _ft_attempted: set[str] = set()
+# Hubo intentos que cambiaron el cache desde el ultimo guardado.
+_fulltext_dirty = False
 
 
 def _load_fulltext_cache() -> dict:
@@ -95,8 +97,12 @@ def _load_fulltext_cache() -> dict:
 
 
 def _save_fulltext_cache() -> None:
-    if _fulltext_cache is not None:
+    """Escribe el cache solo si algun intento lo cambio desde la ultima vez:
+    son ~90 MB y un anio sin documentos nuevos no tiene nada que guardar."""
+    global _fulltext_dirty
+    if _fulltext_cache is not None and _fulltext_dirty:
         save_json_cache(_FULLTEXT_CACHE_PATH, _fulltext_cache)
+        _fulltext_dirty = False
 
 
 def _fulltext_is_final(entry: dict | None) -> bool:
@@ -210,6 +216,8 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str,
         # Intento fallido sobre una entrada con datos: se registra el intento
         # (para reintentarlo) sin perder lo que ya tenia.
         cache[doc_number] = {**cached, "v": _FT_CACHE_VERSION, "status": result["status"]}
+    global _fulltext_dirty
+    _fulltext_dirty = True
     return cache[doc_number]
 
 
