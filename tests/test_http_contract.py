@@ -11,6 +11,8 @@ busquedas validas llegarian a Supabase; los tests sustituyen la consulta.
 
 import json
 
+import pytest
+
 # ---------------------------------------------------------------- paginas --
 
 def test_landing_ok(client):
@@ -297,6 +299,296 @@ def test_stream_and_post_report_truncation_the_same_way(client, monkeypatch):
 def test_search_stream_proxy_guard(client, proxied):
     r = client.get("/api/search/stream?source=all")
     assert r.status_code == 403
+
+
+# ------------------------------------------------ search: contratos v1/v2 --
+# La BD es un doble que registra cada RPC. v1 tiene que seguir mandando lo
+# mismo a `search_ads` (que en la BD pasa a ser un shim sobre v2); v2 hace UNA
+# llamada a `search_ads_v2` por pagina con las fuentes de la cabecera del proxy.
+
+_MFR = "3f2b8c1e-0a4d-4c6e-9b7a-1d2e3f4a5b6c"
+
+
+def _db_row(n, source="easa"):
+    return {
+        "source": source, "source_label": "EASA", "issuing_authority": source,
+        "ad_number": f"2024-{n:04d}", "subject": "Fuel pump", "make": "AIRBUS S.A.S.",
+        "model": "A320-214", "product_type": "Aircraft", "effective_date": "2024-01-15",
+        "status": "New", "docket": None, "pdf_link": None, "superseded_by": None,
+        "match_confidence": "high", "applicability_unknown": False, "has_text": False,
+    }
+
+
+class _FakeDb:
+    """
+    Doble de Supabase para las dos RPC de busqueda. `search_ads` pagina un
+    corpus de `v1_total` filas (con `total_count` en cada fila, como la RPC);
+    `search_ads_v2` devuelve el objeto `v2` tal cual. `error` hace fallar
+    cualquier llamada.
+    """
+
+    def __init__(self, v1_total=0, v2=None, error=None):
+        self.v1_total = v1_total
+        self.v2 = v2
+        self.error = error
+        self.calls = []
+
+    def rpc(self, name, params):
+        self.calls.append((name, params))
+        self._pending = (name, params)
+        return self
+
+    def execute(self):
+        if self.error:
+            raise self.error
+        name, params = self._pending
+        if name == "search_ads":
+            start = params["p_offset"]
+            stop = min(start + params["p_limit"], self.v1_total)
+            data = [{**_db_row(i), "total_count": self.v1_total} for i in range(start, stop)]
+        else:
+            data = self.v2
+        return type("Resp", (), {"data": data})()
+
+
+def _v1_db(monkeypatch, db):
+    from webapp import search as search_mod
+
+    monkeypatch.setattr(search_mod, "get_supabase_admin", lambda: db)
+    return db
+
+
+def _v2_db(monkeypatch, db):
+    from webapp import search_v2
+
+    monkeypatch.setattr(search_v2, "get_supabase_admin", lambda: db)
+    return db
+
+
+def _v2_page(total, results, source_counts=None):
+    return {"v": 2, "total": total, "source_counts": source_counts or {"easa": total},
+            "results": results}
+
+
+_V2_QUERY = f"v=2&mfr={_MFR}&models=A320"
+_V2_BODY = {"v": 2, "mfr": [_MFR], "models": ["A320"]}
+_EASA = {"X-Effective-Sources": "easa"}
+
+
+# --------------------------------------------------------------------- v1 --
+def test_v1_stream_first_page_keeps_the_search_ads_call(client, monkeypatch):
+    db = _v1_db(monkeypatch, _FakeDb(v1_total=3))
+    events = _sse_events(client.get("/api/search/stream?source=easa&make=Airbus&model=A320&max_results=2"))
+
+    assert [name for name, _ in db.calls] == ["search_ads"]
+    params = db.calls[0][1]
+    assert params == {
+        "p_source": "easa", "p_term": "", "p_make": "Airbus", "p_model": "A320",
+        "p_product_type": "", "p_date_from": None, "p_date_to": None,
+        "p_limit": 2, "p_offset": 0,
+    }
+    assert events[0]["source"] == "easa"
+    assert events[0]["count"] == 2
+    assert events[0]["total_matched"] == 3
+    assert events[0]["truncated"] is True
+    assert events[0]["results"][0]["Source"] == "EASA"
+    assert events[-1] == {"event": "done", "total": 2}
+
+
+def test_v1_offset_is_per_source(client, monkeypatch):
+    db = _v1_db(monkeypatch, _FakeDb(v1_total=3))
+    events = _sse_events(client.get("/api/search/stream?source=easa&make=Airbus&model=A320&offset=2"))
+    assert db.calls[0][1]["p_offset"] == 2
+    assert events[0]["count"] == 1
+    assert events[0]["truncated"] is False
+
+
+def test_v1_empty_page(client, monkeypatch):
+    _v1_db(monkeypatch, _FakeDb(v1_total=0))
+    body = client.post("/api/search", json=_FILTERED_QUERY).get_json()
+    assert body == {"results": [], "count": 0, "total_matched": None, "truncated": False,
+                    "truncated_sources": [], "errors": []}
+
+
+def test_v1_all_queries_each_authority_once(client, monkeypatch):
+    db = _v1_db(monkeypatch, _FakeDb(v1_total=1))
+    events = _sse_events(client.get("/api/search/stream?source=all&make=Airbus&model=A320"))
+    sources = sorted(p["p_source"] for _, p in db.calls)
+    assert sources == sorted(["federal_register", "easa", "anac_brazil", "transport_canada",
+                              "dgac_chile", "anac_argentina", "uk_caa"])
+    assert sorted(e["source"] for e in events if "source" in e) == sources
+
+
+def test_v1_database_error_is_an_empty_source_not_a_crash(client, monkeypatch):
+    # El contrato v1 de siempre: search_supabase registra el error y la fuente
+    # llega vacia; el stream termina en `done`.
+    _v1_db(monkeypatch, _FakeDb(error=RuntimeError("boom")))
+    events = _sse_events(client.get("/api/search/stream?source=easa&make=Airbus&model=A320"))
+    assert events[0]["results"] == [] and events[0]["count"] == 0
+    assert events[-1]["event"] == "done"
+
+
+def test_v1_requests_are_counted_and_v2_are_not(client, monkeypatch):
+    from webapp import search as search_mod
+
+    _v1_db(monkeypatch, _FakeDb(v1_total=0))
+    _v2_db(monkeypatch, _FakeDb(v2=_v2_page(0, [])))
+    before = search_mod.search_v1_requests()
+    client.get("/api/search/stream?source=easa&make=Airbus&model=A320").get_data()
+    client.post("/api/search", json=_FILTERED_QUERY)
+    client.get(f"/api/search/stream?{_V2_QUERY}", headers=_EASA).get_data()
+    client.post("/api/search", json=_V2_BODY, headers=_EASA)
+    assert search_mod.search_v1_requests() == before + 2
+
+
+def test_unknown_contract_version_is_rejected(client):
+    assert client.get("/api/search/stream?v=3").status_code == 400
+    assert client.post("/api/search", json={"v": 3}).status_code == 400
+
+
+# --------------------------------------------------------------------- v2 --
+def test_v2_stream_first_page(client, monkeypatch):
+    db = _v2_db(monkeypatch, _FakeDb(v2=_v2_page(5108, [_db_row(1), _db_row(2)])))
+    r = client.get(f"/api/search/stream?{_V2_QUERY}&limit=2", headers=_EASA)
+    assert r.status_code == 200
+    assert r.mimetype == "text/event-stream"
+    events = _sse_events(r)
+
+    assert len(db.calls) == 1                       # una RPC por pagina
+    name, params = db.calls[0]
+    assert name == "search_ads_v2"
+    assert params["p_limit"] == 2 and params["p_offset"] == 0
+    assert params["p_filters"]["sources"] == ["easa"]
+    assert params["p_filters"]["manufacturer_ids"] == [_MFR]
+
+    page, done = events
+    assert list(page) == ["v", "event", "total", "source_counts", "limit", "offset", "has_more", "results"]
+    assert page["v"] == 2 and page["event"] == "page"
+    assert page["total"] == 5108 and page["source_counts"] == {"easa": 5108}
+    assert page["has_more"] is True
+    assert page["results"][0]["AD_Number"] == "2024-0001"
+    assert page["results"][0]["Source"] == "EASA"
+    assert page["results"][0]["Match_Confidence"] == "high"
+    assert done == {"v": 2, "event": "done", "total": 5108}
+
+
+def test_v2_offset_page_is_global(client, monkeypatch):
+    db = _v2_db(monkeypatch, _FakeDb(v2=_v2_page(102, [_db_row(101), _db_row(102)])))
+    page = _sse_events(client.get(f"/api/search/stream?{_V2_QUERY}&offset=100", headers=_EASA))[0]
+    assert db.calls[0][1]["p_offset"] == 100
+    assert page["offset"] == 100
+    # 100 + 2 == 102: era la ultima pagina.
+    assert page["has_more"] is False
+
+
+def test_v2_empty_page_keeps_the_total(client, monkeypatch):
+    _v2_db(monkeypatch, _FakeDb(v2=_v2_page(5108, [])))
+    events = _sse_events(client.get(f"/api/search/stream?{_V2_QUERY}&offset=6000", headers=_EASA))
+    assert events == [
+        {"v": 2, "event": "page", "total": 5108, "source_counts": {"easa": 5108},
+         "limit": 100, "offset": 6000, "has_more": False, "results": []},
+        {"v": 2, "event": "done", "total": 5108},
+    ]
+
+
+def test_v2_post_returns_the_page_without_event(client, monkeypatch):
+    _v2_db(monkeypatch, _FakeDb(v2=_v2_page(1, [_db_row(1)])))
+    r = client.post("/api/search", json={**_V2_BODY, "offset": 0}, headers=_EASA)
+    assert r.status_code == 200
+    body = r.get_json()
+    assert "event" not in body
+    assert body["v"] == 2 and body["total"] == 1 and body["has_more"] is False
+    assert body["results"][0]["AD_Number"] == "2024-0001"
+
+
+def test_v2_gate_error(client, monkeypatch):
+    db = _v2_db(monkeypatch, _FakeDb(v2=_v2_page(0, [])))
+    r = client.get("/api/search/stream?v=2&keyword=fuel", headers=_EASA)
+    assert r.status_code == 200                     # el SSE ya esta abierto
+    error, done = _sse_events(r)
+    assert error["v"] == 2 and error["event"] == "error" and error["code"] == "filter_gate"
+    assert "make" in error["message"]
+    assert done == {"v": 2, "event": "done", "total": 0}
+
+    r = client.post("/api/search", json={"v": 2, "keyword": "fuel"}, headers=_EASA)
+    assert r.status_code == 400
+    assert r.get_json()["code"] == "filter_gate"
+    # El gate corta antes de la BD.
+    assert db.calls == []
+
+
+def test_v2_ad_number_passes_the_gate_alone(client, monkeypatch):
+    db = _v2_db(monkeypatch, _FakeDb(v2=_v2_page(1, [_db_row(1)])))
+    r = client.post("/api/search", json={"v": 2, "keyword": "AD 2023-12-03"}, headers=_EASA)
+    assert r.status_code == 200
+    assert db.calls[0][1]["p_filters"]["term"] == "AD 2023-12-03"
+
+
+def test_v2_upstream_error(client, monkeypatch):
+    _v2_db(monkeypatch, _FakeDb(error=RuntimeError("connection reset by peer")))
+    r = client.get(f"/api/search/stream?{_V2_QUERY}", headers=_EASA)
+    assert r.status_code == 200
+    error, done = _sse_events(r)
+    assert error["event"] == "error" and error["code"] == "upstream"
+    assert "reset" not in error["message"]          # el detalle queda en el log
+    assert done["event"] == "done"
+
+    r = client.post("/api/search", json=_V2_BODY, headers=_EASA)
+    assert r.status_code == 502
+    assert r.get_json()["code"] == "upstream"
+
+
+# ------------------------------------------------ v2: fuentes del proxy --
+def _v2_get(client, headers):
+    return client.get(f"/api/search/stream?{_V2_QUERY}", headers=headers)
+
+
+def _v2_post(client, headers):
+    return client.post("/api/search", json=_V2_BODY, headers=headers)
+
+
+@pytest.mark.parametrize("call", [_v2_get, _v2_post], ids=["sse", "post"])
+def test_v2_invalid_secret_is_401_even_with_a_valid_header(client, proxied, monkeypatch, call):
+    db = _v2_db(monkeypatch, _FakeDb(v2=_v2_page(0, [])))
+    assert call(client, {"X-Effective-Sources": "easa"}).status_code == 401
+    assert call(client, {"X-Internal-Secret": "wrong", "X-Effective-Sources": "easa"}).status_code == 401
+    assert db.calls == []
+
+
+@pytest.mark.parametrize("call", [_v2_get, _v2_post], ids=["sse", "post"])
+@pytest.mark.parametrize("header", [None, "", "narnia", "easa,narnia", "all"])
+def test_v2_valid_secret_with_a_bad_header_is_400(client, proxied, monkeypatch, call, header):
+    db = _v2_db(monkeypatch, _FakeDb(v2=_v2_page(0, [])))
+    headers = {"X-Internal-Secret": proxied}
+    if header is not None:
+        headers["X-Effective-Sources"] = header
+    assert call(client, headers).status_code == 400
+    assert db.calls == []
+
+
+@pytest.mark.parametrize("call", [_v2_get, _v2_post], ids=["sse", "post"])
+@pytest.mark.parametrize("header, sources", [
+    ("*", None),
+    ("easa", ["easa"]),
+    ("federal_register,easa,easa", ["easa", "federal_register"]),
+])
+def test_v2_header_decides_the_sources(client, proxied, monkeypatch, call, header, sources):
+    db = _v2_db(monkeypatch, _FakeDb(v2=_v2_page(0, [])))
+    r = call(client, {"X-Internal-Secret": proxied, "X-Effective-Sources": header})
+    assert r.status_code == 200
+    assert db.calls[0][1]["p_filters"]["sources"] == sources
+
+
+def test_v2_query_sources_are_ignored(client, proxied, monkeypatch):
+    db = _v2_db(monkeypatch, _FakeDb(v2=_v2_page(0, [])))
+    client.get(f"/api/search/stream?{_V2_QUERY}&sources=uk_caa",
+               headers={"X-Internal-Secret": proxied, "X-Effective-Sources": "easa"})
+    assert db.calls[0][1]["p_filters"]["sources"] == ["easa"]
+
+
+def test_v1_keeps_its_403_guard(client, proxied):
+    assert client.get("/api/search/stream?source=all").status_code == 403
+    assert client.post("/api/search", json={"source": "all"}).status_code == 403
 
 
 # ----------------------------------------------------------------- export --
