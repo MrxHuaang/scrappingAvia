@@ -422,14 +422,14 @@ def build_update(row: dict, out: dict) -> dict:
         v = _clean_date(out.get("published_date"))
         if v:
             upd["published_date"] = v
-    if not row.get("make"):
-        v = _clean_text(out.get("make"))
-        if v:
-            upd["make"] = v
-    if not row.get("model"):
-        v = _clean_text(out.get("model"))
-        if v:
-            upd["model"] = v
+    # make/model del LLM se descartan a proposito (fix 2026-09):
+    # `ads.make`/`ads.model` divergian de `ad_applicability`, que es la fuente
+    # real de verdad para matching de flota (contrato triestado de
+    # docs/applicability-contract.md). Si el LLM extrae make/model no se
+    # persisten en `ads` — no hay un camino hoy para llevarlos a
+    # `ad_applicability` con la misma trazabilidad de evidencia que
+    # populate_relations exige, asi que se pierden en vez de arriesgar un
+    # dato inconsistente entre las dos tablas.
     if not row.get("product_type"):
         pt = (out.get("product_type") or "")
         pt = pt.strip().capitalize() if isinstance(pt, str) else ""
