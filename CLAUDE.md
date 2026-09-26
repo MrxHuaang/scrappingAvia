@@ -409,14 +409,19 @@ y corre en su propio job (`drs`) del workflow. Entre la subida y el enlace:
 - **Alias**: `scripts/tcds_alias_candidates.py` (TCDSMODEL) escribe un CSV de
   candidatos contra el seed de grupos de ad-scrapper, sin modificarlo.
 
-> **Requisito antes de encenderlo en produccion:** Hyvento tiene que
-> contactar a la FAA (equipo DRS) y obtener **autorizacion escrita para el
-> uso comercial** de la API. La API no publica terminos, cuotas ni limites;
-> lo unico aplicable es el aviso generico de faa.gov, "provided for U.S.
-> Government-authorized use only". Hasta entonces `DRS_API_ENABLED` (y la
-> variable de repositorio del mismo nombre) se queda apagado. Vale para todo
-> lo que sale de DRS: `drs_documents`, las filas pre-1994, el texto `drs` y
-> el script de TCDS.
+> **Requisito antes de encenderlo en produccion:** un aviso de cortesia de
+> Hyvento a la FAA (equipo DRS) reemplaza la antigua exigencia de
+> autorizacion escrita — los AD son obra del gobierno de EE. UU. en dominio
+> publico (17 U.S.C. §105), la API de DRS no publica terminos de uso y el
+> aviso "U.S. Government-authorized use only" es una advertencia de sistema
+> informatico, no una licencia. Checklist completo (aviso enviado,
+> User-Agent con contacto, ritmo conservador, no republicar material
+> incorporado por referencia, revisar terminos en cada renovacion de key,
+> disclaimer y atribucion en el frontend — esto ultimo vive en Ad-Scrapper)
+> en [docs/drs-sync.md](docs/drs-sync.md). Hasta cumplirlo, `DRS_API_ENABLED`
+> (y la variable de repositorio del mismo nombre) se queda apagado. Vale para
+> todo lo que sale de DRS: `drs_documents`, las filas pre-1994, el texto
+> `drs` y el script de TCDS.
 
 - **Primera carga = barrido por `offset` sin filtro de fecha.** El filtro
   `docLastModifiedDate` es estricto y compara por segundo, y 14.193 documentos

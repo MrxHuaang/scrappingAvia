@@ -20,21 +20,45 @@ escribe `scrape_runs`.
 | Job | `drs` en `.github/workflows/populate_db.yml` |
 | Tablas y RPCs | repo ad-scrapper: `drs_documents`, `drs_sync_state`, `upsert_drs_documents`, `advance_drs_cursor`, `link_ads_to_drs` |
 
-## Requisito previo: autorización de uso comercial
+## Requisito previo: aviso de cortesía a la FAA
 
 **Antes de encender la sincronización en producción, Hyvento tiene que
-contactar a las autoridades del gobierno de EE. UU. (la FAA, equipo DRS) y
-obtener por escrito la autorización para el uso comercial de la API de DRS.**
+enviar un aviso de cortesía al equipo DRS de la FAA.** Ya no se exige
+autorización escrita: la investigación no encontró base para esa exigencia
+más estricta.
 
-La API no publica términos de uso, cuotas ni límites de peticiones: no hay
-nada en la documentación técnica, en la ayuda (`drs.faa.gov/help/helpdetails`,
-"DRS API") ni en el formulario de la key (`drs.faa.gov/drs-api`). Lo único
-aplicable es el aviso genérico de faa.gov
-(`https://www.faa.gov/web_policies/disclaimer`): *"provided for U.S.
-Government-authorized use only"*. Que los AD, como textos del Federal
-Register, sean de dominio público no dice nada sobre el uso de la
-plataforma. Mientras no exista esa autorización, `DRS_API_ENABLED` se queda
-apagado.
+- Los AD, como el resto de los textos del Federal Register, son obra del
+  gobierno de EE. UU. y están en dominio público (17 U.S.C. §105).
+- La API de DRS no publica términos de uso: no hay nada en la documentación
+  técnica, en la ayuda (`drs.faa.gov/help/helpdetails`, "DRS API") ni en el
+  formulario de la key (`drs.faa.gov/drs-api`).
+- El aviso genérico de faa.gov (`https://www.faa.gov/web_policies/disclaimer`,
+  *"provided for U.S. Government-authorized use only"*) es una advertencia de
+  sistema informático (el mismo texto que acompaña a cualquier sistema
+  federal, con o sin datos públicos), no una licencia de uso de los datos ni
+  de la plataforma.
+
+Checklist previo a encender `DRS_API_ENABLED` en producción:
+
+1. **Aviso de cortesía enviado** al equipo DRS de la FAA (lo hace el
+   equipo de Hyvento; no es un paso automatizable).
+2. **User-Agent con contacto.** El cliente (`scrapers/faa_drs_api.py`) se
+   identifica como `Hyvento-AD-Search/<version> (+mailto:<contacto>)`, con el
+   contacto en `DRS_CONTACT_EMAIL`. Sin él (o con un valor sin forma de
+   email) el cliente no se construye.
+3. **Ritmo de peticiones conservador.** El cliente ya pausa al menos 2 s
+   entre peticiones (`min_interval`) y reintenta 429/5xx con backoff; no
+   subir el ritmo sin revisar este punto.
+4. **Nunca republicar material incorporado por referencia** (boletines de
+   servicio y demás documentos que un AD cita pero no reproduce).
+5. **Revisar los términos otra vez en cada renovación de key** (cada 12
+   meses): si DRS publica términos de uso, esta sección se actualiza.
+6. **Disclaimer y atribución en el frontend** ("no afiliado con la FAA" +
+   "Fuente: FAA DRS"). Vive en el repo `ad-scrapper`, no en este.
+
+`DRS_API_ENABLED` (y la variable de repositorio del mismo nombre) se queda
+apagado hasta cumplir la lista. Se recomienda además una revisión legal antes
+de comercializar el producto.
 
 El requisito cubre todo lo que sale de DRS: `drs_documents`, las filas de
 `ads` de los AD anteriores a 1994, el texto con provider `drs` y el script de
@@ -307,8 +331,8 @@ parecido no es evidencia de grupo (Continental Copters no es Continental), y
 la columna `mentioned_in_notes` dice qué notas del seed nombran ese nombre,
 que suele ser la razón del curador para dejarlo fuera. **El script no
 modifica el seed**: una persona revisa el CSV y aprueba los alias que entran.
-El reporte va donde diga `--out`, fuera del repo. Usa la misma key y el mismo
-flag que la sincronización, y el mismo requisito de autorización.
+El reporte va donde diga `--out`, fuera del repo. Usa la misma key, el mismo
+flag y el mismo checklist previo que la sincronización.
 
 ```bash
 DRS_API_ENABLED=1 python scripts/tcds_alias_candidates.py --dump tcds.json --out candidatos.csv
@@ -327,6 +351,7 @@ Variables:
 |---|---|---|
 | `DRS_API_KEY` | `.env` en local; secret `DRS_API_KEY` en Actions | la key de `drs.faa.gov/drs-api` (vence a los 12 meses y se renueva ahí) |
 | `DRS_API_ENABLED` | `.env` en local; **variable** de repositorio `DRS_API_ENABLED` en Actions | `true` (o `1`) enciende; vacío o cualquier otro valor apaga |
+| `DRS_CONTACT_EMAIL` | `.env` en local; **variable** de repositorio `DRS_CONTACT_EMAIL` en Actions | contacto real (no un secreto) que viaja en el `User-Agent`; sin él, o si no tiene forma de email, el cliente no se construye |
 
 Con el flag apagado, `populate_db.py --drs` no hace nada y sale 0, y el job
 `drs` del workflow ni se ejecuta. La key solo se lee del entorno, viaja solo
@@ -343,8 +368,8 @@ python populate_db.py --drs --drs-doctype ADFREAD --dry-run  # sin base: barrido
 
 ### Procedimiento de la primera corrida
 
-1. **Tener la autorización escrita de la FAA / equipo DRS para uso
-   comercial** (ver arriba). Sin ella no se sigue.
+1. **Cumplir el checklist previo** (ver arriba): aviso de cortesía enviado,
+   `DRS_CONTACT_EMAIL` configurado y el resto de los puntos.
 2. Aplicar en la base las migraciones de ad-scrapper con `drs_documents`,
    `drs_sync_state`, `ads.drs_document_guid` y las tres RPCs, y resolver en
    ad-scrapper que las alertas de búsquedas guardadas no traten como nuevas

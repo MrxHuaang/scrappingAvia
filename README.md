@@ -82,11 +82,16 @@ second; later runs ask for the stored cursor minus one hour and page to the end
 before advancing it. A failed page stops the run without moving the cursor.
 
 It is **off by default** (`DRS_API_ENABLED`, and the repository variable of the
-same name for the workflow job). The DRS API publishes no terms of use or rate
-limits; the only statement found is the generic faa.gov disclaimer ("provided
-for U.S. Government-authorized use only"). **Do not enable it in production
-until Hyvento has written authorization from the FAA / DRS team for commercial
-use.** Details and first-run procedure: `docs/drs-sync.md`.
+same name for the workflow job). ADs are U.S. government works in the public
+domain (17 U.S.C. §105), the DRS API publishes no terms of use, and the
+generic faa.gov disclaimer ("provided for U.S. Government-authorized use
+only") is a computer-system warning, not a usage license. **Before enabling it
+in production, work through the pre-enable checklist:** a courtesy notice
+sent to the FAA / DRS team, the DRS client identifying itself with a contact
+User-Agent (`DRS_CONTACT_EMAIL`), conservative request rates, never
+republishing material incorporated by reference, re-checking terms at each
+12-month key renewal, and the frontend disclaimer/attribution (tracked in
+`ad-scrapper`). Details and first-run procedure: `docs/drs-sync.md`.
 
 ## Usage
 
