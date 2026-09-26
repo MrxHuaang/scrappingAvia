@@ -119,7 +119,7 @@ tienen prioridad sobre la derivacion automatica.
 
 | Fuente | Fuente del texto | Campos profundos | Cache |
 |--------|------------------|------------------|-------|
-| `federal_register` | GovInfo full-text (`api.govinfo.gov/.../htm`) + abstract FR | unsafe/corrective (abstract), compliance_time + AMOC (cuerpo), SBs | `outputs/fr_fulltext_cache.json` |
+| `federal_register` | GovInfo full-text (`api.govinfo.gov/.../htm`) + abstract FR | texto del AD en secciones (`enrich.split_ad_sections`), unsafe/corrective (abstract), compliance_time + AMOC (cuerpo), SBs | `outputs/fr_fulltext_cache.json` (v2) |
 | `easa` | pagina detalle `ad.easa.europa.eu/ad/{n}` + **PDF** (`pypdf`) | published_date/AMOC/SBs/supersesion (detalle) + unsafe/corrective/compliance (PDF: Reason / Required Action(s) and Compliance Time(s)) | `easa_detail_cache.json`, `easa_pdf_cache.json` |
 | `transport_canada` | **PDF** `AD_dl.aspx?...ft=pdf` (`pypdf`) | unsafe/corrective/compliance/SBs. 3 layouts: propia CF (Background/Corrective/Compliance), EU-adoptada (formato EASA), US-adoptada (FAA, best-effort) | `tc_pdf_cache.json` |
 | `anac_brazil` / `anac_argentina` | listado (+Action codes Brasil) | solo escalares: state_of_design, status canonico, priority, product_type, applicability. Prosa profunda **omitida** (PDFs PT/ES, volumen ~466, plataforma EN-only) | — |
@@ -263,16 +263,64 @@ correccion, que llega despues en orden cronologico.
 
 1. **FR API** (`scrapers/federal_register.py`) — year-split 1994→presente (evita
    el cap de 10k por query). Aporta identidad Y contenido. El full text de
-   GovInfo se sigue bajando para `compliance_time`, AMOC y supersession, con
-   **prefetch concurrente** (`FULLTEXT_WORKERS`, 8 hilos): en serie son ~13.5k
-   GETs de ~1s (horas), con prefetch ~10 min. Cache en
-   `outputs/fr_fulltext_cache.json`.
+   GovInfo se sigue bajando para el texto del AD en secciones (ver abajo),
+   `compliance_time`, AMOC y supersession, con **prefetch concurrente**
+   (`FULLTEXT_WORKERS`, 8 hilos): en serie son ~13.5k GETs de ~1s (horas), con
+   prefetch ~10 min. Cache en `outputs/fr_fulltext_cache.json`.
 2. **GovInfo MODS** (`scrapers/faa_govinfo.py`) — **opcional**, `--with-govinfo`.
    Ya NO aporta identidad (su regex tiene el mismo defecto); solo completa
    `Docket`/`Amendment` faltantes. Sin el flag no se corre.
 
 Dedupe por `(source, ad_number)` con normalizacion ASCII en
 `normalize_ad_number()` (utils.py).
+
+### Texto del AD en secciones (`enrich.split_ad_sections`)
+
+El granulo de GovInfo trae el documento FR entero; el AD es solo el bloque de
+la enmienda a 14 CFR 39.13, y solo vale si su **encabezado de identidad**
+declara el AD esperado (el de `docket_ids`, o el respaldo anclado al amendment):
+
+```
+2024-06-03 The Boeing Company: Amendment 39-22708; Docket No. FAA-2023-1400; ...
+98-02-51  Boeing: Amendment 39-10362. Docket 98-NM-04-AD.
+```
+
+- **Anclaje.** Si ningún encabezado declara el AD, o el que lo declara trae otro
+  amendment que `docket_ids`, el intento es `unanchored` aunque el número
+  aparezca citado ("This AD replaces AD ...", una corrección que reproduce el
+  corchete o el encabezado entre elisiones `* * *`). Un encabezado sin número
+  (1998) o con errata ("2005-NM-03-11") declara el AD que el corchete del
+  preámbulo empareja con su amendment. En un documento con varios ADs solo se
+  toma el bloque del esperado.
+- **Bloque**: desde el encabezado hasta el siguiente encabezado o la firma
+  ("Issued in/on").
+- **Secciones** `{position, letter, heading, kind, body}`. Tres formatos: desde
+  ~2007 "(a) Effective Date" ... en secuencia; 2000-2007 encabezados sin letra
+  ("Unsafe Condition") que agrupan los párrafos (d), (e)...; legado
+  "Applicability:", "Compliance:", "To prevent ..., accomplish the following:"
+  y cada párrafo (a), (b)... El `kind` sale de `enrich.SECTION_KINDS` (una sola
+  tabla, por encabezado y por contenido): effective_date, affected_ads,
+  applicability, subject, unsafe_condition, amoc, compliance, material,
+  related_information, required_actions; el resto `other`.
+- **Estado** del intento: `extracted` (bloque anclado con ≥1 sección),
+  `unanchored`, `empty` (respuesta vacía o "request access"), `error` (HTTP,
+  red o bloque sin secciones). Python **no** decide si el texto está completo:
+  lo decide la base con una sola regla sobre los `kind`.
+
+**Cache v2** (`outputs/fr_fulltext_cache.json`, una entrada por
+document_number): `{v: 2, status, anchor, sections[], sha, compliance_time,
+amoc, docket, supersedes[], ad_header}`; `sha` es el sha256 del granulo.
+`extracted` y `unanchored` son definitivos; `empty` y `error` se reintentan en la
+corrida siguiente, una vez por corrida. Una entrada v1 (sin `v`) se sigue leyendo
+y se re-pide una vez para obtener sus secciones; si ese intento falla conserva
+sus campos. Sin `GOVINFO_API_KEY` no hay intento y el cache no se toca.
+Tamaño esperado con el corpus completo: ~90 MB (unos 6.6 KB de secciones por
+documento, ~13.5k documentos). Se reescribe entero al terminar cada año de la
+corrida (`search_ads_by_year_range`) y se carga entero en memoria, también en
+`scripts/link_supersession.py`.
+
+Las tablas de texto en la base todavía no existen: por ahora el texto solo
+vive en el cache.
 
 ### Verificar y reparar la identidad
 
