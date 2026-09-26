@@ -273,16 +273,6 @@ def search_term_kind(term) -> str:
     return "text"
 
 
-def map_product_type(product_type):
-    """Mapea tipo de producto al formato de Transport Canada."""
-    mapping = {
-        "Aircraft": "aircraft",
-        "Engine": "engine",
-        "Propeller": "propeller",
-    }
-    return mapping.get(product_type, "aircraft")
-
-
 # ------------------------------------------------------------------
 # Ejecución con timeout
 # ------------------------------------------------------------------

@@ -107,11 +107,11 @@ def test_stream_rejects_the_same_query_with_the_same_message(client):
     assert events[-1].get("event") == "done"
 
 
-def test_ad_number_search_reaches_the_scrapers(client, monkeypatch):
+def test_ad_number_search_reaches_the_database(client, monkeypatch):
     """Un nº de AD sin make no debe morir en el gate."""
     from webapp import search as search_mod
 
-    monkeypatch.setattr(search_mod, "build_scrapers", lambda *a, **k: [])
+    monkeypatch.setattr(search_mod, "search_supabase", lambda **k: search_mod.DbResults())
     r = client.post("/api/search", json={"source": "all", "keyword": "2023-12-03"})
     assert r.status_code == 200
 

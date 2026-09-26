@@ -1,7 +1,7 @@
 """
-Busqueda de ADs: BD primero (RPC parametrizada `search_ads`), scraping en
-vivo como fallback. Rutas: /api/env, /api/health, /api/search (POST) y
-/api/search/stream (SSE).
+Busqueda de ADs, solo contra la BD: el scraping vive en populate_db, que
+carga las autoridades a diario; la busqueda no raspa sitios en vivo. Rutas:
+/api/env, /api/health, /api/search (POST) y /api/search/stream (SSE).
 
 Las dos rutas de busqueda hablan dos contratos: sin `v` (o v=1) el de siempre,
 un evento por autoridad; con v=2 el paginado global de webapp.search_v2.
@@ -11,24 +11,12 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from math import ceil
 
 from flask import Blueprint, Response, jsonify, request, session
 
-from scrapers.aerocivil_colombia import search_ads as aerocivil_search
-from scrapers.anac_argentina import search_ads as anac_argentina_search
-from scrapers.anac_brazil import search_ads as anac_brazil_search
-from scrapers.casa_australia import search_ads as casa_search
-from scrapers.dgac_chile import search_ads as dgac_chile_search
-from scrapers.easa import search_ads as easa_search, search_main_page as easa_main_page
-from scrapers.federal_register import search_ads as fr_search
-from scrapers.gcaa_uae import search_ads as gcaa_search
-from scrapers.transport_canada import search_ads as tc_search
-from scrapers.uk_caa import search_ads as uk_caa_search
 from utils import (
     MAX_RESULTS_PER_SOURCE,
     VALID_SOURCES,
-    map_product_type,
     normalize_filter_values,
     run_with_timeout,
     validate_search_filters,
@@ -77,12 +65,11 @@ class DbResults(list):
     """
     Lista de resultados que además carga cuántas filas casaron en la BD.
 
-    Es una `list` a propósito: el contrato de los scrapers es "devuelve una
-    lista", y `run_with_timeout` y `build_scrapers` la manipulan como tal. Un
-    dict de estadísticas habría que pasarlo por los siete sitios que construyen
-    scrapers; esto viaja pegado al resultado y quien no lo mire sigue viendo una
-    lista normal. Los consumidores leen con `getattr(x, "truncated", False)`, así
-    que un scraper en vivo (que devuelve `list` pelada) no rompe nada.
+    Es una `list` a propósito: `run_with_timeout` la trata como tal y el
+    evento v1 la serializa tal cual; las estadísticas viajan pegadas al
+    resultado y quien no las mire sigue viendo una lista normal. Una fuente que
+    falló devuelve `[]` pelada, por eso se lee con `getattr(x, "truncated",
+    False)`.
     """
 
     total: int | None = None
@@ -186,236 +173,55 @@ def search_supabase(source, keyword="", make="", model="", product_type="",
         return DbResults()
 
 
-# --------------------------------------------------- service: scraper plan --
-def _make_db_search_fn(src_key, keyword, make, model, product_type, date_from,
-                       date_to, max_results, live_fn=None, makes=None, models=None,
-                       offset=0):
+# ------------------------------------------------- service: v1 per source --
+#: Autoridades que barre `source=all` en v1, en el orden de la respuesta POST,
+#: con la etiqueta que v1 pone en `truncated_sources`. Es el mismo conjunto de
+#: siempre: las tres deshabilitadas del cron no entran en "all".
+_V1_ALL_SOURCES = (
+    ("federal_register", "Federal Register"),
+    ("easa", "EASA"),
+    ("anac_brazil", "ANAC Brasil"),
+    ("transport_canada", "Transport Canada"),
+    ("dgac_chile", "DGAC Chile"),
+    ("anac_argentina", "ANAC Argentina"),
+    ("uk_caa", "UK CAA"),
+)
+_V1_LABELS = dict(_V1_ALL_SOURCES) | {
+    "aerocivil_colombia": "AEROCIVIL Colombia",
+    "casa_australia": "CASA Australia",
+    "gcaa_uae": "GCAA UAE",
+}
+
+
+def _v1_sources(source: str) -> list[tuple[str, str]]:
+    """(source_key, label) a consultar para el `source` de una peticion v1."""
+    if source == "all":
+        return list(_V1_ALL_SOURCES)
+    return [(source, _V1_LABELS[source])]
+
+
+def _query_sources_concurrently(sources, max_results, **filters):
     """
-    Crea una función que busca primero en Supabase.
-    Si Supabase retorna resultados, los usa.  Si no, intenta live_fn como fallback.
+    Una consulta `search_supabase` por fuente, cada una en su hilo, entregando
+    `(src_key, label, results, err)` a medida que terminan, no en el orden de
+    `sources`.
 
-    Sólo la ruta de BD entiende listas: los scrapers en vivo hablan con
-    formularios de las autoridades, que aceptan un fabricante a la vez. El
-    fallback busca con el primero de la lista (ver build_scrapers), y por eso
-    devuelve menos de lo pedido — es el mismo trato que ya tenía, no una
-    regresión nueva.
+    En serie, "All authorities" son siete RPC y el usuario esperaba la SUMA de
+    todas (cada una puede tardar varios segundos con la caché de Postgres
+    fría). En paralelo espera sólo a la más lenta, y el stream pinta cada
+    autoridad en cuanto contesta. Cada consulta corre con su propio timeout
+    dentro de `run_with_timeout`, así que un hilo colgado no retiene a los demás.
     """
-    def _db_search():
-        db_results = search_supabase(
-            source=src_key,
-            keyword=keyword,
-            make=make,
-            model=model,
-            product_type=product_type,
-            date_from=date_from,
-            date_to=date_to,
-            max_results=max_results,
-            makes=makes,
-            models=models,
-            offset=offset,
-        )
-        if db_results:
-            return db_results
-        # Fallback al scraper en vivo si BD no retorna nada. Sólo en la primera
-        # página: "0 filas en el offset 500" significa que el corpus se acabó,
-        # no que la BD esté vacía, y raspar en vivo ahí devolvería otra vez la
-        # página 1 disfrazada de página 2.
-        if live_fn and not offset:
-            logger.info(f"[DB] {src_key}: 0 resultados en BD, intentando scraping en vivo...")
-            return live_fn()
-        return []
-    return _db_search
-
-
-def build_scrapers(source, keyword, make, model, product_type, date_from,
-                   date_to, max_results=20000, makes=None, models=None,
-                   offset=0) -> list[tuple]:
-    """
-    Devuelve lista de (source_key, label, fn) a ejecutar.
-
-    `make`/`model` siguen siendo escalares porque los scrapers en vivo sólo
-    saben pedir uno (y Transport Canada exige fabricante). Las rutas rellenan
-    el escalar con la primera entrada de la lista cuando no viene suelto, así
-    que el fallback en vivo nunca se queda sin fabricante.
-
-    **El fallback en vivo no corre en "all".** Medido contra producción, un
-    `source=all` con make=Airbus y model=A320 tardaba 23,7 s: las cuatro
-    autoridades sin coincidencias (ANAC BR, DGAC CL, ANAC AR, UK CAA) se iban a
-    raspar sus sitios, y lo que traen en ese caso son filas sin Make ni Model.
-    Barrer todas las fuentes es justo cuando NO se puede pagar cuatro scrapes
-    seguidos; elegir una autoridad concreta sigue teniendo su fallback, que es
-    donde de verdad sirve (esa fuente es la pregunta, no una de siete).
-    """
-    scrapers = []
-    live_ok = source != "all"
-    fr_max_pages = ceil(max_results / 100)
-
-    if source in ("federal_register", "all"):
-        def _fr_live():
-            return fr_search(
-                keyword=keyword or None,
-                make=make or None,
-                model=model or None,
-                product_type=product_type or None,
-                date_from=date_from or None,
-                date_to=date_to or None,
-                max_pages=fr_max_pages,
-            )
-        fn = _make_db_search_fn("federal_register", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _fr_live if live_ok else None,
-                                makes=makes, models=models, offset=offset)
-        scrapers.append(("federal_register", "Federal Register", fn))
-
-    if source in ("easa", "all"):
-        _easa_pages = max(2, ceil(max_results / 100))
-        def _easa_live():
-            search_term = keyword or make or model
-            if search_term:
-                return easa_search(model_keyword=search_term, max_pages=_easa_pages)
-            else:
-                return easa_main_page(max_pages=2)
-        fn = _make_db_search_fn("easa", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _easa_live if live_ok else None,
-                                makes=makes, models=models, offset=offset)
-        scrapers.append(("easa", "EASA", fn))
-
-    if source in ("anac_brazil", "all"):
-        _anac_limit = min(max_results, 2000)
-        def _anac_live():
-            return anac_brazil_search(
-                keyword=keyword or None,
-                make=make or None,
-                model=model or None,
-                date_from=date_from or None,
-                date_to=date_to or None,
-                max_results=_anac_limit,
-            )
-        fn = _make_db_search_fn("anac_brazil", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _anac_live if live_ok else None,
-                                makes=makes, models=models, offset=offset)
-        scrapers.append(("anac_brazil", "ANAC Brasil", fn))
-
-    if source in ("transport_canada", "all"):
-        if make:
-            def _tc_live():
-                return tc_search(
-                    manufacturer_name=make,
-                    model_name=model or None,
-                    search_type=map_product_type(product_type),
-                )
-            fn = _make_db_search_fn("transport_canada", keyword, make, model,
-                                    product_type, date_from, date_to, max_results, _tc_live if live_ok else None,
-                                    makes=makes, models=models, offset=offset)
-            scrapers.append(("transport_canada", "Transport Canada", fn))
-        else:
-            # Sin make: buscar solo en BD (TC live requiere fabricante)
-            fn = _make_db_search_fn("transport_canada", keyword, make, model,
-                                    product_type, date_from, date_to, max_results, None,
-                                    makes=makes, models=models, offset=offset)
-            scrapers.append(("transport_canada", "Transport Canada", fn))
-
-    if source in ("dgac_chile", "all"):
-        def _dgac():
-            return dgac_chile_search(
-                keyword=keyword or None,
-                make=make or None,
-                model=model or None,
-                date_from=date_from or None,
-                date_to=date_to or None,
-                max_results=min(max_results, 200),
-            )
-        scrapers.append(("dgac_chile", "DGAC Chile", _dgac))
-
-    if source == "aerocivil_colombia":
-        def _aerocivil():
-            return aerocivil_search(
-                keyword=keyword or None,
-                make=make or None,
-                model=model or None,
-                date_from=date_from or None,
-                date_to=date_to or None,
-                max_results=min(max_results, 200),
-            )
-        scrapers.append(("aerocivil_colombia", "AEROCIVIL Colombia", _aerocivil))
-
-    if source in ("anac_argentina", "all"):
-        def _anac_ar():
-            return anac_argentina_search(
-                keyword=keyword or None,
-                make=make or None,
-                model=model or None,
-                date_from=date_from or None,
-                date_to=date_to or None,
-                max_results=min(max_results, 200),
-            )
-        scrapers.append(("anac_argentina", "ANAC Argentina", _anac_ar))
-
-    if source == "casa_australia":
-        def _casa():
-            return casa_search(
-                keyword=keyword or None,
-                make=make or None,
-                model=model or None,
-                date_from=date_from or None,
-                date_to=date_to or None,
-                max_results=min(max_results, 200),
-            )
-        scrapers.append(("casa_australia", "CASA Australia", _casa))
-
-    if source == "gcaa_uae":
-        def _gcaa():
-            return gcaa_search(
-                keyword=keyword or None,
-                make=make or None,
-                model=model or None,
-                date_from=date_from or None,
-                date_to=date_to or None,
-                max_results=min(max_results, 200),
-            )
-        scrapers.append(("gcaa_uae", "GCAA UAE", _gcaa))
-
-    if source in ("uk_caa", "all"):
-        def _uk_caa_live():
-            return uk_caa_search(
-                keyword=keyword or None,
-                make=make or None,
-                model=model or None,
-                date_from=date_from or None,
-                date_to=date_to or None,
-                max_results=min(max_results, 200),
-            )
-        # DB-first: populate_db.py already loads the ~200-doc UK CAA corpus into
-        # Supabase daily. Without this wrapper every search paid the cost of a
-        # live scrape (each doc needs its own detail-page fetch for the PDF
-        # link, ~60s+ for the full corpus) instead of an instant DB read.
-        fn = _make_db_search_fn("uk_caa", keyword, make, model,
-                                product_type, date_from, date_to, max_results, _uk_caa_live if live_ok else None,
-                                makes=makes, models=models, offset=offset)
-        scrapers.append(("uk_caa", "UK CAA", fn))
-
-    return scrapers
-
-
-def _run_scrapers_concurrently(scrapers, max_results):
-    """
-    Corre cada fuente en su propio hilo y entrega `(src_key, label, results,
-    err)` a medida que terminan, no en el orden de `scrapers`.
-
-    Antes las fuentes iban una detrás de otra: "All authorities" son siete RPC
-    y el usuario esperaba la SUMA de todas (cada una puede tardar varios
-    segundos con la caché de Postgres fría) mirando un skeleton. En paralelo
-    espera sólo a la más lenta, y el stream pinta cada autoridad en cuanto
-    contesta. Cada `fn` ya corre con su propio timeout dentro de
-    `run_with_timeout`, así que un hilo colgado no retiene a los demás.
-    """
-    if not scrapers:
+    if not sources:
         return
-    pool = ThreadPoolExecutor(max_workers=len(scrapers))
+    pool = ThreadPoolExecutor(max_workers=len(sources))
     try:
-        futures = {
-            pool.submit(run_with_timeout, fn, SCRAPER_TIMEOUT, label, max_results=max_results): (src_key, label)
-            for src_key, label, fn in scrapers
-        }
+        futures = {}
+        for src_key, label in sources:
+            def fn(src_key=src_key):
+                return search_supabase(source=src_key, max_results=max_results, **filters)
+            fut = pool.submit(run_with_timeout, fn, SCRAPER_TIMEOUT, label, max_results=max_results)
+            futures[fut] = (src_key, label)
         for fut in as_completed(futures):
             src_key, label = futures[fut]
             results, err = fut.result()
@@ -471,8 +277,7 @@ def _api_search_v1() -> RouteResult:
         make = data.get("make", "").strip()
         model = data.get("model", "").strip()
         # Multivalor. El escalar se rellena con la primera entrada cuando no
-        # viene suelto: los scrapers en vivo y el gate de Transport Canada
-        # piden un fabricante, no una lista.
+        # viene suelto; la RPC recibe los dos (`p_make` y `p_makes`).
         makes = normalize_filter_values(data.get("makes") or [])
         models = normalize_filter_values(data.get("models") or [])
         make = make or (makes[0] if makes else "")
@@ -495,22 +300,19 @@ def _api_search_v1() -> RouteResult:
         truncated_sources = []
         total_matched = 0
 
-        scrapers = build_scrapers(source, keyword, make, model, product_type, date_from,
-                                  date_to, max_results=max_results, makes=makes, models=models, offset=offset)
+        sources = _v1_sources(source)
+        filters = dict(keyword=keyword, make=make, model=model, product_type=product_type,
+                       date_from=date_from, date_to=date_to, makes=makes, models=models, offset=offset)
 
-        if source == "transport_canada" and not make:
-            errors.append("Transport Canada requiere un fabricante.")
-
-        # Concurrente, pero la respuesta se arma en el orden de `scrapers` para
+        # Concurrente, pero la respuesta se arma en el orden de `sources` para
         # que no cambie según qué autoridad contestó primero.
         by_key = {src_key: (label, results, err)
-                  for src_key, label, results, err in _run_scrapers_concurrently(scrapers, max_results)}
-        for src_key, _label, _fn in scrapers:
+                  for src_key, label, results, err in _query_sources_concurrently(sources, max_results, **filters)}
+        for src_key, _label in sources:
             label, results, err = by_key[src_key]
             if err:
                 errors.append(err)
-            # `getattr` con default: solo la ruta de BD devuelve DbResults; un
-            # scraper en vivo entrega una lista pelada y no sabe cuántas hay.
+            # `getattr` con default: una fuente que falló devuelve `[]` pelada.
             src_total = getattr(results, "total", None)
             if getattr(results, "truncated", False):
                 # Por fuente y con su total, igual que cada evento del SSE: los
@@ -598,28 +400,20 @@ def _api_search_stream_v1() -> RouteResult:
         return Response(empty_gen(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    scrapers = build_scrapers(source, keyword, make, model, product_type, date_from,
-                              date_to, max_results=max_results, makes=makes, models=models, offset=offset)
+    sources = _v1_sources(source)
+    filters = dict(keyword=keyword, make=make, model=model, product_type=product_type,
+                   date_from=date_from, date_to=date_to, makes=makes, models=models, offset=offset)
 
     def generate():
         total = 0
         try:
-            if source in ("transport_canada", "all") and not make and source == "transport_canada":
-                event = {
-                    "source": "transport_canada",
-                    "results": [],
-                    "count": 0,
-                    "error": "Transport Canada requiere un fabricante."
-                }
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-            for src_key, _label, results, err in _run_scrapers_concurrently(scrapers, max_results):
+            for src_key, _label, results, err in _query_sources_concurrently(sources, max_results, **filters):
                 count = len(results) if results else 0
                 total += count
 
                 # Mismo par que /api/search: por fuente, cuántas casaron en la BD
                 # y si lo enviado es solo una parte. `getattr` con default porque
-                # un scraper en vivo devuelve una lista pelada.
+                # una fuente que falló devuelve una lista pelada.
                 event = {
                     "source": src_key,
                     "results": results if results else [],

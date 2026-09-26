@@ -125,7 +125,9 @@ cuerpo en POST). Otro valor de `v` -> 400.
 
 - **v1** (sin `v` o `v=1`): el de siempre contra la RPC `search_ads` (que en la
   BD pasa a ser un shim sobre v2). Un evento SSE por autoridad con `offset`
-  **por fuente**. Cada peticion deja una linea de log
+  **por fuente**; las autoridades se consultan en paralelo, una RPC cada una.
+  La busqueda ya **no** raspa sitios en vivo como fallback: el scraping vive
+  solo en `populate_db.py`. Cada peticion deja una linea de log
   `search_v1_requests=<n> route=<ruta>`: es la senal de uso para retirar v1.
 - **v2** (`v=2`, `webapp/search_v2.py`): **una** llamada a `search_ads_v2` por
   pagina, con `offset` **global** (<= 100000) y `limit` <= 100 (se recorta).

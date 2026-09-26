@@ -4,10 +4,9 @@ del JSON, headers CORS y comportamiento sin auth. Es el criterio de que el
 refactor a blueprints no cambia el comportamiento observable: debe pasar
 identica antes y despues de cada commit del refactor.
 
-Sin red ni servicios externos, con dos excepciones deliberadas y acotadas:
-/api/status (pings HEAD con timeout de 3s; solo se asserta la FORMA) y ningun
-test invoca el camino real de scraping (las busquedas validas dispararian
-scrapers en vivo — eso no es contrato HTTP, es integracion).
+Sin red ni servicios externos, con una excepcion deliberada y acotada:
+/api/status (pings HEAD con timeout de 3s; solo se asserta la FORMA). Las
+busquedas validas llegarian a Supabase; los tests sustituyen la consulta.
 """
 
 import json
@@ -199,8 +198,7 @@ def test_search_reports_truncation_instead_of_hiding_it(client, monkeypatch):
     truncated = search_mod.DbResults([_ROW])
     truncated.total = 4297
     truncated.truncated = True
-    monkeypatch.setattr(search_mod, "build_scrapers",
-                        lambda *a, **k: [("easa", "EASA", lambda: truncated)])
+    monkeypatch.setattr(search_mod, "search_supabase", lambda **k: truncated)
 
     r = client.post("/api/search", json={"source": "easa", "make": "Airbus", "keyword": "engine"})
     assert r.status_code == 200
@@ -223,8 +221,7 @@ def test_search_complete_result_is_not_flagged(client, monkeypatch):
     whole = search_mod.DbResults([_ROW])
     whole.total = 1
     whole.truncated = False
-    monkeypatch.setattr(search_mod, "build_scrapers",
-                        lambda *a, **k: [("easa", "EASA", lambda: whole)])
+    monkeypatch.setattr(search_mod, "search_supabase", lambda **k: whole)
 
     body = client.post("/api/search", json=_FILTERED_QUERY).get_json()
     assert body["truncated"] is False
@@ -232,15 +229,14 @@ def test_search_complete_result_is_not_flagged(client, monkeypatch):
     assert body["errors"] == []
 
 
-def test_search_live_scraper_list_carries_no_signal(client, monkeypatch):
+def test_search_plain_list_carries_no_signal(client, monkeypatch):
     """
-    Un scraper en vivo devuelve una `list` pelada: no sabe cuantas hay en la BD.
-    La ruta debe leerlo con default y no inventarse un total.
+    Una fuente que fallo devuelve una `list` pelada: no sabe cuantas hay en la
+    BD. La ruta debe leerlo con default y no inventarse un total.
     """
     from webapp import search as search_mod
 
-    monkeypatch.setattr(search_mod, "build_scrapers",
-                        lambda *a, **k: [("easa", "EASA", lambda: [_ROW])])
+    monkeypatch.setattr(search_mod, "search_supabase", lambda **k: [_ROW])
     body = client.post("/api/search", json=_FILTERED_QUERY).get_json()
     assert body["truncated"] is False
     assert body["total_matched"] is None
@@ -283,8 +279,7 @@ def test_stream_and_post_report_truncation_the_same_way(client, monkeypatch):
     truncated = search_mod.DbResults([_ROW])
     truncated.total = 4297
     truncated.truncated = True
-    monkeypatch.setattr(search_mod, "build_scrapers",
-                        lambda *a, **k: [("easa", "EASA", lambda: truncated)])
+    monkeypatch.setattr(search_mod, "search_supabase", lambda **k: truncated)
 
     post = client.post("/api/search",
                        json={"source": "easa", "make": "Airbus", "keyword": "engine"}).get_json()

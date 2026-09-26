@@ -70,12 +70,6 @@ PDF_DOWNLOAD_TIMEOUT = 15
 PDF_MAX_WORKERS = 5
 PDF_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
-# Fuentes con datos precargados en Supabase: se busca primero en la BD y el
-# scraping en vivo queda como fallback.
-DB_BACKED_SOURCES = frozenset([
-    "easa", "federal_register", "transport_canada", "anac_brazil",
-])
-
 # --------------------------------------------------------- supabase clients --
 _supabase = None
 _supabase_admin = None
