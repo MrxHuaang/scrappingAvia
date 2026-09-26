@@ -60,6 +60,9 @@ DRS_API_KEY=...                   # FAA DRS data-pull key (drs.faa.gov/drs-api),
 DRS_API_ENABLED=                  # "true" turns the DRS sync on; off by default
 ```
 
+The search API also needs `INTERNAL_PROXY_SECRET`, the value the Next.js proxy
+sends in `X-Internal-Secret`.
+
 Never commit `.env`.
 
 ### FAA upstreams
@@ -152,8 +155,23 @@ counts, error_msg, timestamps). A run with failed writes is recorded as
 
 ## Search API
 
-`POST /api/search` and `GET /api/search/stream` (SSE) are reached only through
-the Next.js proxy (`X-Internal-Secret`). Both speak two contracts:
+The web app (`app.py` + `webapp/`) is an API with one client, the Ad-Scrapper
+Next.js proxy. It serves no HTML, templates or static files, has no login,
+billing, export or CORS, and knows three routes:
+
+| Route | Guard |
+|-------|-------|
+| `GET /api/health` | public; returns status, version, source list and timestamp only |
+| `POST /api/search` | proxy secret (`X-Internal-Secret`): v2 401, v1 403 |
+| `GET /api/search/stream` | proxy secret (`X-Internal-Secret`): v2 401, v1 403 |
+
+Any other path is a JSON 404, and `vercel.json` only routes `/api/*` to the
+function. `tests/test_route_guards.py` walks `app.url_map` and fails if any
+route other than health answers without the secret. Set
+`INTERNAL_PROXY_SECRET` in every deployment: without it the guard is a no-op
+(local development only).
+
+Both search routes speak two contracts:
 
 - **v1** (no `v`): one SSE event per authority, per-source `offset`, backed by
   the `search_ads` RPC. Each request logs `search_v1_requests=<n>`, the usage
@@ -192,11 +210,11 @@ populate_db.py               Orchestrator + upsert + relations + scrape_runs log
 enrich.py                    All derivations (status/priority/product_type/SBs/...)
 enrich_ai.py                 LLM enrichment of deep fields (see docs)
 utils.py                     AD identity, normalization, timeouts, MAX_RESULTS_PER_SOURCE
-webapp/                      Flask app: core + blueprints (pages/auth/billing/search/export/status); search_v2 + search_rows
+webapp/                      Flask search API: core (config, proxy guard, rate limit) + search blueprint; search_v2 + search_rows
 app.py                       Web entry point (Vercel builds this; assembles webapp/)
 dashboard_server.py          Local monitor for enrich_ai (loopback-only + token guard)
 watch_progress.py            CLI/HTML progress monitor (planner-estimate counts)
-tests/                       HTTP contract suite (pytest) for the web app
+tests/                       HTTP contract and route-guard suites (pytest) for the web API
 scripts/                     11 maintenance utilities:
   validate_ads.py            Data quality report, emits ads_to_rescrape.csv
   build_equivalents.py       Cross-authority equivalents (staged swap via RPCs)
@@ -208,7 +226,6 @@ scripts/                     11 maintenance utilities:
   warm_faa_mods.py           Pre-warm the GovInfo MODS cache
   link_supersession.py       Resolve supersession chains
   test_*.py                  Self-checks (no network, no DB) — run in CI
-static/, templates/          Flask web assets
 outputs/                     Caches and generated CSVs (gitignored; cached in Actions)
 .github/workflows/           ci.yml (tests+lint+audit) and populate_db.yml (daily cron)
 ```

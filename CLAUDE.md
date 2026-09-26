@@ -17,7 +17,7 @@ populate_db.py      Orquestador: ejecuta scrapers y hace upsert en Supabase
 scripts/            Utilidades de mantenimiento
   validate_ads.py   Reporte de calidad de datos (completos / parciales / críticos)
 outputs/            CSVs generados (ads_to_rescrape.csv, etc.) — gitignored
-app.py              Flask API (legacy)
+app.py + webapp/    API de busqueda (Flask) que solo consume el proxy de Next; sin UI
 utils.py            Helpers compartidos
 .env                Credenciales locales (nunca commitear)
 ```
@@ -117,6 +117,25 @@ product_type, product_subtype, statuses, has_pdf, fechas o keyword;
 `min_confidence` no cuenta). El keyword identificador pasa solo, y ademas del
 `is_ad_identifier()` acepta lo que `utils.search_term_kind()` clasifica como
 `ad_number`/`docket` ("Docket No. FAA-2023-0927").
+
+### API web: solo busqueda, siempre detras del proxy
+
+La app Flask no tiene UI: no sirve HTML, plantillas ni estaticos, y no tiene
+login, billing, export ni CORS (el dashboard legacy se elimino; todo eso vive
+en ad-scrapper). Su unico cliente es el proxy de Next (`app/api/proxy`), que
+llama servidor a servidor. Rutas:
+
+| Ruta | Guard |
+|------|-------|
+| `GET /api/health` | publica; solo status, version, fuentes y timestamp |
+| `POST /api/search` | secreto del proxy: 401 en v2, 403 en v1 |
+| `GET /api/search/stream` | secreto del proxy: 401 en v2, 403 en v1 |
+
+Cualquier otra ruta es un 404 JSON y `vercel.json` solo enruta `/api/*`.
+`tests/test_route_guards.py` recorre `app.url_map` y falla si una ruta que no
+sea health contesta sin el secreto: **toda ruta nueva lleva `require_proxy`
+(o `proxy_secret_ok()`) y entra en ese test**. `INTERNAL_PROXY_SECRET` es
+obligatorio en todo deploy; sin el, el guard no exige nada (solo dev local).
 
 ### Contratos de `/api/search` y `/api/search/stream`
 
