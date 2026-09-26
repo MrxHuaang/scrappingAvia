@@ -56,6 +56,8 @@ SUPABASE_SERVICE_KEY=eyJ...       # service role (writes)
 SUPABASE_ANON_KEY=eyJ...          # anon (reads only)
 GOVINFO_API_KEY=...               # free key https://api.govinfo.gov/signup/
                                   # without it FAA deep fields silently self-skip
+DRS_API_KEY=...                   # FAA DRS data-pull key (drs.faa.gov/drs-api), only for --drs
+DRS_API_ENABLED=                  # "true" turns the DRS sync on; off by default
 ```
 
 Never commit `.env`.
@@ -65,8 +67,26 @@ Never commit `.env`.
 The `federal_register` source consolidates 2 upstreams: FR API (year-split,
 1994+) and GovInfo (MODS XML, optional `--with-govinfo`). Both take holder and
 models from `scrapers/common/fr_applicability.py`. ADs before 1994 are not in
-either; the DRS scraper that tried drs.faa.gov was removed (Akamai blocked it,
-it always returned 0).
+either; the old DRS scraper that tried drs.faa.gov through a browser was removed
+(Akamai blocked it, it always returned 0).
+
+### FAA DRS sync
+
+`python populate_db.py --drs` pulls every FAA final (ADFRAWD) and emergency
+(ADFREAD) AD from the official DRS data-pull API into `drs_documents` and links
+each FAA ad to its DRS record (`ads.drs_document_guid`). It is not an `ads`
+source and writes no `scrape_runs` row. The first run is a plain offset scan
+with no date filter (about 27 pages of 750, ~274 MB transferred), because the
+API's date filter compares at second resolution and 14,193 documents share one
+second; later runs ask for the stored cursor minus one hour and page to the end
+before advancing it. A failed page stops the run without moving the cursor.
+
+It is **off by default** (`DRS_API_ENABLED`, and the repository variable of the
+same name for the workflow job). The DRS API publishes no terms of use or rate
+limits; the only statement found is the generic faa.gov disclaimer ("provided
+for U.S. Government-authorized use only"). **Do not enable it in production
+until Hyvento has written authorization from the FAA / DRS team for commercial
+use.** Details and first-run procedure: `docs/drs-sync.md`.
 
 ## Usage
 
@@ -79,6 +99,10 @@ python populate_db.py --source easa
 
 # All daily sources sequentially (skips DISABLED_SOURCES)
 python populate_db.py
+
+# FAA DRS sync (needs DRS_API_ENABLED and DRS_API_KEY; see docs/drs-sync.md)
+python populate_db.py --drs
+python populate_db.py --drs --drs-doctype ADFREAD --dry-run   # one page, no DB
 
 # DESTRUCTIVE: wipe a source and repopulate (use after schema changes)
 python populate_db.py --source federal_register --reset
@@ -127,6 +151,8 @@ scrapers/
   common/                    Shared HTTP (headers + backoff), atomic JSON cache, logging
   federal_register.py        FAA via federalregister.gov API (identity from docket_ids)
   faa_govinfo.py             GovInfo MODS XML (docket/amendment backfill, optional)
+  faa_drs_api.py             FAA DRS data-pull API client (read-only, key from env)
+  faa_drs_sync.py            DRS first scan + incremental sync into drs_documents
   transport_canada.py        TC CAWIS HTML scraping (+ PDF deep fields)
   easa.py                    EASA AD list paginated HTML (+ detail page + PDF)
   anac_brazil.py             ANAC Brazil HTML

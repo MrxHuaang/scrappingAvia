@@ -228,6 +228,8 @@ SUPABASE_SERVICE_KEY=eyJ...   # service role key (para writes)
 SUPABASE_ANON_KEY=eyJ...      # anon key (solo lectura)
 GOVINFO_API_KEY=...           # gratis en https://api.govinfo.gov/signup/
                               # opcional: si falta, fase GovInfo se skipea
+DRS_API_KEY=...               # key de drs.faa.gov/drs-api (vence a los 12 meses)
+DRS_API_ENABLED=              # "true"/"1" enciende la sync DRS; apagado por defecto
 ```
 
 ## FAA: identidad desde `docket_ids` (`source='federal_register'`)
@@ -372,12 +374,54 @@ python scripts/test_faa_identity.py           # self-check sin red ni DB
 python populate_db.py --source federal_register --since 2026-01-01
 ```
 
-Los ADs pre-1994 no estan en la FR API ni en GovInfo. El scraper de DRS
-(drs.faa.gov via Playwright) se elimino: Akamai lo bloqueaba y devolvia 0 en
-cada corrida.
+Los ADs pre-1994 no estan en la FR API ni en GovInfo. Si estan en DRS, que
+ahora se sincroniza por su API oficial (ver abajo) hacia `drs_documents`; no
+entran en `ads`. El scraper viejo de DRS (drs.faa.gov via Playwright) se
+elimino: Akamai lo bloqueaba y devolvia 0 en cada corrida.
 
 ### Reset completo
 
 ```bash
 python populate_db.py --source federal_register --reset   # borra y repobla
+```
+
+## FAA DRS (`drs_documents`, no es una fuente de `ads`)
+
+`python populate_db.py --drs` sincroniza la API data-pull de DRS (ADFRAWD =
+AD finales, ADFREAD = de emergencia) hacia `drs_documents` y enlaza cada AD
+FAA con `ads.drs_document_guid`, por las RPCs `upsert_drs_documents`,
+`advance_drs_cursor` y `link_ads_to_drs` (repo ad-scrapper). Cliente en
+`scrapers/faa_drs_api.py`, sync en `scrapers/faa_drs_sync.py`, detalle
+completo en [docs/drs-sync.md](docs/drs-sync.md). No escribe `scrape_runs`
+y corre en su propio job (`drs`) del workflow.
+
+> **Requisito antes de encenderlo en produccion:** Hyvento tiene que
+> contactar a la FAA (equipo DRS) y obtener **autorizacion escrita para el
+> uso comercial** de la API. La API no publica terminos, cuotas ni limites;
+> lo unico aplicable es el aviso generico de faa.gov, "provided for U.S.
+> Government-authorized use only". Hasta entonces `DRS_API_ENABLED` (y la
+> variable de repositorio del mismo nombre) se queda apagado.
+
+- **Primera carga = barrido por `offset` sin filtro de fecha.** El filtro
+  `docLastModifiedDate` es estricto y compara por segundo, y 14.193 documentos
+  comparten un mismo segundo: un cursor por fecha no parte ese bloque. Recien
+  al llegar a `hasMoreItems: false` se fija el cursor con
+  `initial_scan_done = true`. Unas 27 paginas de 750, ~274 MB transferidos.
+- **Incremental = cursor − 1 h**, ASC, paginando hasta el final antes de
+  avanzar. Upsert idempotente por `document_guid`; dedupe por guid en la
+  corrida.
+- **Una pagina fallida corta la corrida sin avanzar el cursor**; lo subido
+  queda y se enlaza. El cursor nunca pasa de la hora de inicio de la corrida.
+- **La fecha del cursor se valida en el cliente** (`YYYY-MM-DDTHH:mm:ss.SSSZ`):
+  una fecha sola devuelve 200 con 0 filas, en silencio.
+- `SupplementaryInfo` nunca se envia (60 % del volumen). El numero de AD es
+  `drs:documentNumber` normalizado con `normalize_ad_number`; **nunca** se
+  enlaza por numero FR ni parseando el guid.
+- La key solo sale de `DRS_API_KEY` y viaja solo en `x-api-key`: nunca en
+  logs, URLs ni errores. Tests con sesion y base falsas
+  (`tests/drs_fakes.py`).
+
+```bash
+python populate_db.py --drs                                  # ADFRAWD + ADFREAD
+python populate_db.py --drs --drs-doctype ADFREAD --dry-run  # una pagina, sin base
 ```

@@ -211,7 +211,7 @@ jobs:
   # from the FAA / DRS team for commercial use of the DRS API: the API
   # publishes no terms of use or rate limits, and the only statement found
   # is the generic faa.gov disclaimer ("provided for U.S.
-  # Government-authorized use only").
+  # Government-authorized use only"). See docs/drs-sync.md.
   drs:
     name: faa_drs
     if: vars.DRS_API_ENABLED == 'true'

@@ -33,6 +33,8 @@ todo se escribió.
 | Una fuente devuelve 0 ADs varios días | Cambio de HTML o WAF nuevo | Correr local `python populate_db.py --source <x> --dry-run` y comparar con el sitio |
 | `22023` desde `replace_ad_applicability` | El extractor declara mal el tri-estado o duplica clave natural | Revisar contra `docs/applicability-contract.md` |
 | `23514` con hint `plan_*` | Cuota/billing del workspace (no aplica al catálogo) | No es del scraper — revisar el trigger en el repo frontend |
+| Job `faa_drs`: `DRS rejected the API key (HTTP 403)` | Key de DRS vencida (12 meses) o revocada | Renovar en drs.faa.gov/drs-api y actualizar el secret `DRS_API_KEY` |
+| Job `faa_drs`: `page N failed, cursor not advanced` | 429/5xx o timeout sostenido de DRS | Nada: la corrida siguiente repite desde el mismo cursor (docs/drs-sync.md) |
 | Job cancelado a los 180 min | Run frío re-descargando ~18k PDFs | Verificar que el paso "Restore scraper caches" encontró un cache previo |
 
 ## 3. Los caches de `outputs/`
