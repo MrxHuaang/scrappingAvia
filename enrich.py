@@ -17,6 +17,7 @@ Campos canonicos esperados por la tabla `ads`:
 
 import html
 import re
+from datetime import date
 
 from utils import normalize_ad_number
 
@@ -676,6 +677,32 @@ def amoc_from_sections(sections: list[dict] | None) -> bool:
         or (s.get("kind") == "required_actions" and _AMOC_PHRASE_RE.search(s.get("body") or ""))
         for s in sections or []
     )
+
+
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august",
+           "september", "october", "november", "december")
+# "This AD is effective May 22, 2024.", "This amendment becomes effective on
+# March 2, 1998, to all persons except ...", "... is effective on January 18,
+# 2024." La fecha va pegada a "effective": "the emergency AD was effective for
+# those owners ... on the date it was provided" no es una.
+_EFFECTIVE_ON_RE = re.compile(
+    r"\beffective\s+(?:on\s+)?(" + "|".join(_MONTHS) + r")\s+(\d{1,2}),?\s+(\d{4})\b", re.I
+)
+
+
+def effective_date_from_sections(sections: list[dict] | None) -> str | None:
+    """Fecha efectiva (YYYY-MM-DD) que declara la sección `effective_date` del
+    texto anclado del AD, o None."""
+    for s in sections or []:
+        if s.get("kind") != "effective_date":
+            continue
+        m = _EFFECTIVE_ON_RE.search(s.get("body") or "")
+        if m:
+            try:
+                return date(int(m.group(3)), _MONTHS.index(m.group(1).lower()) + 1, int(m.group(2))).isoformat()
+            except ValueError:  # "February 30": errata de la fuente
+                return None
+    return None
 
 
 # ---------------------------------------------------------------------------

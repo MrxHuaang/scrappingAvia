@@ -247,6 +247,20 @@ def govinfo_source_url(publication_date: str, doc_number: str) -> str:
     return f"https://www.govinfo.gov/content/pkg/FR-{publication_date}/html/{doc_number}.htm"
 
 
+def rule_effective_date(ft: dict, effective_on: str | None) -> tuple[str | None, str]:
+    """(fecha efectiva, de donde sale): la que declara la seccion Effective
+    Date del texto anclado ("section"), si no el `effective_on` de la FR API
+    ("effective_on"), si no ninguna ("none"). Nunca la fecha de publicacion.
+    La usan el parseo y scripts/backfill_effective_date.py."""
+    sections = ft.get("sections") if ft.get("status") == "extracted" else None
+    from_rule = enrich.effective_date_from_sections(sections)
+    if from_rule:
+        return from_rule, "section"
+    if (effective_on or "").strip():
+        return effective_on.strip(), "effective_on"
+    return None, "none"
+
+
 def _applicability_section(ft: dict) -> str:
     """Cuerpo de la seccion Applicability del texto anclado, o ""."""
     if ft.get("status") != "extracted":
@@ -483,7 +497,8 @@ def _parse_document(doc) -> dict | None:
 
         subject = re.sub(r"^Airworthiness Directives[;:]\s*", "", title, flags=re.I)
 
-        effective_date = doc.get("effective_on", "") or doc.get("publication_date", "")
+        effective_on = (doc.get("effective_on") or "").strip()
+        effective_date, _ = rule_effective_date(ft, effective_on)
         pdf_link = doc.get("pdf_url", "") or doc.get("html_url", "")
 
         doc_type = (doc.get("type") or "").upper()
@@ -517,7 +532,11 @@ def _parse_document(doc) -> dict | None:
             # corrective_action and Service Bulletin refs.
             "Abstract": abstract.strip(),
             "Publication_Date": pub_date,
+            # None si ni el rule ni la FR API la declaran: la fecha de
+            # publicacion no es la efectiva (un AD entra en vigor semanas
+            # despues, o antes si fue de emergencia).
             "Effective_Date": effective_date,
+            "Effective_On": effective_on,
             "Status": status,
             "Product_Type": product_type,
             "Docket": docket,
