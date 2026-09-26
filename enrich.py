@@ -830,10 +830,124 @@ _PLAIN_HEADING_RE = re.compile(r"^[A-Z][A-Za-z0-9 ,&()/'\-]{1,100}\??$")
 # Párrafo legado: "    Applicability: ...", "    (a) Within 5 flight cycles ...".
 # La etiqueta también va sola en su línea ("Applicability", rotorcraft 2007).
 _LABEL_RE = re.compile(r"^(Applicability|Compliance)(?::\s*|\s*$)")
+# La misma etiqueta en frase, sin dos puntos (ADs anteriores a 1994): "Applies
+# to All DC3 Series Aircraft." y "Compliance required within 30 days after
+# ...". La frase es parte del cuerpo.
+_LABEL_PHRASE_RE = re.compile(r"^(?:(?P<applicability>Applies [Tt]o)|(?P<compliance>Compliance (?:is )?required))\b")
 _LETTER_PARA_RE = re.compile(r"^\(([a-z])\)(?:\s+|(?=\(\d))")
 _TABLE_LINE_RE = re.compile(r"-{8,}|\.{6,}|\S {3,}\S")
 _CLOSING_KINDS = ("amoc", "material", "effective_date")
 _EMBEDDED_UNSAFE_RE = re.compile(r"(?<=\.)\s+(?=To (?:prevent|detect|correct|ensure|minimize|reduce|avoid|preclude)\b)")
+
+
+# ---------------------------------------------------------------------------
+# Texto regulatorio en texto plano (DRS `adfrawdRegulatoryText`)
+# ---------------------------------------------------------------------------
+# DRS trae solo el bloque regulatorio, sin HTML, en tres formas segun la
+# epoca: con saltos de linea reales; con los saltos escritos como "\n" y "\t"
+# literales (barra y letra) y las marcas de pagina como "((Page 48487))"; y,
+# desde 2021, en una sola linea ("... (a) Effective Date This AD is effective
+# ... (b) Affected ADs None. ..."). `plain_regulatory_text` lo lleva a la
+# forma con lineas del granulo de GovInfo, para que lo lea el mismo parser.
+#
+# Los ADs anteriores a 1994 no siempre traen "Amendment 39-": "41-47-01
+# DOUGLAS: (Was Service Note 3 ...) Applies to All DC3 Series Aircraft.",
+# "65-06-04 EUREKA WILLIAMS: Amdt. 39-44 ...". En texto plano el encabezado
+# puede ser solo numero + titular + ":" al inicio de linea, pero el numero
+# tiene que ser el del AD esperado: el anclaje sigue siendo la identidad del
+# propio AD.
+_LITERAL_ESCAPE_RE = re.compile(r"\\r\\n|\\[ntr]")
+_LITERAL_ESCAPES = {"\\r\\n": "\n", "\\n": "\n", "\\t": "\t", "\\r": "\n"}
+_PLAIN_PAGE_MARK_RE = re.compile(r"[ \t]*(?:\[\[|\(\()Page \d+(?:\]\]|\)\))[ \t]*")
+_TRAILING_SPACE_RE = re.compile(r"[ \t]+\n")
+_LETTER_AD_SUFFIX_RE = re.compile(r"\s+P?L$", re.I)
+# El titular de un AD antiguo puede ser una lista larga de operadores
+# ("GARLICK HELICOPTERS, HAWKINS AND POWERS AVIATION, INC., ... (BELL
+# HELICOPTER TEXTRON, INC.):"), de ahi el tope de 400.
+_NUMBER_ONLY_HEADER_RE = re.compile(
+    r"^[ \t]*(?P<ad>T?\d{2,4}[-–—]\d{2}[-–—]\d{2,4}(?:[ \t]?R\d+)?(?:[ \t](?:PL|L|C\d))?)[ \t]+"
+    r"(?P<holder>[A-Za-z][^\n:]{0,400}):"
+    r"(?:[ \t]*(?:Amendment|Amdt\.?)\s+(?:No\.?\s*)?(?P<amendment>39\s*[-–—]\s*\d{1,6}))?",
+    re.M,
+)
+# La aplicabilidad dentro del parrafo del encabezado ("...: Amendment 39-4425.
+# Applies to Model F28 ..."): se separa del encabezado.
+_INLINE_APPLICABILITY_RE = re.compile(r"(?<=[\s.;:)])(?:Applies [Tt]o|Applicability:)")
+# Una sola linea: "(a) Effective Date This AD ...". El encabezado es la racha de
+# palabras con mayuscula (y conectores en minuscula) hasta la primera palabra
+# que abre la frase del cuerpo, un "(1)" o un ":".
+_ONE_LINE_LETTER = r"(?<=\s)\(%s\)[ \t]+(?=[A-Z])"
+_HEADING_CONNECTORS = frozenset(
+    "of and the for to in on by with or a an from under at as not than into per".split())
+_BODY_OPENERS = frozenset(
+    "This These That Those The A An None None. Comply Except Within Before After If For You Your Joint Air "
+    "Unless As At Do Where When Reserved Reserved. All Any Each No Although Accomplishing Refer "
+    "Operators Owners Prior Upon Use Using In On".split())
+_HEADING_MAX_WORDS = 12
+
+
+def _one_line_heading_end(text: str, start: int) -> int | None:
+    """Fin del encabezado que empieza en `start` en un texto de una linea, o
+    None si no hay una racha de encabezado reconocible."""
+    end = None
+    for i, w in enumerate(re.finditer(r"\S+", text[start:start + 400])):
+        token = w.group(0)
+        if i >= _HEADING_MAX_WORDS or re.fullmatch(r"\(\d+\)|\([ivx]+\)", token):
+            break
+        if i > 0 and token in _BODY_OPENERS:
+            break
+        bare = token.rstrip(":;,")
+        if not (bare[:1].isupper() or bare[:1].isdigit() or bare[:1] == "("
+                or bare.lower() in _HEADING_CONNECTORS):
+            break
+        end = start + w.start() + len(bare)
+        if token.endswith((":", ";")):
+            break
+    return end
+
+
+def _restructure_one_line(text: str, expected_ad: str | None) -> str:
+    """Saltos de linea para un texto escrito en una sola linea: antes del
+    encabezado del AD esperado y, desde ahi, antes de cada "(a)", "(b)", ...
+    en secuencia, con su encabezado en su propia linea."""
+    number = normalize_ad_number(expected_ad or "")
+    if not number:
+        return text
+    pattern = r"\s*".join(r"[-–—]" if c in "-–—" else re.escape(c) for c in number.replace(" ", ""))
+    head = re.search(rf"(?<!\S){pattern}\s+[A-Za-z][^:]{{0,200}}:", text)
+    if not head:
+        return text
+    out, pos, letter = [text[:head.start()].rstrip(), "\n\n"], head.start(), "a"
+    while letter <= "z":
+        m = re.compile(_ONE_LINE_LETTER % letter).search(text, pos)
+        if not m:
+            break
+        out.append(text[pos:m.start()].rstrip())
+        heading_end = _one_line_heading_end(text, m.end())
+        if heading_end is None:
+            out += ["\n\n\t", text[m.start():m.end()]]
+            pos = m.end()
+        else:
+            out += ["\n\n", text[m.start():heading_end], "\n\n\t"]
+            pos = heading_end
+            while pos < len(text) and text[pos] in ":; ":
+                pos += 1
+        letter = chr(ord(letter) + 1)
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def plain_regulatory_text(text: str | None, expected_ad: str | None = None) -> str:
+    """El texto regulatorio de DRS con saltos de linea reales, sin marcas de
+    pagina y, si venia en una sola linea, con un parrafo por seccion."""
+    text = _LITERAL_ESCAPE_RE.sub(lambda m: _LITERAL_ESCAPES[m.group(0)], text or "")
+    text = _PLAIN_PAGE_MARK_RE.sub(" ", text.replace("\r\n", "\n").replace("\r", "\n"))
+    # DRS deja un espacio antes de cada salto; en GovInfo no lo hay y el
+    # parser cuenta con eso (un encabezado no termina en ".").
+    text = _TRAILING_SPACE_RE.sub("\n", text)
+    if "\n" not in text.strip():
+        text = _restructure_one_line(text, expected_ad)
+    return text
 
 
 def fr_document_text(html_text: str | None) -> str:
@@ -963,12 +1077,16 @@ def _raw_sections(block: str) -> list[dict]:
     out, expected = [], "a"
     for text, is_heading in paras:
         label = _LABEL_RE.match(text)
+        phrase = None if label else _LABEL_PHRASE_RE.match(text)
         letter = _LETTER_PARA_RE.match(text)
         in_heading = bool(out) and out[-1].get("grouped", False)
         if is_heading and use_headings:
             out.append({"letter": None, "heading": text, "body": "", "grouped": True})
         elif label:
             out.append({"letter": None, "heading": label.group(1), "body": text[label.end():]})
+        elif phrase and not in_heading:
+            heading = "Applicability" if phrase.group("applicability") else "Compliance"
+            out.append({"letter": None, "heading": heading, "body": text})
         elif letter and letter.group(1) == expected:
             expected = chr(ord(expected) + 1)
             # Un encabezado agrupa sus párrafos, pero el AMOC, la incorporación
@@ -1016,9 +1134,13 @@ def _section_kind(heading: str | None, body: str, after_compliance: bool) -> str
 
 
 def split_ad_sections(html_text: str | None, expected_ad: str | None,
-                      expected_amendment: str | None = None) -> dict:
+                      expected_amendment: str | None = None, *, plain: bool = False) -> dict:
     """
-    Secciones del AD `expected_ad` dentro de un granulo de GovInfo.
+    Secciones del AD `expected_ad` dentro de un granulo de GovInfo o, con
+    `plain=True`, dentro del texto regulatorio en texto plano de DRS
+    (`plain_regulatory_text`). En texto plano el encabezado puede venir sin
+    amendment (ADs antiguos), siempre con el numero del AD esperado, y la
+    aplicabilidad escrita dentro del parrafo del encabezado se separa de el.
 
     Devuelve {status, anchor, sections[]}; cada sección es {position, letter,
     heading, kind, body} con `position` desde 1 en el orden del documento y
@@ -1036,23 +1158,33 @@ def split_ad_sections(html_text: str | None, expected_ad: str | None,
     """
     result = {"status": "error", "anchor": None, "sections": []}
     try:
-        if not (html_text or "").strip() or "request access" in html_text[:600].lower():
+        if not (html_text or "").strip() or (not plain and "request access" in html_text[:600].lower()):
             result["status"] = "empty"
             return result
-        text = fr_document_text(html_text)
+        text = plain_regulatory_text(html_text, expected_ad) if plain else fr_document_text(html_text)
         headers = list(_BLOCK_HEADER_RE.finditer(text))
         want = _ad_key(expected_ad)
         idx = next((i for i, m in enumerate(headers)
                     if want and _declared_ad(m, text) == want and not _is_excerpt(text, m)), None)
+        if idx is None and plain and want:
+            # DRS numera los AD emitidos por carta con un sufijo que el texto no
+            # repite ("86-16-11 L" se encabeza "86-16-11 BELL HELICOPTER ...").
+            wanted = {want, _ad_key(_LETTER_AD_SUFFIX_RE.sub("", normalize_ad_number(expected_ad or "")))}
+            headers = [m for m in _NUMBER_ONLY_HEADER_RE.finditer(text) if _ad_key(m.group("ad")) in wanted][:1]
+            idx = 0 if headers else None
         if idx is None:
             result["status"] = "unanchored"
             return result
         head = headers[idx]
-        if expected_amendment and _amendment_key(head.group("amendment")) != _amendment_key(expected_amendment):
+        if expected_amendment and _amendment_key(head.group("amendment") or "") != _amendment_key(expected_amendment):
             result["status"] = "unanchored"
             return result
 
         body_start = _header_end(text, head)
+        if plain:
+            inline = _INLINE_APPLICABILITY_RE.search(text, head.end(), body_start)
+            if inline:
+                body_start = inline.start()
         ends = [len(text)]
         if idx + 1 < len(headers):
             ends.append(headers[idx + 1].start())

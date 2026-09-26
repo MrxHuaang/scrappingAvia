@@ -10,6 +10,7 @@ Uso:
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -704,6 +705,14 @@ def _text_payload(raw: dict, entry: dict) -> tuple[dict, list[dict], str | None]
         "anchor": entry.get("anchor") if status == "extracted" else None,
         "detail": entry.get("detail"),
     }
+    return _checked_text_attempt(attempt, sections)
+
+
+def _checked_text_attempt(attempt: dict, sections: list[dict]) -> tuple[dict, list[dict], str | None]:
+    """Un intento `extracted` cuyas secciones o ancla no caben en los limites
+    de la RPC viaja como `error` sin secciones, con el problema devuelto para
+    registrarlo. Comun a GovInfo y DRS."""
+    status = attempt["status"]
     problem = _text_sections_over_limits(sections) if status == "extracted" else None
     if problem is None and (attempt["anchor"] or "") and len(attempt["anchor"]) > TEXT_FIELD_MAX:
         problem = f"anchor over {TEXT_FIELD_MAX} characters"
@@ -719,20 +728,29 @@ def _stored_text_state(supabase, ad_ids: list[str]) -> dict[str, str | None] | N
     """ad_id -> text_sha256 de ad_text_documents (None si el AD tiene intentos
     pero ningun texto conservado). Un AD sin fila no aparece. None si la
     lectura fallo (registrado)."""
-    state: dict[str, str | None] = {}
+    kept = _kept_text(supabase, ad_ids)
+    return None if kept is None else {ad_id: rec.get("text_sha256") for ad_id, rec in kept.items()}
+
+
+def _kept_text(supabase, ad_ids: list[str]) -> dict[str, dict] | None:
+    """ad_id -> {text_sha256, text_provider} de ad_text_documents (los dos
+    None si el AD tiene intentos pero ningun texto conservado). Un AD sin
+    fila no aparece. None si la lectura fallo (registrado)."""
+    kept: dict[str, dict] = {}
     BATCH = 300
     for i in range(0, len(ad_ids), BATCH):
         try:
             resp = (supabase.table("ad_text_documents")
-                    .select("ad_id, text_sha256")
+                    .select("ad_id, text_sha256, text_provider")
                     .in_("ad_id", ad_ids[i:i + BATCH])
                     .execute())
             for rec in resp.data or []:
-                state[rec["ad_id"]] = rec.get("text_sha256")
+                kept[rec["ad_id"]] = {"text_sha256": rec.get("text_sha256"),
+                                      "text_provider": rec.get("text_provider")}
         except Exception as e:
             _record_write_error(f"  text: no se pudo leer ad_text_documents: {e}")
             return None
-    return state
+    return kept
 
 
 def _text_needs_send(entry: dict, fresh: bool, stored: dict[str, str | None] | None, ad_id: str) -> bool:
@@ -821,6 +839,96 @@ def populate_text_sections(supabase, normalized: list[dict], id_map: dict[str, s
         f"({sum(1 for *_, f in by_ad.values() if f)} de esta corrida); BD: "
         + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
     )
+    return counts
+
+
+# Texto de DRS (`drs_documents.regulatory_text`, texto plano) para los ADs FAA
+# sin texto de GovInfo conservado: los anteriores a 1994, que GovInfo no
+# tiene, y los que GovInfo no pudo anclar. Mismo parser (modo texto plano),
+# mismos estados de intento y misma RPC; la base aplica la misma regla de
+# completitud y nunca reemplaza texto conservado con un intento peor.
+TEXT_PROVIDER_DRS = "drs"
+DRS_TEXT_DOCTYPE = "ADFRAWD"   # ADFREAD no trae texto regulatorio
+DRS_TEXT_BATCH = 500           # numeros de AD por lectura de drs_documents
+
+
+def _drs_text_payload(record: dict) -> tuple[dict, list[dict], str | None]:
+    """(p_attempt, p_sections, problema) de un AD desde su documento DRS,
+    anclado al numero del propio AD como en GovInfo. El amendment no se
+    exige: el de DRS puede ser el de la ultima enmienda ("Amendment 39-5571
+    as amended by Amendment 39-6115")."""
+    ad = record["ad_number"]
+    text = record.get("regulatory_text") or ""
+    parsed = enrich.split_ad_sections(text, ad, plain=True)
+    status = parsed["status"]
+    detail = {
+        "unanchored": f"no regulatory header in the DRS text declares AD {ad}",
+        "empty": "the DRS document has no regulatory text",
+        "error": "anchored DRS text without sections",
+    }.get(status)
+    attempt = {
+        "status": status,
+        "provider": TEXT_PROVIDER_DRS,
+        "document_id": record.get("document_guid"),
+        "source_url": record.get("document_url"),
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest() if text.strip() else None,
+        "anchor": parsed["anchor"] if status == "extracted" else None,
+        "detail": detail,
+    }
+    sections = [dict(s) for s in parsed["sections"]] if status == "extracted" else []
+    return _checked_text_attempt(attempt, sections)
+
+
+def _drs_text_needs_send(kept: dict | None, sha256: str | None) -> bool:
+    """El texto de DRS solo entra donde no hay texto de GovInfo conservado:
+    AD sin fila en ad_text_documents, con intentos pero sin texto, o con
+    texto de DRS que cambio. Un texto de GovInfo conservado nunca se toca, y
+    uno de DRS igual al que ya esta no se reenvia."""
+    if kept is None or not kept.get("text_sha256"):
+        return True
+    return kept.get("text_provider") == TEXT_PROVIDER_DRS and kept.get("text_sha256") != sha256
+
+
+def populate_drs_text_sections(supabase, store, ad_numbers, *, dry_run: bool = False) -> dict[str, int]:
+    """Intentos de texto desde DRS para los ADs FAA de `ad_numbers` (los de
+    las paginas subidas en la corrida). El documento de cada AD es el mismo
+    que elige `link_ads_to_drs` (`faa_drs_ads.pick_document`). Un AD sin fila
+    en `ads` no viaja. Devuelve los conteos del parseo (`parsed_<estado>`) y
+    del estado que guardo la base."""
+    counts: dict[str, int] = {}
+
+    def bump(key: str, n: int = 1) -> None:
+        counts[key] = counts.get(key, 0) + n
+
+    numbers = sorted(set(ad_numbers))
+    for i in range(0, len(numbers), DRS_TEXT_BATCH):
+        groups = faa_drs_ads.group_by_ad(store.documents(DRS_TEXT_DOCTYPE, numbers[i:i + DRS_TEXT_BATCH]))
+        parsed = {n: _drs_text_payload(faa_drs_ads.pick_document(docs)) for n, docs in groups.items()}
+        for attempt, _sections, _problem in parsed.values():
+            bump(f"parsed_{attempt['status']}")
+        if dry_run or not parsed:
+            continue
+        id_map = _fetch_ad_ids(supabase, "federal_register", list(parsed))
+        kept = _kept_text(supabase, list(id_map.values()))
+        if kept is None:
+            return counts
+        payload = []
+        for number, (attempt, sections, problem) in parsed.items():
+            ad_id = id_map.get(number)
+            if not ad_id:
+                bump("not_in_ads")
+                continue
+            if not _drs_text_needs_send(kept.get(ad_id), attempt["sha256"]):
+                bump("text_already_kept")
+                continue
+            if problem:
+                _record_write_error(f"  text: {number} (DRS): secciones fuera de limite ({problem}), "
+                                    f"se registra el intento como error")
+            payload.append((ad_id, attempt, sections))
+        for status, n in _send_text_sections(supabase, payload).items():
+            bump(status, n)
+    logger.info(f"[DRS] texto{' (DRY-RUN)' if dry_run else ''}: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
     return counts
 
 
@@ -1437,9 +1545,6 @@ def backfill_pre_federal_register(supabase, store, ad_numbers, *, dry_run: bool 
                         for r in faa_drs_ads.pre_federal_register_rows(documents)) if n]
     counts["rows"] = len(rows)
     if rows and not dry_run:
-        if supabase is None:
-            _record_write_error("[DRS] ADs anteriores a 1994: sin cliente de base, no se escriben")
-            return counts
         taken = _ads_not_created_from_drs(supabase, [r["ad_number"] for r in rows])
         if taken is None:
             return counts
@@ -1493,11 +1598,23 @@ def run_drs_sync(doctypes: list[str], dry_run: bool = False, env: dict | None = 
     write_errors_before = len(_write_errors)
     backfill: dict[str, int] = {}
 
-    def _after_upsert(report: faa_drs_sync.SyncReport) -> None:
-        backfill.update(backfill_pre_federal_register(
-            supabase, store, report.ad_numbers(DRS_BACKFILL_DOCTYPE), dry_run=dry_run))
+    text: dict[str, int] = {}
 
-    report = faa_drs_sync.sync(client, store, doctypes, before_link=_after_upsert)
+    def _after_upsert(report: faa_drs_sync.SyncReport) -> None:
+        # Primero las filas de los ADs anteriores a 1994, para que su texto
+        # tenga a que AD ir; el texto corre aunque esas filas fallen.
+        numbers = report.ad_numbers(DRS_BACKFILL_DOCTYPE)
+        try:
+            backfill.update(backfill_pre_federal_register(supabase, store, numbers, dry_run=dry_run))
+        finally:
+            text.update(populate_drs_text_sections(supabase, store, numbers, dry_run=dry_run))
+
+    # Un llamador que inyecta solo el store (sin base) sincroniza drs_documents
+    # y nada mas; la corrida real siempre tiene cliente.
+    after = _after_upsert if dry_run or supabase is not None else None
+    if after is None:
+        logger.info("[DRS] sin cliente de base: no se crean ADs anteriores a 1994 ni se envia texto")
+    report = faa_drs_sync.sync(client, store, doctypes, before_link=after)
     errors = report.errors
     for err in errors[:50]:
         _record_write_error(f"[DRS] {err}")
@@ -1512,6 +1629,8 @@ def run_drs_sync(doctypes: list[str], dry_run: bool = False, env: dict | None = 
     if backfill:
         lines.append(f"  Pre-1994      : {backfill['rows']} filas, {backfill['new']} nuevas, "
                      f"{backfill['skipped_existing']} ya del Federal Register")
+    if text:
+        lines.append("  Texto DRS     : " + ", ".join(f"{k}={v}" for k, v in sorted(text.items())))
     # Los errores de la sync ya estan en _write_errors (arriba); ademas cuentan
     # las escrituras fallidas de las filas de `ads` y sus relaciones.
     failed = len(_write_errors) - write_errors_before
