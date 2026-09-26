@@ -26,7 +26,6 @@ APP_VERSION = "1.1.0"
 
 # ------------------------------------------------------------------ config --
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
 
 # Shared secret injected by the Next.js proxy (SEC-3). /api/search* rejects
@@ -43,41 +42,39 @@ _LOOPBACK = frozenset({"127.0.0.1", "::1"})
 SCRAPER_TIMEOUT = 45  # timeout maximo por fuente (segundos)
 
 # --------------------------------------------------------- supabase clients --
-_supabase = None
 _supabase_admin = None
-# True si get_supabase_admin() construyo el cliente con SUPABASE_SERVICE_KEY.
-_SUPABASE_ADMIN_USES_SERVICE_ROLE: bool | None = None
-
-
-def get_supabase():
-    """Cliente con anon key — respaldo de get_supabase_admin() sin service key."""
-    global _supabase
-    if _supabase is None and SUPABASE_URL and SUPABASE_ANON_KEY:
-        from supabase import create_client
-        _supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-    return _supabase
 
 
 def get_supabase_admin():
-    """Cliente con service_role key — para operaciones de servidor (busqueda, plan, rate limit)."""
-    global _supabase_admin, _SUPABASE_ADMIN_USES_SERVICE_ROLE
-    if _supabase_admin is None:
+    """
+    Cliente con service_role key — para operaciones de servidor (busqueda,
+    plan, rate limit). Requiere SUPABASE_SERVICE_KEY: la BD revoca los
+    privilegios de escritura de anon/authenticated sobre estas tablas, asi
+    que degradar a la anon key aqui ya no es un respaldo funcional — es solo
+    un cliente que va a fallar en runtime (o, peor, uno que un dia sí pudiera
+    escribir sin pasar por service_role). None si la service key no esta
+    configurada; quien llama debe fallar cerrado (ver check_rate_limit) en
+    vez de tratarlo como "sin rate limit".
+    """
+    global _supabase_admin
+    if _supabase_admin is None and SUPABASE_URL and SUPABASE_SERVICE_KEY:
         from supabase import create_client
-        sk = os.environ.get("SUPABASE_SERVICE_KEY", "")
-        logger.info(f"[ADMIN] Creando cliente admin. Service key presente: {bool(sk)}")
-        if SUPABASE_URL and SUPABASE_SERVICE_KEY:
-            _supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-            _SUPABASE_ADMIN_USES_SERVICE_ROLE = True
-            logger.info("[ADMIN] Cliente creado con SUPABASE_SERVICE_KEY (service_role)")
-        elif SUPABASE_URL and SUPABASE_ANON_KEY:
-            _supabase_admin = get_supabase()
-            _SUPABASE_ADMIN_USES_SERVICE_ROLE = False
-            logger.warning(
-                "[ADMIN] FALLBACK: cliente admin = anon key — RLS puede bloquear upsert en profiles"
-            )
-        else:
-            _SUPABASE_ADMIN_USES_SERVICE_ROLE = None
+        _supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        logger.info("[ADMIN] Cliente admin creado con SUPABASE_SERVICE_KEY (service_role)")
     return _supabase_admin
+
+
+def log_admin_key_state() -> None:
+    """Un aviso claro al arrancar si falta la service key: sin ella no hay
+    cliente admin, y check_rate_limit() falla cerrado (503) en toda ruta de
+    datos en vez de correr sin rate limit."""
+    if SUPABASE_SERVICE_KEY:
+        return
+    logger.error(
+        "[SEC] SUPABASE_SERVICE_KEY not set: get_supabase_admin() returns "
+        "None and every data route answers 503 at the rate limiter until "
+        "it is configured."
+    )
 
 
 # ------------------------------------------------------------------- guards --
@@ -169,7 +166,17 @@ def check_rate_limit() -> tuple[Response, int] | None:
     Funciona en serverless — no usa memoria local.
     Planes pro/team: sin limite. Plan free: 20 busquedas/dia. Anonimo: 3/hora.
     Devuelve None si la request puede continuar, o la respuesta 429.
+
+    Falla cerrado (503) si el cliente admin no esta disponible (sin
+    SUPABASE_SERVICE_KEY): mismo patron que proxy_rejection() para el secreto
+    del proxy — sin el, ninguna ruta de datos sigue "sin rate limit", que
+    dejaria pasar trafico sin control alguno.
     """
+    sb = get_supabase_admin()
+    if not sb:
+        logger.error("[RATE] Supabase admin client unavailable (missing SUPABASE_SERVICE_KEY); failing closed")
+        return jsonify({"error": "Service unavailable"}), 503
+
     # Identity: prefer the proxy-forwarded user id over the (shared) IP so paying
     # users get their own bucket and aren't throttled by other users' traffic (BUG-2).
     uid = request.headers.get("X-User-Id")
@@ -179,11 +186,6 @@ def check_rate_limit() -> tuple[Response, int] | None:
 
     ip = uid or request.remote_addr or "unknown"
     now = time.time()
-
-    sb = get_supabase_admin()
-    if not sb:
-        logger.warning("[RATE] Supabase no disponible, rate limit omitido")
-        return None
 
     try:
         if plan == "free":

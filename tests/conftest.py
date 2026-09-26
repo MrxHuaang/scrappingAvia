@@ -32,6 +32,49 @@ import app as app_module  # noqa: E402
 from webapp import core  # noqa: E402
 
 
+class _FakeAdminDb:
+    """
+    Doble permisivo de get_supabase_admin() para tests que no son sobre rate
+    limiting: cada tabla se comporta como si estuviera vacia (0 filas), asi
+    que check_rate_limit() corre su logica real y siempre encuentra al
+    llamador bajo el limite. Los tests sobre el rate limiter mismo (o sobre el
+    fail-closed sin service key) fuerzan su propio get_supabase_admin.
+    """
+
+    def table(self, name):
+        return self
+
+    def select(self, *a, **kw):
+        return self
+
+    def eq(self, *a, **kw):
+        return self
+
+    def gte(self, *a, **kw):
+        return self
+
+    def insert(self, *a, **kw):
+        return self
+
+    def maybe_single(self):
+        return self
+
+    def execute(self):
+        return type("Resp", (), {"data": [], "count": 0})()
+
+
+@pytest.fixture(autouse=True)
+def _admin_client_configured(monkeypatch):
+    """
+    Por defecto los tests corren como si SUPABASE_SERVICE_KEY existiera: un
+    doble permisivo respalda get_supabase_admin() para que el rate limiter
+    (que ahora falla cerrado sin la service key) no meta un 503 de sorpresa en
+    tests que no son sobre eso. Ver test_route_guards.py para el
+    comportamiento sin service key.
+    """
+    monkeypatch.setattr(core, "get_supabase_admin", lambda: _FakeAdminDb())
+
+
 @pytest.fixture()
 def strict_client(monkeypatch):
     """Cliente sin opt-in local: sin secreto, los datos contestan 503."""

@@ -29,6 +29,7 @@ def create_app() -> Flask:
 
     app.register_blueprint(search.bp)
     core.log_proxy_guard_state()
+    core.log_admin_key_state()
 
     @app.errorhandler(404)
     def not_found(e):

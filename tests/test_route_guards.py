@@ -167,3 +167,53 @@ def test_startup_is_quiet_with_a_secret(proxied, caplog):
     with caplog.at_level(logging.WARNING, logger=core.logger.name):
         core.log_proxy_guard_state()
     assert caplog.records == []
+
+
+# --------------------------------------- service key ausente: 503 (rate limit) --
+
+# v=99 es un contrato invalido: _unsupported_version()/version invalida
+# contestan 400 antes de llegar a check_rate_limit, con o sin cliente admin
+# — no son casos utiles para probar el fail-closed del rate limiter.
+_RATE_LIMIT_CASES = [
+    c for c in zip(_CASES, _CASE_IDS)
+    if "99" not in c[1]
+]
+_RATE_LIMIT_ARGS = [c for c, _ in _RATE_LIMIT_CASES]
+_RATE_LIMIT_IDS = [i for _, i in _RATE_LIMIT_CASES]
+
+
+@pytest.mark.parametrize("rule,method,path,kwargs", _RATE_LIMIT_ARGS, ids=_RATE_LIMIT_IDS)
+def test_missing_service_key_fails_closed_at_the_rate_limiter(
+    client, proxied, monkeypatch, rule, method, path, kwargs
+):
+    # Secreto del proxy correcto: pasa el primer guard y llega al rate
+    # limiter, que sin cliente admin debe fallar cerrado igual que
+    # proxy_rejection() lo hace sin INTERNAL_PROXY_SECRET.
+    monkeypatch.setattr(core, "get_supabase_admin", lambda: None)
+    headers = {"X-Internal-Secret": proxied, "X-Effective-Sources": "*"}
+    r = client.open(path, method=method, headers=headers, **kwargs)
+    assert r.status_code == 503, f"{method} {path} answered {r.status_code} with no admin client"
+    assert r.get_json() == {"error": "Service unavailable"}
+
+
+def test_missing_service_key_logs_an_error_at_startup(monkeypatch, caplog):
+    monkeypatch.setattr(core, "SUPABASE_SERVICE_KEY", "")
+    with caplog.at_level(logging.WARNING, logger=core.logger.name):
+        core.log_admin_key_state()
+    [rec] = caplog.records
+    assert rec.levelno == logging.ERROR and "SUPABASE_SERVICE_KEY" in rec.getMessage()
+
+
+def test_a_configured_service_key_is_quiet_at_startup(monkeypatch, caplog):
+    monkeypatch.setattr(core, "SUPABASE_SERVICE_KEY", "s3rvice-key-de-prueba")
+    with caplog.at_level(logging.WARNING, logger=core.logger.name):
+        core.log_admin_key_state()
+    assert caplog.records == []
+
+
+def test_rate_limiter_runs_normally_with_the_admin_client_configured(client, proxied):
+    # Contraprueba: el 503 de arriba lo pone la falta del cliente admin, no
+    # una ruta rota — con el doble permisivo (fixture autouse) la request
+    # sigue hasta la validacion de filtros de siempre.
+    r = client.post("/api/search", json={"source": "all"}, headers={"X-Internal-Secret": proxied})
+    assert r.status_code == 400
