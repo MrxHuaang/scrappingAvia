@@ -65,9 +65,6 @@ if _raw_origins and _raw_origins != "*":
 else:
     ALLOWED_ORIGINS = "*"
 
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results")
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
 SCRAPER_TIMEOUT = 45  # timeout maximo por fuente (segundos)
 PDF_DOWNLOAD_TIMEOUT = 15
 PDF_MAX_WORKERS = 5

@@ -27,7 +27,6 @@ dependencies = [
 [tool.setuptools]
 py-modules = [
   "app",
-  "build_aliases",
   "dashboard_server",
   "enrich",
   "enrich_ai",
@@ -41,7 +40,7 @@ packages = ["scrapers", "scrapers.common", "webapp"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = [".venv", "outputs", "results"]
+extend-exclude = [".venv", "outputs"]
 
 [tool.ruff.lint]
 # Explicit set (newer ruff ships a much wider default): pyflakes + pycodestyle
