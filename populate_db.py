@@ -695,8 +695,12 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
 
         pt_code = enrich.PRODUCT_TYPE_CODE.get(r.get("product_type") or "")
         # Del mismo texto que decide el tipo; None si no pertenece a pt_code o
-        # no hay coincidencia segura (docs/applicability-contract.md).
-        pt_subtype = enrich.product_subtype(pt_code, r.get("subject") or "") if pt_code else None
+        # no hay coincidencia segura (docs/applicability-contract.md). En FAA
+        # el abstract marca el titulo como FAA (titular ignorado, respaldo en
+        # el abstract), igual que en classify_product_type.
+        faa_abstract = (raw.get("Abstract") or "") if source == "federal_register" else None
+        pt_subtype = (enrich.product_subtype(pt_code, r.get("subject") or "", faa_abstract)
+                      if pt_code else None)
 
         for mk, mod in pairs:
             # La RPC rechaza el payload entero si un AD repite clave natural.

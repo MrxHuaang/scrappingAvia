@@ -432,7 +432,6 @@ def _parse_document(doc) -> dict | None:
         doc_type = (doc.get("type") or "").upper()
         action_field = (doc.get("action") or "").lower()
         title_lower = title.lower()
-        abstract_lower = abstract.lower()
 
         if doc_type == "PROPOSED_RULE" or "proposed" in title_lower or "nprm" in title_lower or "proposed" in action_field:
             status = "NPRM"
@@ -447,8 +446,10 @@ def _parse_document(doc) -> dict | None:
         else:
             status = "Final Rule"
 
+        # El abstract va con sus mayusculas: el titular se identifica sobre el
+        # (classify_product_type lo pasa a minusculas para el respaldo).
         product_type = classify_product_type(
-            subject, abstract_lower, doc.get("cfr_references") or []
+            subject, abstract, doc.get("cfr_references") or []
         )
 
         out = {

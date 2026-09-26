@@ -532,5 +532,103 @@
    "models": [],
    "previously_held_by": []
   }
+ },
+ {
+  "document_number": "2015-11392",
+  "publication_date": "2015-05-28",
+  "title": "Airworthiness Directives; Zodiac Seats France (Formerly Sicma Aero Seat) Passenger Seat Assemblies",
+  "abstract": "We are superseding Airworthiness Directive (AD) 2014-20-11, for Zodiac Seats France 9140, 9166, 9173, 9174, 9184, 9188, 9196, 91B7, 91B8, 91C0, 91C2, 91C4, 91C5, 91C9, 9301, and 9501 series passenger seat assemblies. AD 2014-20-11 required a general visual inspection for cracking of backrest links; replacement with new links if cracking is found; and eventual replacement of all links with new links. This AD was prompted by a determination that a model designation specified in paragraph (c)(1) of that AD was incorrect. This new AD identifies the correct model designation. We are issuing this AD to detect and correct cracks in the backrest links, which could affect the structural integrity of seat backrests. Failure of the backrest links could result in injury to an occupant during emergency landing conditions.",
+  "expected": {
+   "holder": "Zodiac Seats France",
+   "models": [],
+   "previously_held_by": [
+    "Sicma Aero Seat"
+   ]
+  }
+ },
+ {
+  "document_number": "2015-09467",
+  "publication_date": "2015-05-12",
+  "title": "Airworthiness Directives; Zodiac Aerotechnics (Formerly Intertechnique Aircraft Systems) Oxygen Mask Regulators",
+  "abstract": "We are adopting a new airworthiness directive (AD) for certain Zodiac Aerotechnics (formerly Intertechnique Aircraft Systems) oxygen mask regulators. This AD was prompted by a report of a malfunctioning mask having an inflatable harness with a high premature rupture rate due to defective silicon. This AD requires inspecting and replacing defective harnesses with new or modified serviceable units. We are issuing this AD to detect and correct defective harnesses, which could lead, in case of a sudden depressurization event, to a harness rupture, thereby providing inadequate protection against hypoxia and possibly resulting in unconsciousness of the affected flightcrew member and consequent reduced control of the airplane.",
+  "expected": {
+   "holder": "Zodiac Aerotechnics",
+   "models": [],
+   "previously_held_by": [
+    "Intertechnique Aircraft Systems"
+   ]
+  }
+ },
+ {
+  "document_number": "98-24089",
+  "publication_date": "1998-09-10",
+  "title": "Airworthiness Directives; Superior Air Parts, Inc., Piston Pins Installed on Teledyne Continental Motors Reciprocating Engines",
+  "abstract": "This amendment adopts a new airworthiness directive (AD) that is applicable to Superior Air Parts, Inc., piston pins installed on Teledyne Continental Motors reciprocating engines. This amendment requires removal from service of defective piston pins, and replacement with serviceable parts. This amendment is prompted by reports of numerous piston pin fractures. The actions specified by this AD are intended to prevent a piston pin failure from causing secondary engine damage resulting in loss of oil or total power failure, and from causing jamming of the engine crankshaft resulting in a catastrophic engine failure.",
+  "expected": {
+   "holder": "Superior Air Parts, Inc.",
+   "models": [],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "06-4646",
+  "publication_date": "2006-05-18",
+  "title": "Airworthiness Directives; Engine Components Incorporated (ECi) Reciprocating Engine Connecting Rods",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain Lycoming Engines (formerly Textron Lycoming) 360 and 540 series reciprocating engines with ECi connecting rods, part number (P/N) AEL11750, installed. The Airmotive Engineering Corp, Division of Engine Components Incorporated (ECi), holds the Parts Manufacturer Approval (PMA) for the affected parts, and markets the parts as ECi parts. This AD requires replacing certain lot and serial numbered connecting rods, P/N AEL11750, having forging part number AEL11488. This AD would also prohibit installing certain ECi connecting rods, P/N AEL11750, into any Lycoming 360 or 540 series reciprocating engines. This AD results from reports of connecting rods with excessive variation in circularity of the journal bores. We are issuing this AD to prevent fatigue failure of the connecting rod and a possible uncommanded shutdown of the engine.",
+  "expected": {
+   "holder": "Engine Components Incorporated (ECi)",
+   "models": [],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "98-2969",
+  "publication_date": "1998-02-06",
+  "title": "Airworthiness Directives; Eurocopter France Model SA-365N, SA- 365N1, and SA-366G1 Helicopters",
+  "abstract": "This document publishes in the Federal Register an amendment adopting Airworthiness Directive (AD) 97-15-15, which was sent previously to all known U.S. owners and operators of Eurocopter France Model SA-365N, SA-365N1, and SA-366G1 helicopters by individual letters. This AD requires an inspection of the main gearbox magnetic plug (magnetic plug) and the main gearbox oil filter (oil filter) for ferrous chips; vibration measurements, if necessary; and replacement of the main gearbox if a specified quantity of ferrous chips are discovered, or if abnormal vibrations are identified at a certain frequency. This amendment is prompted by two recent reports of cracks found in planetary gear shafts (gear shafts) in main gearboxes that have not been modified in accordance with MOD 077244. The actions specified by this AD are intended to detect cracks in the gear shaft which could lead to failure of the gear shaft, failure of the transmission, and subsequent loss of control of the helicopter.",
+  "expected": {
+   "holder": "Eurocopter France",
+   "models": [
+    "SA-365N",
+    "SA-365N1",
+    "SA-366G1"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "E6-18663",
+  "publication_date": "2006-11-07",
+  "title": "Airworthiness Directives; Airbus Model A300 Airplanes, Equipped With General Electric CF6-50 Series Engines",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain Airbus Model A300 airplanes. This AD requires modifying the airplane and the engine/nacelle to install a third line of defense against inadvertent deployment of the thrust reverser in flight. This AD also requires two other actions that must be accomplished before or concurrently with the modification: installing a structural change in the fan cowl to avoid interference; and installing a dedicated, shielded electrical circuit. This AD results from a report that the manufacturer has developed a third line of defense against the inadvertent deployment of the thrust reverser of Model A300 airplanes that are equipped with General Electric CF6-50 series engines (in accordance with FAA guidelines). We are issuing this AD to prevent inadvertent deployment of the thrust reverser in flight, which could result in reduced controllability of the airplane.",
+  "expected": {
+   "holder": "Airbus",
+   "models": [
+    "A300"
+   ],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "2015-14645",
+  "publication_date": "2015-06-16",
+  "title": "Airworthiness Directives; Avidyne Corporation Integrated Flight Displays",
+  "abstract": "We are adopting a new airworthiness directive (AD) for Avidyne Corporation (Avidyne) Integrated Flight Displays (IFDs) part number (P/ N) 700-00083-() loaded with software release 9.3.1.0 or earlier release (referred to as Model R9--10 inch), P/N 700-00171-() loaded with software release 9.2.5.0 or earlier release (referred to as Model R9-- 12 inch), and P/N 700-00182-() loaded with software release 10.0.3.0 or earlier release (referred to as Model IFD540). This emergency AD was sent previously to all known U.S. owners and operators of all aircraft that incorporate the above referenced Avidyne IFDs. This AD requires incorporating an operational limitation into the Limitations section of the airplane flight manual (AFM) or airplane flight manual supplement (AFMS). This AD was prompted by reports of Avidyne IFDs displaying incorrect course deviation indication information during GPS approaches (incorrect display of lateral deviations). We are issuing this AD to correct the unsafe condition on these products.",
+  "expected": {
+   "holder": "Avidyne Corporation",
+   "models": [],
+   "previously_held_by": []
+  }
+ },
+ {
+  "document_number": "06-5208",
+  "publication_date": "2006-06-12",
+  "title": "Airworthiness Directives; Goodrich Evacuation Systems Approved Under Technical Standard Order (TSO) TSO-C69b and Installed on Airbus Model A330-200 and -300 Series Airplanes, Model A340-200 and -300 Series Airplanes, and Model A340-541 and -642 Airplanes",
+  "abstract": "The FAA is adopting a new airworthiness directive (AD) for Goodrich evacuation systems approved under TSO-C69b and installed on certain Airbus Model A330-200 and -300 series airplanes, Model A340-200 and -300 series airplanes, and Model A340-541 and -642 airplanes. This AD requires inspecting to determine the part number of the pressure relief valves on the affected Goodrich evacuation systems, and corrective action if necessary. This AD results from a report indicating that, during maintenance testing, the pressure relief valves on the affected Goodrich evacuation systems did not seal when activated, which caused the pressure in the escape slide/raft to drop below the minimum allowable raft mode pressure. We are issuing this AD to prevent loss of pressure in the escape slides/rafts after an emergency evacuation, which could result in inadequate buoyancy to support the raft's passenger capacity during ditching, and increase the chance for injury to raft passengers.",
+  "expected": {
+   "holder": "Goodrich",
+   "models": [],
+   "previously_held_by": []
+  }
  }
 ]

@@ -425,7 +425,10 @@ def _holder_from_title(subject: str, abstract: str) -> tuple[str | None, tuple[s
         holder, split = _split_holder_models(pre)
         models_at = split if split is not None else kw.start()
         no_noun = not _NOUN_RE.search(_mask_parens(work), kw.end())
-    elif trailing and not prev_at_end:
+    elif trailing and (not prev_at_end or _TRAILING_NOUN_PHRASE_RE.search(masked[: trailing.start()])):
+        # Con el paréntesis de titular anterior al final, "Airbus Helicopters
+        # (Previously ...)" lleva el sustantivo en el nombre; "Lycoming Engines
+        # Reciprocating Engines (...)" no: lo que queda ya termina en uno.
         pre = seg[: trailing.start()].rstrip(" ,")
         # "Airbus Helicopters": el sustantivo es parte del nombre cuando el
         # abstract lo usa como titular ("Airbus Helicopters Model EC130T2").
@@ -559,6 +562,14 @@ def extract_applicability(title: str, abstract: str = "") -> FRApplicability:
     if not models and holder:
         models = _models_from_abstract(abstract, holder, previous)
     return FRApplicability(holder=holder, models=models, previously_held_by=previous)
+
+
+def title_holders(title: str, abstract: str = "") -> tuple[str | None, tuple[str, ...]]:
+    """(titular, titulares anteriores) del título, sin modelos. Lo usa
+    `enrich.classify_product_type` para que un sustantivo de producto dentro de
+    un nombre ("Sikorsky Aircraft Corporation") no decida el tipo."""
+    holder, previous, *_ = _holder_from_title(_subject(title), _clean_spaces(_fold(abstract or "")))
+    return holder, previous
 
 
 def applicability_fields(title: str, abstract: str = "") -> dict:

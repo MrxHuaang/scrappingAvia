@@ -209,16 +209,156 @@ _AIRCRAFT_QUALIFIER = re.compile(
 )
 
 
-def _title_product_noun(subject: str) -> "re.Match | None":
-    """El sustantivo de producto que decide el tipo: el ÚLTIMO del título, tras
-    cortar el calificativo "<Airplanes> Equipped With ...". Lo comparten
-    `classify_product_type` y `product_subtype`, así el subtipo sale siempre del
-    mismo sustantivo que decidió el tipo."""
-    title = _AIRCRAFT_QUALIFIER.sub(r"\1", subject or "", count=1)
+# Lo que viene tras "Installed on" / "Equipped with" / "Approved Under"
+# describe DÓNDE va (o bajo qué norma) el producto, no cuál es: "Superior Air
+# Parts, Inc., Piston Pins Installed on Teledyne Continental Motors
+# Reciprocating Engines" es un AD de la pieza. A diferencia del corte de
+# arriba, este vale tras cualquier palabra ("Units, Equipped with ...",
+# "Airplanes, Equipped With ... Engines"). "Powered" no está: "Turbo-Propeller
+# Powered ... Airplanes" es un avión, y lo resuelve el corte de arriba.
+_INSTALLED_ON_RE = re.compile(r"[\s,;]+(?:installed|equipped|fitted|approved)\b.*$", re.I | re.S)
+
+# Palabras de rotorcraft dentro del grupo aircraft: la FAA las cierra igual
+# ("... Helicopters") pero el tipo canónico es Helicopter.
+_ROTORCRAFT_NOUN_RE = re.compile(r"^(?:helicopters?|rotorcraft|gyroplanes?)$", re.I)
+# Pieza nombrada en el título: la palabra que convierte al AD en un AD de
+# appliance cuando no hay sustantivo de producto que la supere ("Passenger
+# Seats", "Emergency Locator Transmitters", "Oxygen Mask Regulators") o cuando
+# el sustantivo solo la califica ("Reciprocating Engine Connecting Rods",
+# "RECARO Aircraft Seating"). Nombres de pieza concretos: "Parts",
+# "Components" o "Systems" van en razones sociales y no cuentan.
+_PART_RE = re.compile(
+    r"\b(?:seats?|seating|berths?|belts?|harness(?:es)?|restraints?|transmitters?|receivers?"
+    r"|transponders?|radios?|autopilots?|displays?|indicators?|instruments?|altimeters?"
+    r"|gauges?|detectors?|extinguishers?|bottles?|masks?|regulators?|cylinders?|valves?"
+    r"|pumps?|carburetors?|magnetos?|starters?|generators?|alternators?|batter(?:y|ies)"
+    r"|hoists?|actuators?|tires?|wheels?|brakes?|lights?|lamps?|slides?|rafts?|seals?"
+    r"|connecting\s+rods?|pins?|servos?|controllers?|computers?|sensors?|lifts?|hooks?)\b",
+    re.I,
+)
+_APU_RE = re.compile(r"\b(?:auxiliary\s+power\s+units?|APUs?)\b", re.I)
+
+
+# "(Type Certificate Previously Held by Allison Engine Company)", "(Formerly
+# Intertechnique Aircraft Systems)": nombran a un titular anterior, no al
+# producto. Se borran con espacios para no mover las posiciones.
+_PREVIOUS_HOLDER_RE = re.compile(r"\((?:Type\s+Certificate\s+)?(?:Previously|Formerly)\b[^()]*\)", re.I)
+# Primera oración del abstract: la de applicability ("for all Sikorsky Model
+# 269A ... helicopters."). "Ltd. Model" no la corta.
+_FIRST_SENTENCE_RE = re.compile(r"\.\s+(?=(?:This|The|We|That|These|AD|As|In|Since)\b)")
+
+
+def _faa_holders(subject: str, abstract: str) -> tuple[str | None, tuple[str, ...]]:
+    """(titular, titulares anteriores) del título FAA, con la misma extracción
+    de applicability. Import diferido: `scrapers/__init__` importa el scraper
+    FR, que a su vez importa este módulo."""
+    from scrapers.common.fr_applicability import title_holders
+
+    return title_holders(subject or "", abstract or "")
+
+
+def _blank(text: str, start: int, end: int) -> str:
+    return text[:start] + " " * (end - start) + text[end:]
+
+
+def _product_phrase(subject: str, abstract: str | None = None, *, installed_cut: bool = True) -> str:
+    """El título donde nombra el producto, con las mismas posiciones que
+    `subject`: sin los paréntesis de titular anterior, sin el calificativo
+    "<Airplanes> Equipped With ...", (salvo `installed_cut=False`) sin lo que
+    sigue a "Installed on ..." y, en un título FAA (`abstract` no None), con
+    el titular borrado: su sustantivo no decide ("Sikorsky Aircraft
+    Corporation", "Airship Industries", "Lycoming Engines")."""
+    title = subject or ""
+    if abstract is not None:
+        holder, _ = _faa_holders(title, abstract)
+        i = title.find(holder) if holder else -1
+        if 0 <= i <= 4:
+            title = _blank(title, 0, i + len(holder))
+    title = _PREVIOUS_HOLDER_RE.sub(lambda m: " " * len(m.group(0)), title)
+    title = _AIRCRAFT_QUALIFIER.sub(r"\1", title, count=1)
+    return _INSTALLED_ON_RE.sub("", title, count=1) if installed_cut else title
+
+
+def _last_noun(text: str) -> "re.Match | None":
     last = None
-    for m in _TITLE_PRODUCT_NOUNS.finditer(title):
+    for m in _TITLE_PRODUCT_NOUNS.finditer(text):
         last = m
     return last
+
+
+def _abstract_product_noun(subject: str, abstract: str) -> tuple[str, "re.Match"] | None:
+    """Respaldo cuando el título no nombra producto fuera del titular ("Bell
+    Helicopter Textron Canada Limited", "Airbus Helicopters (Formerly
+    Eurocopter France)"): el PRIMER sustantivo de producto de la primera
+    oración del abstract, con los nombres de titular borrados. Es la oración
+    de applicability ("for certain Bell Model 206L-1 ... helicopters"); el
+    resto del abstract habla de motores y hélices aunque el AD sea de otra
+    cosa. Devuelve (texto, match) para que el subtipo lea el mismo sustantivo."""
+    text = _applicability_sentence(subject, abstract)
+    m = _TITLE_PRODUCT_NOUNS.search(text)
+    return (text, m) if m else None
+
+
+def _applicability_sentence(subject: str, abstract: str) -> str:
+    """Primera oración del abstract sin nombres de titular y cortada en
+    "installed on": "for certain (formerly ...) flightcrew oxygen mask
+    regulators as installed on, but not limited to, various airplanes" es un
+    AD del regulador, no de un avión."""
+    text = re.split(_FIRST_SENTENCE_RE, _abstract_without_holders(subject, abstract), maxsplit=1)[0]
+    return _INSTALLED_ON_RE.sub("", text, count=1)
+
+
+def _abstract_without_holders(subject: str, abstract: str) -> str:
+    """El abstract con el titular y los anteriores borrados: "for Sikorsky
+    Aircraft Corporation (Sikorsky) Model 269A ... helicopters" no es un AD de
+    Aircraft."""
+    holder, previous = _faa_holders(subject, abstract)
+    text = abstract or ""
+    for name in (holder, *previous):
+        if name:
+            text = re.sub(re.escape(name), lambda m: " " * len(m.group(0)), text, flags=re.I)
+    return text
+
+
+def _deciding_noun(subject: str, abstract: str | None) -> tuple[str, "re.Match"] | None:
+    """(texto, sustantivo) que decide el tipo: el último de la frase de
+    producto del título y, en un título FAA sin él, el del abstract. Lo
+    comparten `classify_product_type` y `product_subtype`, así el subtipo sale
+    siempre del mismo sustantivo que decidió el tipo."""
+    phrase = _product_phrase(subject, abstract)
+    noun = _last_noun(phrase)
+    if noun:
+        return phrase, noun
+    if abstract and _title_product_type(subject, abstract) is None:
+        return _abstract_product_noun(subject, abstract)
+    return None
+
+
+def _noun_type(noun: "re.Match") -> str:
+    if noun.lastgroup == "aircraft":
+        return "Helicopter" if _ROTORCRAFT_NOUN_RE.match(noun.group(0)) else "Aircraft"
+    return {"engine": "Engine", "propeller": "Propeller", "appliance": "Appliance"}[noun.lastgroup]
+
+
+def _title_product_type(subject: str, abstract: str = "") -> str | None:
+    """Tipo canónico que declara el título FAA (fuera del titular), o None."""
+    phrase = _product_phrase(subject, abstract)
+    noun = _last_noun(phrase)
+    if noun:
+        # "Reciprocating Engine Connecting Rods", "... Model 3410 Seats": el
+        # sustantivo califica a una pieza que viene detrás.
+        tail = re.split(r"[,;(]", phrase[noun.end():], maxsplit=1)[0]
+        if _PART_RE.search(" ".join(tail.split()[:3])):
+            return "Appliance"
+        return _noun_type(noun)
+    if _APU_RE.search(phrase):
+        return "Engine"
+    placed_on = _TITLE_PRODUCT_NOUNS.search(_product_phrase(subject, abstract, installed_cut=False))
+    if placed_on or _PART_RE.search(phrase):
+        # "<pieza> Installed on <titular> Airplanes" o una pieza sin producto
+        # alguno ("Passenger Seats"): el AD es de la pieza.
+        return "Appliance"
+    return None
 
 
 def classify_product_type(subject: str, abstract: str = "", cfr_refs=()) -> str:
@@ -235,23 +375,40 @@ def classify_product_type(subject: str, abstract: str = "", cfr_refs=()) -> str:
     Gana el ÚLTIMO sustantivo de producto del título, porque la FAA lo pone al
     final y el nombre del titular puede llevar otro antes ("Airbus Helicopters
     Model EC135 Helicopters", "Rolls-Royce Deutschland Ltd & Co KG Turbofan
-    Engines"). Sin sustantivo en el título se cae a la regla vieja sobre el
-    abstract, y luego a CFR parte 39.
-    """
-    noun = _title_product_noun(subject)
-    if noun:
-        return {"aircraft": "Aircraft", "engine": "Engine",
-                "propeller": "Propeller", "appliance": "Appliance"}[noun.lastgroup]
+    Engines"). Helicopters/Rotorcraft/Gyroplanes son Helicopter, no Aircraft:
+    el filtro de tipo los separa. Un AD cuyo producto es una pieza ("Passenger
+    Seats", "<pieza> Installed on ... Airplanes", "Reciprocating Engine
+    Connecting Rods") es Appliance; "Auxiliary Power Units" es Engine (subtipo
+    apu). Un sustantivo dentro del nombre del titular no cuenta ("Sikorsky
+    Aircraft Corporation", "Lycoming Engines").
 
-    text = (abstract or "").lower()
+    Si el título no nombra producto fuera del titular, decide el primer
+    sustantivo de la oración de applicability del abstract ("for certain Bell
+    Model 206L-1 ... helicopters"), y si tampoco hay, la regla vieja sobre el
+    abstract (sin los nombres de titular) y luego CFR parte 39.
+    """
+    from_title = _title_product_type(subject, abstract)
+    if from_title:
+        return from_title
+    from_abstract = _abstract_product_noun(subject, abstract) if abstract else None
+    if from_abstract:
+        return _noun_type(from_abstract[1])
+    if abstract and _PART_RE.search(_applicability_sentence(subject, abstract)):
+        # "for certain Kidde Graviner hand-operated fire extinguishers": la
+        # oración de applicability nombra una pieza y ningún producto.
+        return "Appliance"
+
+    text = _abstract_without_holders(subject, abstract).lower() if abstract else ""
     if re.search(r"\bengines?\b", text):
         return "Engine"
     if re.search(r"\bpropellers?\b", text):
         return "Propeller"
     if re.search(r"\bappliances?\b", text):
         return "Appliance"
-    if re.search(r"\baircraft\b|\bairplanes?\b|\bhelicopters?\b|\bairships?\b|\bgliders?\b", text):
+    if re.search(r"\baircraft\b|\bairplanes?\b|\bairships?\b|\bgliders?\b", text):
         return "Aircraft"
+    if re.search(r"\bhelicopters?\b|\brotorcraft\b", text):
+        return "Helicopter"
     for ref in cfr_refs or ():
         part = str(ref.get("part", "") if isinstance(ref, dict) else "")
         if part == "39":
@@ -316,7 +473,6 @@ _ENGINE_CHAIN_RE = re.compile(
     r"|diesel|electric|and|series|model)\b[\s,]*)+$",
     re.I,
 )
-_APU_RE = re.compile(r"\b(?:auxiliary\s+power\s+units?|APUs?)\b", re.I)
 # Appliances: la categoría la da la pieza nombrada. Tiene que salir UNA sola;
 # dos ("Oxygen ... and Fire Extinguishers") es no saber, y se omite.
 _APPLIANCE_KIND = (
@@ -333,25 +489,25 @@ _APPLIANCE_KIND = (
         r"|communication\s+units?|receivers?|flight\s+management|TAWS|traffic\s+(?:alert|collision))\b", re.I)),
     ("instruments", re.compile(r"\b(?:instruments?|indicators?|altimeters?|gauges?)\b", re.I)),
 )
-# Lo que viene tras "Installed on" / "Equipped with" describe DÓNDE va la
-# pieza, no qué pieza es ("Seats Installed on Airplanes Equipped With Oxygen").
-_INSTALLED_ON_RE = re.compile(r"\s+(?:installed|equipped|fitted|approved)\b.*$", re.I | re.S)
-
-
 def _one_kind(kinds, text: str) -> str | None:
     found = {code for code, rx in kinds if rx.search(text)}
     return found.pop() if len(found) == 1 else None
 
 
-def product_subtype(product_type_code: str | None, subject: str) -> str | None:
+def product_subtype(product_type_code: str | None, subject: str, abstract: str | None = None) -> str | None:
     """
     Subtipo del catálogo para una fila de applicability, o None.
 
-    Se deriva del mismo texto que ya decide el tipo (título FAA, subject de
-    EASA/TC/UK CAA/ANAC) y SOLO si pertenece a `product_type_code`: un título
-    FAA "... Helicopters" tipado Aircraft no produce 'helicopter' (es de
-    rotorcraft) — se omite en vez de mentir sobre el tipo o sobre el subtipo.
-    Sin coincidencia segura devuelve None; nunca adivina ni cae a 'other'.
+    Se deriva del mismo sustantivo que decide el tipo y SOLO si pertenece a
+    `product_type_code`: un "... Helicopters" que otra fuente tipara Aircraft
+    no produce 'helicopter' (es de rotorcraft) — se omite en vez de mentir sobre
+    el tipo o el subtipo. Sin coincidencia segura devuelve None; nunca adivina
+    ni cae a 'other'.
+
+    `abstract` (aunque sea "") marca un título FAA: el titular se ignora y, si
+    el título no nombra producto fuera de él, se lee el sustantivo del abstract
+    que usó `classify_product_type`. Con `abstract=None` (EASA/TC/UK CAA/ANAC)
+    se lee el subject tal cual.
 
     - aircraft/rotorcraft: el sustantivo que decidió el tipo ("Airplanes",
       "Sailplanes", "Hot Air Balloons", "Helicopters").
@@ -364,13 +520,9 @@ def product_subtype(product_type_code: str | None, subject: str) -> str | None:
     allowed = PRODUCT_SUBTYPES.get(product_type_code or "")
     if not allowed:
         return None
-    text = subject or ""
     code: str | None = None
-    noun = _title_product_noun(text)
-    if noun and product_type_code != "appliance" and _INSTALLED_ON_RE.search(text[: noun.start()]):
-        # "... APUs Installed on Airbus Airplanes": el sustantivo nombra dónde
-        # va la pieza, no el producto del AD.
-        return None
+    found = _deciding_noun(subject or "", abstract)
+    text, noun = found if found else ("", None)
     if product_type_code in ("aircraft", "rotorcraft"):
         if noun and noun.lastgroup == "aircraft":
             code = _NOUN_SUBTYPE.get(noun.group(0).lower())
@@ -379,10 +531,14 @@ def product_subtype(product_type_code: str | None, subject: str) -> str | None:
             chain = _ENGINE_CHAIN_RE.search(text[: noun.start()].rstrip())
             code = _NOUN_SUBTYPE.get(noun.group(0).lower()) or (
                 _one_kind(_ENGINE_KIND, chain.group(0)) if chain else None)
-        elif not noun and _APU_RE.search(text):
+        elif not noun and _APU_RE.search(_product_phrase(subject, abstract)):
             code = "apu"
     elif product_type_code == "appliance":
-        code = _one_kind(_APPLIANCE_KIND, _INSTALLED_ON_RE.sub("", text))
+        code = _one_kind(_APPLIANCE_KIND, _product_phrase(subject, abstract))
+        if code is None and abstract and _title_product_type(subject, abstract) is None:
+            # El título solo nombra al titular ("Kidde Graviner"): la pieza
+            # está en la oración de applicability, igual que para el tipo.
+            code = _one_kind(_APPLIANCE_KIND, _applicability_sentence(subject, abstract))
     if code == "other" or code not in allowed:
         return None
     return code

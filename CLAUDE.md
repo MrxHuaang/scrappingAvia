@@ -214,7 +214,8 @@ Luego: `python populate_db.py --source transport_canada`
 - Usa la API REST de federalregister.gov (no scraping HTML)
 - Trae hasta 5000 ADs (paginado de 100 en 100)
 - `cfr_references[].part == "39"` → Airworthiness Directive
-- `product_type` se infiere del título/abstract (keywords: engine, propeller, helicopter)
+- `product_type` lo decide `enrich.classify_product_type` desde el título (Helicopter y
+  Appliance incluidos; abstract solo como respaldo). Reglas en docs/applicability-contract.md
 
 ## Variables de entorno requeridas
 

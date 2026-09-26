@@ -23,9 +23,9 @@ def _faa(doc_number: str) -> tuple[str | None, str | None]:
     """(product_type code, subtype) como los calcula el pipeline para un AD FAA."""
     doc = REAL_DOCS[doc_number]
     subject = doc["title"].split("; ", 1)[-1]
-    pt = enrich.normalize_product_type(classify_product_type(subject, doc["abstract"].lower(), [{"part": "39"}]))
+    pt = enrich.normalize_product_type(classify_product_type(subject, doc["abstract"], [{"part": "39"}]))
     code = PRODUCT_TYPE_CODE.get(pt or "")
-    return code, product_subtype(code, subject)
+    return code, product_subtype(code, subject, doc["abstract"])
 
 
 @pytest.mark.parametrize("doc_number, expected", [
@@ -40,11 +40,23 @@ def _faa(doc_number: str) -> tuple[str | None, str | None]:
     ("98-22240", ("engine", "piston")),           # ... Reciprocating Engines
     ("2023-28861", ("engine", None)),             # Rolls-Royce Deutschland Ltd & Co KG Engines
     ("06-5284", ("propeller", None)),             # Hamilton Sundstrand Model 14RF-19 Propellers
-    # La FAA tipa los helicópteros como Aircraft: 'helicopter' es de rotorcraft.
-    ("2024-03920", ("aircraft", None)),           # Robinson Helicopter Company Helicopters
-    # "Aircraft" en el nombre del titular no dice qué aeronave es.
-    ("E6-13911", ("aircraft", None)),             # RECARO Aircraft Seating GmbH & Co. ... Seats
+    ("2024-03920", ("rotorcraft", "helicopter")),  # Robinson Helicopter Company Helicopters
+    ("98-2969", ("rotorcraft", "helicopter")),    # Eurocopter France Model SA-365N ... Helicopters
+    # Appliances: la pieza es el producto.
+    ("E6-13911", ("appliance", "seats")),         # RECARO Aircraft Seating GmbH & Co. ... Seats
+    ("2015-11392", ("appliance", "seats")),       # Zodiac Seats France ... Passenger Seat Assemblies
+    ("2015-09467", ("appliance", "oxygen")),      # Zodiac Aerotechnics ... Oxygen Mask Regulators
+    ("2015-14645", ("appliance", "avionics")),    # Avidyne Corporation Integrated Flight Displays
+    ("06-5208", ("appliance", "evacuation")),     # Goodrich Evacuation Systems ... Installed on Airbus
+    # Pieza sin categoría en el catálogo: Appliance sin subtipo, nunca 'other'.
+    ("98-24089", ("appliance", None)),            # Superior Air Parts, Inc., Piston Pins Installed on ...
+    ("06-4646", ("appliance", None)),             # ECi Reciprocating Engine Connecting Rods
+    # ", Equipped With ... Engines" tras la coma sigue siendo un avión.
+    ("E6-18663", ("aircraft", "airplane")),
     ("2015-08732", ("aircraft", None)),           # Various Aircraft Equipped With Wing Lift Struts
+    # El título solo nombra al titular: decide la oración de applicability.
+    ("2015-19474", ("appliance", "fire_protection")),  # Kidde Graviner (... fire extinguishers)
+    ("2015-01803", ("rotorcraft", "helicopter")),  # Airbus Helicopters (Formerly Eurocopter France)
 ])
 def test_real_faa_titles(doc_number, expected):
     assert _faa(doc_number) == expected
@@ -71,7 +83,8 @@ def test_real_faa_titles(doc_number, expected):
     ("engine", "Acme Reciprocating and Turboprop Engines", None),
     # APU vs motor.
     ("engine", "Honeywell International Inc. Auxiliary Power Units", "apu"),
-    ("engine", "Honeywell International Inc. APUs Installed on Airbus Airplanes", None),
+    # El producto es el APU; los aviones son dónde va instalado.
+    ("engine", "Honeywell International Inc. APUs Installed on Airbus Airplanes", "apu"),
     ("aircraft", "Honeywell International Inc. APUs Installed on Airbus Airplanes", None),
     # Appliances: la pieza nombrada, una sola.
     ("appliance", "Zodiac Seats France Passenger Seats", "seats"),

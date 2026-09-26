@@ -122,11 +122,41 @@ Cylinder and Fire Extinguisher Assemblies", "Reciprocating and Turboprop
 Engines") también se omite; un sustantivo que va tras "Installed on" nombra
 dónde va la pieza, no el producto. "Engines", "Aircraft" o "Rotorcraft" a secas
 no dicen el subtipo. Un subtipo que no pertenece al tipo de la fila no se
-produce nunca: la FAA tipa los helicópteros como `Aircraft`
-(`classify_product_type`), así que sus filas van con `product_type=aircraft` y
-**sin** subtipo, porque `helicopter` es de `rotorcraft`. Con un `product_type`
-explícito y sin subtipo, la RPC deja el subtipo en null (también al actualizar
-una fila existente).
+produce nunca (un "... Helicopters" que otra fuente tipara Aircraft va sin
+subtipo). Con un `product_type` explícito y sin subtipo, la RPC deja el
+subtipo en null (también al actualizar una fila existente).
+
+**Tipo FAA (`enrich.classify_product_type`, FR y GovInfo).** Decide el último
+sustantivo de producto del título **fuera del nombre del titular** (el titular
+lo identifica la misma extracción de applicability: el "Aircraft" de "Sikorsky
+Aircraft Corporation" o de "Diamond Aircraft Industries" no cuenta), tras
+quitar los paréntesis de titular anterior ("(Formerly ... Aircraft Systems)")
+y cortar "<Airplanes> Equipped With/Powered by ..." e "Installed on / Equipped
+with / Fitted / Approved Under ..." tras cualquier palabra:
+
+- Helicopters/Rotorcraft/Gyroplanes → `Helicopter` (fila `rotorcraft`,
+  subtipo helicopter/gyroplane); el resto del grupo aeronave → `Aircraft`.
+- Pieza como producto → `Appliance`: una pieza nombrada sin sustantivo de
+  producto ("Passenger Seat Assemblies", "Emergency Locator Transmitters",
+  "Oxygen Mask Regulators"), "<pieza> Installed on/Approved Under ...
+  Airplanes", o un sustantivo que solo califica a la pieza que sigue
+  ("Reciprocating Engine Connecting Rods", "RECARO Aircraft Seating ...
+  Seats").
+- "Auxiliary Power Units" sin otro sustantivo → `Engine` (subtipo apu).
+- Si el título solo nombra al titular ("Bell Helicopter Textron Canada
+  Limited", "Kidde Graviner"), decide la oración de applicability del abstract
+  (la primera, con los nombres de titular borrados y cortada en "installed
+  on"): su primer sustantivo de producto, o `Appliance` si nombra una pieza.
+  Después, la regla anterior sobre el abstract (sin nombres de titular) y CFR
+  39. `product_subtype` lee el mismo sustantivo; por eso populate le pasa el
+  abstract en las filas FAA.
+- Caso mixto conocido: "General Electric Company Engines, and Various
+  Restricted Category Rotorcraft" queda `Helicopter` (último sustantivo); el
+  AD cubre motores y aeronaves.
+
+Los valores quedan dentro de `Aircraft|Engine|Propeller|Appliance|Helicopter`
+(`ads_product_type_chk` y `ad_product_type_code`). Medición antes/después en
+[applicability-coverage.md](applicability-coverage.md#tipo-de-producto-faa-antes-y-después).
 
 `ApplicabilityError`: excepción que un scraper puede levantar (vía
 `raw_data["Applicability_Error"]`) para señalar que la extracción de

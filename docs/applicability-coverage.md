@@ -54,7 +54,7 @@ modelos en el título (1998, 2006) y moderno con modelos solo en el abstract
 
 ## Resultados
 
-### Fixtures (`tests/fixtures/fr_applicability.json`, 34 documentos reales)
+### Fixtures (`tests/fixtures/fr_applicability.json`, 42 documentos reales)
 
 Elegidos a propósito entre los casos difíciles (motores legados, hélices,
 appliances, "Type Certificate Previously Held by", "Various ..."), así que no
@@ -62,10 +62,15 @@ representan la distribución real: sirven de regresión, no de estimación.
 
 | | legado | nuevo |
 |---|---:|---:|
-| titular + modelos | 17 (50,0 %) | 26 (76,5 %) |
-| titular sin modelo (unknown) | 5 (14,7 %) | 3 (8,8 %) |
-| sin titular (failed) | 12 (35,3 %) | 5 (14,7 %) |
-| titular previo conservado | — | 5 (14,7 %) |
+| titular + modelos | 19 (45,2 %) | 28 (66,7 %) |
+| titular sin modelo (unknown) | 5 (11,9 %) | 9 (21,4 %) |
+| sin titular (failed) | 18 (42,9 %) | 5 (11,9 %) |
+| titular previo conservado | — | 7 (16,7 %) |
+
+Los diez últimos fixtures cubren el tipo de producto (más abajo: appliances, un
+helicóptero, el avión con ", Equipped With ... Engines"), dos de ellos con
+número de parte en el título; por eso sube la proporción de titulares sin
+modelo: un appliance rara vez trae una designación de modelo.
 
 ### Muestra de 1754 documentos (1998, 2006, 2015, 2024)
 
@@ -141,6 +146,57 @@ titular viaja `failed` y conserva sus filas.
 - **Títulos con dos fabricantes reales** ("Textron Lycoming and Teledyne
   Continental Motors Reciprocating Engines", "Schweizer Aircraft Corporation and
   Hughes Helicopters, Inc. Model 269A ..."): sin titular, como pide el contrato.
+
+## Tipo de producto FAA: antes y después
+
+`enrich.classify_product_type` (la regla única de FR y GovInfo) ahora tipa
+Helicopter los títulos que cierran en "Helicopters"/"Rotorcraft"/"Gyroplanes",
+y Appliance los que tienen una pieza como producto: una pieza sin sustantivo de
+producto ("Passenger Seat Assemblies"), "<pieza> Installed on / Approved Under
+... Airplanes", o un sustantivo que solo califica a la pieza que sigue
+("Reciprocating Engine Connecting Rods", "RECARO Aircraft Seating ... Seats").
+"Auxiliary Power Units" es Engine. Un sustantivo dentro del nombre del titular
+no decide ("Sikorsky Aircraft Corporation", "Lycoming Engines"): el titular se
+identifica con la misma extracción de applicability y, si el título no nombra
+producto fuera de él, decide la oración de applicability del abstract (su
+primer sustantivo de producto, o una pieza) y después la regla vieja. Los
+valores siguen dentro de `Aircraft|Engine|Propeller|Appliance|Helicopter` (el
+check `ads_product_type_chk` y `ad_product_type_code` de la BD).
+
+Distribución sobre la muestra de 1754 documentos:
+
+| `ads.product_type` | antes | después |
+|---|---:|---:|
+| Aircraft | 1541 | 1356 |
+| Helicopter | 0 | 162 |
+| Engine | 198 | 190 |
+| Appliance | 0 | 31 |
+| Propeller | 15 | 15 |
+
+Transiciones (195 ADs; todas explicables):
+
+| Transición | ADs | Por qué | Ejemplos |
+|---|---:|---|---|
+| Aircraft -> Helicopter | 162 | el sustantivo que decide es Helicopters/Rotorcraft (en el título o, si el título solo nombra al titular, en la oración de applicability) | 98-2969 "Eurocopter France Model SA-365N ... Helicopters", 98-5353 "Robinson Helicopter Company Model R44 Helicopters", 2015-28313 "Sikorsky Aircraft Corporation (Type Certificate Previously Held by Schweizer ...)" con abstract "... Model 269A ... helicopters" |
+| Aircraft -> Appliance | 25 | pieza como producto (sin sustantivo, tras "Installed on/Approved Under", o nombrada en la oración de applicability) | 2015-11392 "Zodiac Seats France ... Passenger Seat Assemblies", 06-5208 "Goodrich Evacuation Systems Approved Under TSO ... Installed on Airbus ...", E6-13911 "RECARO Aircraft Seating ... Seats", 2015-19474 "Kidde Graviner" ("... hand-operated fire extinguishers") |
+| Engine -> Appliance | 6 | pieza de motor o instalada en un motor | 98-70 "Precision Airmotive Corporation Carburetors", 98-24089 "Superior Air Parts, Inc., Piston Pins Installed on ... Reciprocating Engines", 06-4646 "ECi Reciprocating Engine Connecting Rods" |
+| Engine -> Aircraft | 2 | ", Equipped With" tras la coma ya corta el calificativo; título que solo nombra al titular y abstract "for all ... Model 757 airplanes" (la regla vieja caía en "engine" por la prosa) | E6-18663 "Airbus Model A300 Airplanes, Equipped With General Electric CF6-50 Series Engines", 2015-23120 "The Boeing Company" |
+
+**Caso mixto conocido.** "General Electric Company Engines, and Various
+Restricted Category Rotorcraft" (2024-05547, 2024-07438) es Helicopter porque
+"Rotorcraft" es el último sustantivo; el AD cubre motores y aeronaves y un solo
+tipo no lo describe. Ya era Aircraft por la misma razón.
+
+Subtipos resultantes (`enrich.product_subtype`): airplane 1292, helicopter
+160, turbine 143, glider 59, piston 13, balloon 1, seats 5, oxygen 4, avionics
+3, fire_protection 3, evacuation 2, landing_gear 2; sin subtipo 67 (Engine 34,
+Propeller 15, Appliance 12 — carburadores, bombas, bielas, baterías: el
+catálogo no tiene su categoría y `other` no se emite —, Aircraft 4,
+Helicopter 2).
+
+Las filas ya guardadas conservan el tipo de la migración
+`20260923180000_fr_product_type_from_title.sql` (regla anterior) hasta que la
+corrida las vuelva a escribir.
 
 ## Antes de desplegar: correrlo sobre un volcado de tamaño producción
 
