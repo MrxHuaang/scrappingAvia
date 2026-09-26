@@ -70,12 +70,13 @@ _ft_local = threading.local()
 FULLTEXT_WORKERS = 8
 
 # Cache v2, una entrada por document_number:
-#   {v: 2, status, anchor, sections[], sha, compliance_time, amoc, docket,
-#    supersedes[], ad_header}
+#   {v: 2, status, anchor, sections[], sha, detail, compliance_time, amoc,
+#    docket, supersedes[], ad_header}
 # `status` es el de enrich.split_ad_sections (extracted | unanchored | empty
-# | error) y `sha` el sha256 del granulo bajado. `extracted` y `unanchored`
-# son definitivos: el mismo documento da el mismo resultado. `empty` y
-# `error` se reintentan en la corrida siguiente (una vez por corrida).
+# | error), `sha` el sha256 del granulo bajado y `detail` por qué el intento no
+# dejó texto (None si lo dejó). `extracted` y `unanchored` son definitivos:
+# el mismo documento da el mismo resultado. `empty` y `error` se reintentan
+# en la corrida siguiente (una vez por corrida).
 #
 # Una entrada v1 (sin `v`: solo los campos del cuerpo) se sigue leyendo tal
 # cual y se re-pide una vez para obtener sus secciones. Si ese intento falla,
@@ -87,6 +88,16 @@ _FT_FINAL_STATUSES = ("extracted", "unanchored")
 _ft_attempted: set[str] = set()
 # Hubo intentos que cambiaron el cache desde el ultimo guardado.
 _fulltext_dirty = False
+
+# Por qué un intento no dejó texto, cuando no lo dice la respuesta HTTP. La
+# clave es (status, hubo bloque anclado). Viaja como `detail` del intento a
+# replace_ad_text_sections.
+_ATTEMPT_DETAIL = {
+    ("unanchored", False): "no identity header declares the expected AD and amendment",
+    ("empty", False): "empty GovInfo response or access page",
+    ("error", True): "anchored block without sections",
+    ("error", False): "GovInfo body could not be parsed",
+}
 
 
 def _load_fulltext_cache() -> dict:
@@ -201,13 +212,17 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str,
         f"https://api.govinfo.gov/packages/FR-{publication_date}"
         f"/granules/{doc_number}/htm?api_key={key}"
     )
+    detail = None
     try:
         resp = session.get(url, timeout=40)
         result = _body_fields(resp.text, ad, amendment) if resp.ok else None
-    except requests.RequestException:
-        result = None
+        if result is None:
+            detail = f"GovInfo HTTP {resp.status_code}"
+    except requests.RequestException as e:
+        result, detail = None, f"GovInfo request failed: {type(e).__name__}"
     if result is None:  # HTTP != 2xx o red
         result = {"v": _FT_CACHE_VERSION, "status": "error", "anchor": None, "sections": []}
+    result["detail"] = detail or _ATTEMPT_DETAIL.get((result["status"], bool(result.get("anchor"))))
 
     if result["status"] in _FT_FINAL_STATUSES or not cached:
         cache[doc_number] = {"compliance_time": None, "amoc": False, "docket": None,
@@ -215,10 +230,28 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str,
     else:
         # Intento fallido sobre una entrada con datos: se registra el intento
         # (para reintentarlo) sin perder lo que ya tenia.
-        cache[doc_number] = {**cached, "v": _FT_CACHE_VERSION, "status": result["status"]}
+        cache[doc_number] = {**cached, "v": _FT_CACHE_VERSION, "status": result["status"],
+                             "detail": result["detail"]}
     global _fulltext_dirty
     _fulltext_dirty = True
     return cache[doc_number]
+
+
+def fulltext_entry(doc_number: str) -> dict | None:
+    """Entrada del cache full-text de un documento FR, o None."""
+    return _load_fulltext_cache().get(doc_number) if doc_number else None
+
+
+def fulltext_attempted(doc_number: str) -> bool:
+    """El documento se pidió a GovInfo en esta corrida (su entrada es un
+    intento de hoy, no uno guardado de una corrida anterior)."""
+    return doc_number in _ft_attempted
+
+
+def govinfo_source_url(publication_date: str, doc_number: str) -> str:
+    """URL pública del granulo en GovInfo: la del texto, sin la API key con
+    la que se bajó."""
+    return f"https://www.govinfo.gov/content/pkg/FR-{publication_date}/html/{doc_number}.htm"
 
 
 def _applicability_section(ft: dict) -> str:

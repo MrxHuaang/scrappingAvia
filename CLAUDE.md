@@ -312,8 +312,9 @@ declara el AD esperado (el de `docket_ids`, o el respaldo anclado al amendment):
   lo decide la base con una sola regla sobre los `kind`.
 
 **Cache v2** (`outputs/fr_fulltext_cache.json`, una entrada por
-document_number): `{v: 2, status, anchor, sections[], sha, compliance_time,
-amoc, docket, supersedes[], ad_header}`; `sha` es el sha256 del granulo.
+document_number): `{v: 2, status, anchor, sections[], sha, detail,
+compliance_time, amoc, docket, supersedes[], ad_header}`; `sha` es el sha256
+del granulo y `detail` por qué el intento no dejó texto.
 `extracted` y `unanchored` son definitivos; `empty` y `error` se reintentan en la
 corrida siguiente, una vez por corrida. Una entrada v1 (sin `v`) se sigue leyendo
 y se re-pide una vez para obtener sus secciones; si ese intento falla conserva
@@ -326,8 +327,10 @@ memoria, también en `scripts/link_supersession.py`.
 
 La sección Applicability anclada es además la fuente de los **modelos** de
 `ad_applicability` (antes que el abstract; ver
-docs/applicability-contract.md). Las tablas de texto en la base todavía no
-existen: por ahora el texto solo vive en el cache.
+docs/applicability-contract.md). `populate_db.populate_text_sections` lleva
+el intento de cada AD y sus secciones a `ad_text_documents` /
+`ad_text_sections` por la RPC `replace_ad_text_sections`, que decide si el
+texto reemplaza al conservado.
 
 ### Verificar y reparar la identidad
 

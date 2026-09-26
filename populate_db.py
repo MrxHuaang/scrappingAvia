@@ -26,6 +26,7 @@ import enrich
 
 # Agregar directorio raiz al path
 
+from scrapers import federal_register
 from scrapers.federal_register import search_ads as fr_search
 from scrapers.faa_govinfo import search_ads as govinfo_search
 from scrapers.easa import (
@@ -641,12 +642,194 @@ def _send_applicability_batches(supabase, payload: list[dict]) -> dict[str, int]
 # exactamente lo mismo que un AD sin holders. Sin pares, el AD viaja `failed`.
 
 
+# ---------------------------------------------------------------------------
+# Texto del AD en secciones (FAA): ad_text_documents / ad_text_sections
+# ---------------------------------------------------------------------------
+# Limites de `replace_ad_text_sections` (migracion 20260927100000 de
+# ad-scrapper). Si la RPC los cambia, cambian aqui: un payload que se pase
+# aborta la llamada del AD. Lo vigila tests/test_text_sections_payload.py.
+TEXT_SECTIONS_MAX = 200
+TEXT_FIELD_MAX = 2048      # cada campo del intento y cada heading
+TEXT_LETTER_MAX = 8
+TEXT_BODY_MAX = 200000
+TEXT_PROVIDER = "govinfo"
+# La RPC es de un AD por llamada (una transaccion por AD). Si falla esta
+# cantidad de llamadas seguidas (RPC ausente, base caida) no se sigue
+# martillando: el resto se registra como un solo error de escritura.
+TEXT_MAX_CONSECUTIVE_FAILURES = 20
+
+
+def _text_sections_over_limits(sections: list[dict]) -> str | None:
+    """Motivo por el que la RPC rechazaria estas secciones, o None."""
+    if len(sections) > TEXT_SECTIONS_MAX:
+        return f"{len(sections)} sections, limit is {TEXT_SECTIONS_MAX}"
+    for s in sections:
+        heading, body, letter = s.get("heading") or "", s.get("body") or "", s.get("letter") or ""
+        if not heading.strip() or not body.strip():
+            return f"section {s.get('position')} without heading or body"
+        if len(heading) > TEXT_FIELD_MAX or len(letter) > TEXT_LETTER_MAX or len(body) > TEXT_BODY_MAX:
+            return f"section {s.get('position')} over the field limits"
+    return None
+
+
+def _text_payload(raw: dict, entry: dict) -> tuple[dict, list[dict], str | None]:
+    """(p_attempt, p_sections, problema) de un AD FAA desde su entrada del
+    cache full-text v2.
+
+    El intento dice lo que encontro el parser (extracted | unanchored | empty
+    | error); la base decide ok/partial con `ad_text_is_complete` y nunca
+    reemplaza texto conservado con un intento peor. Por eso aqui no se decide
+    nada sobre completitud ni se evita mandar un intento fallido: un `error`
+    tras un texto valido se registra como intento y el texto queda.
+
+    Solo un intento `extracted` lleva secciones (la RPC rechaza las demas). Si
+    las secciones no caben en los limites de la RPC, el intento viaja como
+    `error` sin secciones y se devuelve el problema para registrarlo: el AD
+    queda con su texto anterior y la corrida en error.
+    """
+    doc = (raw.get("FR_DocNumber") or "").strip()
+    status = entry.get("status")
+    sections = [
+        {"position": s.get("position"), "letter": s.get("letter"), "heading": s.get("heading"),
+         "kind": s.get("kind"), "body": s.get("body")}
+        for s in (entry.get("sections") or [])
+    ] if status == "extracted" else []
+    attempt = {
+        "status": status,
+        "provider": TEXT_PROVIDER,
+        "document_id": doc,
+        "source_url": federal_register.govinfo_source_url(raw.get("Publication_Date") or "", doc),
+        "sha256": entry.get("sha"),
+        "anchor": entry.get("anchor") if status == "extracted" else None,
+        "detail": entry.get("detail"),
+    }
+    problem = _text_sections_over_limits(sections) if status == "extracted" else None
+    if problem is None and (attempt["anchor"] or "") and len(attempt["anchor"]) > TEXT_FIELD_MAX:
+        problem = f"anchor over {TEXT_FIELD_MAX} characters"
+    if problem:
+        attempt.update(status="error", anchor=None, detail=f"sections not sent: {problem}")
+        sections = []
+    if attempt["detail"]:
+        attempt["detail"] = attempt["detail"][:TEXT_FIELD_MAX]
+    return attempt, sections, problem
+
+
+def _stored_text_state(supabase, ad_ids: list[str]) -> dict[str, str | None] | None:
+    """ad_id -> text_sha256 de ad_text_documents (None si el AD tiene intentos
+    pero ningun texto conservado). Un AD sin fila no aparece. None si la
+    lectura fallo (registrado)."""
+    state: dict[str, str | None] = {}
+    BATCH = 300
+    for i in range(0, len(ad_ids), BATCH):
+        try:
+            resp = (supabase.table("ad_text_documents")
+                    .select("ad_id, text_sha256")
+                    .in_("ad_id", ad_ids[i:i + BATCH])
+                    .execute())
+            for rec in resp.data or []:
+                state[rec["ad_id"]] = rec.get("text_sha256")
+        except Exception as e:
+            _record_write_error(f"  text: no se pudo leer ad_text_documents: {e}")
+            return None
+    return state
+
+
+def _text_needs_send(entry: dict, fresh: bool, stored: dict[str, str | None] | None, ad_id: str) -> bool:
+    """Un intento de esta corrida se manda siempre: es el ultimo intento real
+    del AD. Uno guardado en el cache de una corrida anterior solo si la base
+    todavia no lo tiene: sin fila en ad_text_documents, o un `extracted` sin
+    texto conservado. Reenviarlo cada noche falsearia `last_attempt_at` y
+    reescribiria las mismas secciones de ~13.5k ADs."""
+    if fresh:
+        return True
+    if stored is None:  # la pre-lectura fallo: solo lo que es de hoy
+        return False
+    if ad_id not in stored:
+        return True
+    return entry.get("status") == "extracted" and stored[ad_id] is None
+
+
+def _send_text_sections(supabase, payload: list[tuple[str, dict, list[dict]]]) -> dict[str, int]:
+    """Una llamada a `replace_ad_text_sections` por AD y el estado que la base
+    guardo (ok | partial | unanchored | empty | error), contado. Cada fallo
+    de la RPC es un error de escritura; tras TEXT_MAX_CONSECUTIVE_FAILURES
+    seguidos se abandona el resto con un solo error."""
+    counts: dict[str, int] = {}
+    consecutive = 0
+    for n, (ad_id, attempt, sections) in enumerate(payload):
+        try:
+            resp = supabase.rpc("replace_ad_text_sections", {
+                "p_ad_id": ad_id, "p_attempt": attempt, "p_sections": sections,
+            }).execute()
+            stored = resp.data if isinstance(resp.data, str) else "unknown"
+            counts[stored] = counts.get(stored, 0) + 1
+            consecutive = 0
+        except Exception as e:
+            _record_write_error(f"  text: RPC replace_ad_text_sections fallo ({ad_id}): {e}")
+            counts["rpc_failed"] = counts.get("rpc_failed", 0) + 1
+            consecutive += 1
+            if consecutive >= TEXT_MAX_CONSECUTIVE_FAILURES:
+                left = len(payload) - n - 1
+                if left:
+                    _record_write_error(
+                        f"  text: {consecutive} fallos seguidos de la RPC, {left} AD(s) sin enviar"
+                    )
+                    counts["not_sent"] = left
+                break
+    return counts
+
+
+def populate_text_sections(supabase, normalized: list[dict], id_map: dict[str, str]) -> dict[str, int]:
+    """Texto de los ADs FAA hacia ad_text_documents/ad_text_sections, desde el
+    cache full-text v2 que dejo la corrida (`federal_register.fulltext_entry`).
+
+    Mismo `id_map` que applicability (ad_number -> ads.id de `_fetch_ad_ids`).
+    Un AD sin entrada v2 (sin GOVINFO_API_KEY no hay intento) no viaja: no hay
+    intento que registrar. Devuelve los conteos del estado que guardo la base.
+    """
+    by_ad: dict[str, tuple[dict, dict, bool]] = {}
+    for r in normalized:
+        ad_id = id_map.get(r["ad_number"])
+        raw = r.get("raw_data") or {}
+        doc = (raw.get("FR_DocNumber") or "").strip()
+        entry = federal_register.fulltext_entry(doc)
+        if not ad_id or not entry or entry.get("v") != 2:
+            continue
+        by_ad[ad_id] = (raw, entry, federal_register.fulltext_attempted(doc))
+    if not by_ad:
+        return {}
+
+    stored = None
+    if any(not fresh for _, _, fresh in by_ad.values()):
+        stored = _stored_text_state(supabase, list(by_ad))
+    payload = []
+    for ad_id, (raw, entry, fresh) in by_ad.items():
+        if not _text_needs_send(entry, fresh, stored, ad_id):
+            continue
+        attempt, sections, problem = _text_payload(raw, entry)
+        if problem:
+            _record_write_error(
+                f"  text: {raw.get('AD_Number') or ad_id}: secciones fuera de limite ({problem}), "
+                f"se registra el intento como error"
+            )
+        payload.append((ad_id, attempt, sections))
+
+    counts = _send_text_sections(supabase, payload)
+    logger.info(
+        f"[federal_register] texto: {len(payload)} intentos enviados de {len(by_ad)} ADs con entrada "
+        f"({sum(1 for *_, f in by_ad.values() if f)} de esta corrida); BD: "
+        + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+    )
+    return counts
+
+
 def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     """
     Tras el upsert de `ads`, puebla las tablas relacionales derivadas de cada AD:
       - ad_applicability  (make/model afectados)
       - ad_service_bulletins (SBs referenciados en subject/abstract)
       - superseded_to_ad_id (si el scraper aporto 'Superseded_By')
+      - ad_text_documents / ad_text_sections (solo FAA, populate_text_sections)
     Applicability va por la RPC transaccional `replace_ad_applicability` con el
     estado triestado por AD del contrato (docs/applicability-contract.md):
     un AD presente en la salida del scraper con pares validos -> success_with_rows;
@@ -788,6 +971,10 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
 
     applic_payload = [_applic_element(aid, rows) for aid, rows in applic_by_ad.items()]
     applic_counts = _send_applicability_batches(supabase, applic_payload)
+
+    # Texto del AD en secciones: solo FAA tiene cache full-text con secciones.
+    if source == "federal_register":
+        populate_text_sections(supabase, normalized, id_map)
 
     # ad_service_bulletins: upsert on (ad_id, sb_number)
     for i in range(0, len(sb_rows), 500):
