@@ -27,7 +27,8 @@ todo se escribió.
 
 | Síntoma | Causa probable | Acción |
 |---|---|---|
-| FAA sin `compliance_time`/AMOC/supersession | Falta `GOVINFO_API_KEY` en secrets | Crear el secret (gratis: api.govinfo.gov/signup) |
+| FAA sin `compliance_time`/AMOC/supersession | Falta `GOVINFO_API_KEY` en secrets, o el texto del AD no quedó anclado (`unanchored`) | Crear el secret (gratis: api.govinfo.gov/signup); un `unanchored` es definitivo y esos campos salen del abstract (docs/fr-text.md) |
+| `text: RPC replace_ad_text_sections fallo` o `fallos seguidos de la RPC` | La migración de `ad_text_*` no está aplicada, o un payload fuera de contrato (22023) | Aplicar la migración en ad-scrapper; si es 22023, revisar el payload contra docs/fr-text.md. El texto ya guardado no se pierde: la RPC nunca lo borra con un intento fallido |
 | `429` sostenido de una fuente | Rate limit del sitio | Nada — `get_with_backoff` reintenta con backoff; si persiste días, bajar frecuencia |
 | Una fuente devuelve 0 ADs varios días | Cambio de HTML o WAF nuevo | Correr local `python populate_db.py --source <x> --dry-run` y comparar con el sitio |
 | `22023` desde `replace_ad_applicability` | El extractor declara mal el tri-estado o duplica clave natural | Revisar contra `docs/applicability-contract.md` |

@@ -56,13 +56,13 @@ make              TEXT   -- fabricante PRINCIPAL; los multiples van en ad_applic
 model             TEXT   -- todos los type designations del AD (lo que filtra search_ads)
 product_type      TEXT   -- enum: Aircraft|Engine|Propeller|Appliance|Helicopter
 published_date    DATE   -- fecha de publicacion (distinta de effective)
-effective_date    DATE   -- YYYY-MM-DD
+effective_date    DATE   -- YYYY-MM-DD; FAA: la del rule o effective_on, NULL si ninguno (nunca la de publicacion)
 status            TEXT   -- enum CANONICO: New | Revision | Superseded | Cancelled
 priority          TEXT   -- enum: Emergency | Normal
 unsafe_condition  TEXT   -- best-effort desde el abstract (FAA)
 corrective_action TEXT   -- best-effort desde el abstract (FAA)
-compliance_time   TEXT   -- best-effort ("within N flight hours")
-amoc_available    BOOL   -- true si el texto menciona AMOC
+compliance_time   TEXT   -- best-effort ("within N flight hours"); FAA: de las secciones compliance/required_actions
+amoc_available    BOOL   -- true si el texto menciona AMOC; FAA: seccion amoc o la frase en required_actions
 superseded_to_ad_id UUID -- FK a ads.id del AD que lo reemplaza (si status=Superseded)
 docket            TEXT
 pdf_link          TEXT   -- NULL en ~867 TC ADs superseded (esperado, no es bug)
@@ -77,6 +77,9 @@ Constraint único: `(source, ad_number)` → upsert usa `on_conflict=source,ad_n
 - `ad_applicability` — make/model afectados (1 AD -> N). Las tablas de usuario y
   Watchlist hacen match contra esta.
 - `ad_service_bulletins` — SBs referenciados, extraidos de subject/abstract.
+- `ad_text_documents` / `ad_text_sections` — solo FAA: el texto del AD en
+  secciones y el ultimo intento de bajarlo, por la RPC
+  `replace_ad_text_sections` (ver docs/fr-text.md).
 
 ### Applicability multi-fabricante (`Applicability` en raw_data)
 
@@ -268,9 +271,9 @@ correccion, que llega despues en orden cronologico.
 1. **FR API** (`scrapers/federal_register.py`) — year-split 1994→presente (evita
    el cap de 10k por query). Aporta identidad Y contenido. El full text de
    GovInfo se sigue bajando para el texto del AD en secciones (ver abajo),
-   `compliance_time`, AMOC y supersession, con **prefetch concurrente**
-   (`FULLTEXT_WORKERS`, 8 hilos): en serie son ~13.5k GETs de ~1s (horas), con
-   prefetch ~10 min. Cache en `outputs/fr_fulltext_cache.json`.
+   de las que salen `compliance_time`, AMOC y `effective_date`, y para la
+   supersession, con **prefetch concurrente** (`FULLTEXT_WORKERS`, 8 hilos):
+   en serie son ~13.5k GETs de ~1s (horas), con prefetch ~10 min. Cache en `outputs/fr_fulltext_cache.json`.
 2. **GovInfo MODS** (`scrapers/faa_govinfo.py`) — **opcional**, `--with-govinfo`.
    Ya NO aporta identidad (su regex tiene el mismo defecto); solo completa
    `Docket`/`Amendment` faltantes. Sin el flag no se corre.
@@ -309,7 +312,12 @@ declara el AD esperado (el de `docket_ids`, o el respaldo anclado al amendment):
 - **Estado** del intento: `extracted` (bloque anclado con ≥1 sección),
   `unanchored`, `empty` (respuesta vacía o "request access"), `error` (HTTP,
   red o bloque sin secciones). Python **no** decide si el texto está completo:
-  lo decide la base con una sola regla sobre los `kind`.
+  lo decide la base con una sola regla sobre los `kind`
+  (`ad_text_is_complete`), que guarda `ok` o `partial` para un `extracted` y
+  el estado tal cual para los demás. Un intento fallido nunca borra el texto
+  conservado: lo garantiza la RPC, y el cliente igual lo manda (es el último
+  intento real). Tabla completa de estados, payload y cuándo se manda cada
+  intento: [docs/fr-text.md](docs/fr-text.md).
 
 **Cache v2** (`outputs/fr_fulltext_cache.json`, una entrada por
 document_number): `{v: 2, status, anchor, sections[], sha, detail, docket,
@@ -331,7 +339,20 @@ La sección Applicability anclada es además la fuente de los **modelos** de
 docs/applicability-contract.md). `populate_db.populate_text_sections` lleva
 el intento de cada AD y sus secciones a `ad_text_documents` /
 `ad_text_sections` por la RPC `replace_ad_text_sections`, que decide si el
-texto reemplaza al conservado.
+texto reemplaza al conservado: los intentos de la corrida siempre, y los que
+ya estaban en el cache solo si la base no los tiene.
+
+De las mismas secciones salen **compliance_time** (primera frase de plazo en
+`compliance`/`required_actions`), **AMOC** (sección `amoc` o la frase en
+`required_actions`) y **effective_date** (la sección Effective Date, si no el
+`effective_on` de la FR API, si no NULL). Sin texto anclado el cuerpo no
+aporta nada: compliance y AMOC caen al abstract. Medición antes/después y
+backfill de `effective_date`: [docs/fr-text.md](docs/fr-text.md).
+
+```bash
+python scripts/backfill_effective_date.py --csv outputs/effective_date_plan.csv  # dry-run
+python scripts/backfill_effective_date.py --apply
+```
 
 ### Verificar y reparar la identidad
 
