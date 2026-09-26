@@ -2,9 +2,13 @@
 Busqueda de ADs: BD primero (RPC parametrizada `search_ads`), scraping en
 vivo como fallback. Rutas: /api/env, /api/health, /api/search (POST) y
 /api/search/stream (SSE).
+
+Las dos rutas de busqueda hablan dos contratos: sin `v` (o v=1) el de siempre,
+un evento por autoridad; con v=2 el paginado global de webapp.search_v2.
 """
 
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from math import ceil
@@ -40,11 +44,33 @@ from webapp.core import (
     logger,
     require_proxy,
 )
+from webapp import search_v2
 from webapp.search_rows import row_to_result
 
 bp = Blueprint("search", __name__)
 
 _SUPABASE_PAGE_SIZE = 1000  # PostgREST max rows per request
+
+
+# Peticiones del contrato v1 atendidas por este proceso. El contrato v1 se
+# retira cuando deja de usarse; la senal es la linea de log
+# `search_v1_requests=` (en serverless el contador vive lo que la instancia,
+# lo que se agrega es el log).
+_v1_requests = 0
+_v1_requests_lock = threading.Lock()
+
+
+def _count_v1_request(route: str) -> None:
+    global _v1_requests
+    with _v1_requests_lock:
+        _v1_requests += 1
+        n = _v1_requests
+    logger.info(f"search_v1_requests={n} route={route}")
+
+
+def search_v1_requests() -> int:
+    """Cuantas busquedas v1 atendio este proceso desde que arranco."""
+    return _v1_requests
 
 
 class DbResults(list):
@@ -416,9 +442,25 @@ def api_health() -> RouteResult:
     })
 
 
-@bp.route("/api/search", methods=["POST"])
 @require_proxy
+def _unsupported_version() -> RouteResult:
+    return jsonify({"error": "Unsupported search contract version."}), 400
+
+
+@bp.route("/api/search", methods=["POST"])
 def api_search() -> RouteResult:
+    body = request.get_json(silent=True)
+    version = search_v2.requested_version(body.get("v") if isinstance(body, dict) else None)
+    if version == search_v2.VERSION:
+        return search_v2.handle_post(body)
+    if version is None:
+        return _unsupported_version()
+    return _api_search_v1()
+
+
+@require_proxy
+def _api_search_v1() -> RouteResult:
+    _count_v1_request("/api/search")
     rl = check_rate_limit()
     if rl:
         return rl
@@ -497,8 +539,18 @@ def api_search() -> RouteResult:
 
 
 @bp.route("/api/search/stream")
-@require_proxy
 def api_search_stream() -> RouteResult:
+    version = search_v2.requested_version(request.args.get("v"))
+    if version == search_v2.VERSION:
+        return search_v2.handle_stream()
+    if version is None:
+        return _unsupported_version()
+    return _api_search_stream_v1()
+
+
+@require_proxy
+def _api_search_stream_v1() -> RouteResult:
+    _count_v1_request("/api/search/stream")
     rl = check_rate_limit()
     if rl:
         return rl

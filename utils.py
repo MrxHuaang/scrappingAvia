@@ -174,6 +174,19 @@ def normalize_filter_values(values, cap: int = MAX_FILTER_VALUES) -> list[str]:
     return out
 
 
+def _filter_gate(keyword, has_make: bool, has_other: bool) -> str | None:
+    """La regla, una sola vez: fabricante + otro filtro, salvo identificador."""
+    if is_ad_identifier(keyword):
+        return None
+    if not (has_make and has_other):
+        return SEARCH_FILTER_HINT
+    return None
+
+
+def _any_value(values) -> bool:
+    return any((v or "").strip() for v in (values or []))
+
+
 def validate_search_filters(keyword="", make="", model="", product_type="",
                             date_from="", date_to="", makes=None,
                             models=None) -> str | None:
@@ -187,16 +200,77 @@ def validate_search_filters(keyword="", make="", model="", product_type="",
     no "un" fabricante — elegir tres Airbus no deja la busqueda mas abierta que
     elegir uno.
     """
-    if is_ad_identifier(keyword):
-        return None
-    has_make = bool((make or "").strip()) or any((v or "").strip() for v in (makes or []))
-    if not has_make:
-        return SEARCH_FILTER_HINT
-    has_model = bool((model or "").strip()) or any((v or "").strip() for v in (models or []))
+    has_make = bool((make or "").strip()) or _any_value(makes)
+    has_model = bool((model or "").strip()) or _any_value(models)
     others = [keyword, product_type, date_from, date_to]
-    if not (has_model or any((v or "").strip() for v in others)):
-        return SEARCH_FILTER_HINT
-    return None
+    return _filter_gate(keyword, has_make, has_model or _any_value(others))
+
+
+def validate_search_filters_v2(keyword="", manufacturer_ids=None, make_texts=None,
+                               models=None, product_types=None,
+                               product_subtypes=None, statuses=None,
+                               has_pdf=None, date_from="",
+                               date_to="") -> str | None:
+    """
+    La misma regla para el contrato v2 de busqueda: al menos un fabricante
+    (`manufacturer_ids` resueltos o `make_texts` sin resolver) mas otro filtro.
+
+    Cuentan como "otro filtro" los que acotan el conjunto de ADs: modelos,
+    tipo/subtipo de producto, estados, tener PDF, fechas y keyword.
+    `min_confidence` no cuenta: solo gradua cuan bien casa un modelo, sin
+    modelos no acota nada. La excepcion por identificador acepta ademas lo
+    que el SQL clasifica como numero de AD o docket (`search_term_kind`), asi
+    un "Docket No. FAA-2023-0927" pegado tal cual tampoco pide fabricante.
+    """
+    if search_term_kind(keyword) != "text":
+        return None
+    has_make = _any_value(manufacturer_ids) or _any_value(make_texts)
+    has_other = (
+        _any_value(models) or _any_value(product_types)
+        or _any_value(product_subtypes) or _any_value(statuses)
+        or has_pdf is not None
+        or _any_value([keyword, date_from, date_to])
+    )
+    return _filter_gate(keyword, has_make, has_other)
+
+
+# ------------------------------------------------------------------
+# Termino de busqueda: normalizacion y tipo.
+#
+# Espejo de `ad_search_term_normalize` / `ad_search_term_kind` en SQL: la BD
+# decide con ellas si el termino se busca como numero de AD (prefijo), como
+# docket (substring) o como texto libre, y el gate de aqui tiene que ver el
+# termino igual que la BD. Las dos implementaciones se fijan con el mismo
+# fixture, tests/fixtures/search_terms.json, identico en ambos repos.
+# ------------------------------------------------------------------
+# "AD " / "A.D. " solo delante de un numero: "Ad hoc repair" sigue siendo texto.
+_TERM_AD_PREFIX_RE = re.compile(r"^A\.?\s?D\.?\s*(?=\d)", re.I)
+# "Docket No. " / "Docket Number: " solo delante de algo con forma de docket.
+_TERM_DOCKET_PREFIX_RE = re.compile(r"^Docket\s*(?:No\.?|Number)?\s*[:,]?\s*(?=[A-Z]{2,5}-\d)", re.I)
+_TERM_AD_NUMBER_RE = re.compile(rf"^{_AD_NUM_LOOSE}$", re.I)
+
+
+def search_term_normalize(term) -> str:
+    """
+    Guiones Unicode (– —) -> "-", espacios colapsados, sin bordes y sin el
+    prefijo "AD"/"A.D." o "Docket No." cuando precede a un identificador.
+    El resto (mayusculas incluidas) se deja como vino: la BD compara con ILIKE.
+    """
+    s = (term or "").replace("–", "-").replace("—", "-")
+    s = re.sub(r"\s+", " ", s).strip()
+    s = _TERM_AD_PREFIX_RE.sub("", s)
+    s = _TERM_DOCKET_PREFIX_RE.sub("", s)
+    return s.strip()
+
+
+def search_term_kind(term) -> str:
+    """'ad_number' | 'docket' | 'text' para el termino ya normalizado."""
+    norm = search_term_normalize(term)
+    if _TERM_AD_NUMBER_RE.match(norm):
+        return "ad_number"
+    if _DOCKET_QUERY_RE.match(norm):
+        return "docket"
+    return "text"
 
 
 def map_product_type(product_type):

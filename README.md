@@ -150,6 +150,24 @@ Audit table `scrape_runs` records every live execution (source, status,
 counts, error_msg, timestamps). A run with failed writes is recorded as
 `status='error'` AND exits non-zero, so the Actions job goes red.
 
+## Search API
+
+`POST /api/search` and `GET /api/search/stream` (SSE) are reached only through
+the Next.js proxy (`X-Internal-Secret`). Both speak two contracts:
+
+- **v1** (no `v`): one SSE event per authority, per-source `offset`, backed by
+  the `search_ads` RPC. Each request logs `search_v1_requests=<n>`, the usage
+  signal for retiring it.
+- **v2** (`v=2` query / `{"v": 2}` body, `webapp/search_v2.py`): one
+  `search_ads_v2` call per page, global `offset` (<= 100000), `limit` <= 100,
+  `total` and `source_counts` computed before paging. Events: `page`, `done`,
+  `error` (`code`: `filter_gate` | `upstream`). Sources come from the proxy's
+  `X-Effective-Sources` header (`*` or a comma list), trusted only after the
+  secret check: bad secret -> 401, missing/invalid header -> 400.
+
+Rows in both contracts go through `webapp/search_rows.row_to_result()`. The
+full parameter list and event shapes are in CLAUDE.md.
+
 ## Project structure
 
 ```
@@ -172,7 +190,7 @@ populate_db.py               Orchestrator + upsert + relations + scrape_runs log
 enrich.py                    All derivations (status/priority/product_type/SBs/...)
 enrich_ai.py                 LLM enrichment of deep fields (see docs)
 utils.py                     AD identity, normalization, timeouts, MAX_RESULTS_PER_SOURCE
-webapp/                      Flask app: core + blueprints (pages/auth/billing/search/export/status)
+webapp/                      Flask app: core + blueprints (pages/auth/billing/search/export/status); search_v2 + search_rows
 app.py                       Web entry point (Vercel builds this; assembles webapp/)
 dashboard_server.py          Local monitor for enrich_ai (loopback-only + token guard)
 watch_progress.py            CLI/HTML progress monitor (planner-estimate counts)

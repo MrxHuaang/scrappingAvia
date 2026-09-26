@@ -135,16 +135,28 @@ def require_proxy(f: Callable) -> Callable:
     """
     @wraps(f)
     def decorated(*args, **kwargs):
-        if INTERNAL_PROXY_SECRET:
-            sent = request.headers.get("X-Internal-Secret", "")
-            if not hmac.compare_digest(sent, INTERNAL_PROXY_SECRET):
-                return jsonify({"error": "Forbidden"}), 403
-        else:
-            logger.warning(
-                "[SEC] INTERNAL_PROXY_SECRET not set — data endpoints are unauthenticated"
-            )
+        if not proxy_secret_ok():
+            return jsonify({"error": "Forbidden"}), 403
         return f(*args, **kwargs)
     return decorated
+
+
+def proxy_secret_ok() -> bool:
+    """
+    True si la request trae el X-Internal-Secret del proxy (comparacion en
+    tiempo constante), o si el secreto no esta configurado (no-op compatible,
+    con warning). Es la unica comprobacion del secreto: la usan `require_proxy`
+    y las rutas que deciden su propio status de rechazo.
+    """
+    if not INTERNAL_PROXY_SECRET:
+        logger.warning(
+            "[SEC] INTERNAL_PROXY_SECRET not set — data endpoints are unauthenticated"
+        )
+        return True
+    sent = request.headers.get("X-Internal-Secret", "")
+    # En bytes: compare_digest rechaza str con caracteres no ASCII (TypeError),
+    # y una cabecera asi es un rechazo, no un 500.
+    return hmac.compare_digest(sent.encode("utf-8"), INTERNAL_PROXY_SECRET.encode("utf-8"))
 
 
 # --------------------------------------------------------------- rate limit --
