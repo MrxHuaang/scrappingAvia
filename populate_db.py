@@ -27,7 +27,7 @@ import enrich
 
 # Agregar directorio raiz al path
 
-from scrapers import faa_drs_api, faa_drs_sync, federal_register
+from scrapers import faa_drs_ads, faa_drs_api, faa_drs_sync, federal_register
 from scrapers.federal_register import search_ads as fr_search
 from scrapers.faa_govinfo import search_ads as govinfo_search
 from scrapers.easa import (
@@ -1389,17 +1389,87 @@ RUNNERS = {
 
 
 # ---------------------------------------------------------------------------
-# FAA DRS: sincronizacion de drs_documents (no es una fuente de `ads`)
+# FAA DRS: ADs anteriores a 1994 hacia `ads` (source federal_register)
+# ---------------------------------------------------------------------------
+#: Solo los AD finales: los de emergencia (ADFREAD) empiezan en 1997.
+DRS_BACKFILL_DOCTYPE = "ADFRAWD"
+
+
+def _ads_not_created_from_drs(supabase, ad_numbers: list[str]) -> set[str] | None:
+    """Numeros de `ad_numbers` que ya tienen fila `federal_register` creada
+    por otro camino (el scraper del Federal Register): esas filas no se tocan.
+    None si la lectura fallo (registrado): sin saberlo no se escribe nada."""
+    taken: set[str] = set()
+    BATCH = 300
+    uniq = sorted(set(ad_numbers))
+    for i in range(0, len(uniq), BATCH):
+        try:
+            resp = (supabase.table("ads")
+                    .select("ad_number, origin:raw_data->>Origin")
+                    .eq("source", "federal_register")
+                    .in_("ad_number", uniq[i:i + BATCH])
+                    .execute())
+        except Exception as e:
+            _record_write_error(f"[DRS] ADs anteriores a 1994: no se pudo leer ads: {e}")
+            return None
+        for rec in resp.data or []:
+            if rec.get("origin") != faa_drs_ads.ORIGIN:
+                taken.add(rec["ad_number"])
+    return taken
+
+
+def backfill_pre_federal_register(supabase, store, ad_numbers, *, dry_run: bool = False) -> dict[str, int]:
+    """Filas de `ads` (source `federal_register`) para los ADs anteriores a
+    la FR API entre `ad_numbers`, desde sus documentos en `drs_documents`
+    (scrapers/faa_drs_ads.py). Mismo camino que cualquier fila FAA:
+    `normalize` -> `upsert_ads` -> `populate_relations`.
+
+    Se leen todos los documentos guardados de cada AD, no solo los de la
+    corrida: en un incremental puede llegar solo uno de sus documentos. Una
+    fila `federal_register` que no creo este camino nunca se reescribe."""
+    counts = {"candidates": 0, "rows": 0, "skipped_existing": 0, "new": 0, "updated": 0}
+    candidates = sorted(n for n in set(ad_numbers) if faa_drs_ads.may_predate_federal_register(n))
+    counts["candidates"] = len(candidates)
+    if not candidates:
+        return counts
+    documents = store.documents(DRS_BACKFILL_DOCTYPE, candidates)
+    rows = [n for n in (normalize(r, "federal_register")
+                        for r in faa_drs_ads.pre_federal_register_rows(documents)) if n]
+    counts["rows"] = len(rows)
+    if rows and not dry_run:
+        if supabase is None:
+            _record_write_error("[DRS] ADs anteriores a 1994: sin cliente de base, no se escriben")
+            return counts
+        taken = _ads_not_created_from_drs(supabase, [r["ad_number"] for r in rows])
+        if taken is None:
+            return counts
+        rows = [r for r in rows if r["ad_number"] not in taken]
+        counts["skipped_existing"] = len(taken)
+        if rows:
+            counts["new"], counts["updated"] = upsert_ads(supabase, rows)
+            populate_relations(supabase, "federal_register", rows)
+    logger.info(
+        f"[DRS] ADs anteriores a 1994{' (DRY-RUN)' if dry_run else ''}: {counts['candidates']} candidatos "
+        f"por numero, {counts['rows']} filas, {counts['skipped_existing']} ya del Federal Register, "
+        f"{counts['new']} nuevas, {counts['updated']} actualizadas"
+    )
+    return counts
+
+
+# ---------------------------------------------------------------------------
+# FAA DRS: sincronizacion de drs_documents
 # ---------------------------------------------------------------------------
 def run_drs_sync(doctypes: list[str], dry_run: bool = False, env: dict | None = None,
-                 client=None, store=None) -> int:
+                 client=None, store=None, supabase=None) -> int:
     """Sincroniza DRS y devuelve el exit code (0 ok, 1 con errores).
 
-    DRS no escribe `ads` ni `scrape_runs`: alimenta `drs_documents` y el
-    vinculo `ads.drs_document_guid` (scrapers/faa_drs_sync.py). Una corrida
-    con cualquier error (pagina fallida, documento descartado, enlace
-    fallido) sale != 0 para que el job quede en rojo; el cursor solo avanza
-    tras recorrer todas las paginas de un doctype.
+    Alimenta `drs_documents` y el vinculo `ads.drs_document_guid`
+    (scrapers/faa_drs_sync.py) y, entre los dos, crea en `ads` los ADs
+    anteriores a 1994 que solo estan en DRS (`backfill_pre_federal_register`).
+    No escribe `scrape_runs`. Una corrida con cualquier error (pagina
+    fallida, documento descartado, escritura o enlace fallido) sale != 0 para
+    que el job quede en rojo; el cursor solo avanza tras recorrer todas las
+    paginas de un doctype.
 
     Con DRS_API_ENABLED apagado no hace nada y sale 0: el job queda verde y
     el log dice por que no corrio.
@@ -1414,9 +1484,20 @@ def run_drs_sync(doctypes: list[str], dry_run: bool = False, env: dict | None = 
             logger.error(f"[DRS] {e}")
             return 1
     if store is None:
-        store = faa_drs_sync.DryRunStore() if dry_run else faa_drs_sync.SupabaseDrsStore(get_supabase_client())
+        if dry_run:
+            store = faa_drs_sync.DryRunStore()
+        else:
+            supabase = supabase or get_supabase_client()
+            store = faa_drs_sync.SupabaseDrsStore(supabase)
 
-    report = faa_drs_sync.sync(client, store, doctypes)
+    write_errors_before = len(_write_errors)
+    backfill: dict[str, int] = {}
+
+    def _after_upsert(report: faa_drs_sync.SyncReport) -> None:
+        backfill.update(backfill_pre_federal_register(
+            supabase, store, report.ad_numbers(DRS_BACKFILL_DOCTYPE), dry_run=dry_run))
+
+    report = faa_drs_sync.sync(client, store, doctypes, before_link=_after_upsert)
     errors = report.errors
     for err in errors[:50]:
         _record_write_error(f"[DRS] {err}")
@@ -1428,10 +1509,16 @@ def run_drs_sync(doctypes: list[str], dry_run: bool = False, env: dict | None = 
         f"cursor -> {r.advanced_to}{' ERROR' if r.error else ''}"
         for r in report.results
     ]
-    lines += [f"  ADs enlazados : {report.linked}", f"  Errores       : {len(errors)}"]
+    if backfill:
+        lines.append(f"  Pre-1994      : {backfill['rows']} filas, {backfill['new']} nuevas, "
+                     f"{backfill['skipped_existing']} ya del Federal Register")
+    # Los errores de la sync ya estan en _write_errors (arriba); ademas cuentan
+    # las escrituras fallidas de las filas de `ads` y sus relaciones.
+    failed = len(_write_errors) - write_errors_before
+    lines += [f"  ADs enlazados : {report.linked}", f"  Errores       : {failed}"]
     bar = "=" * 50
     logger.info("\n".join(["", bar, *lines, bar]))
-    return 1 if errors else 0
+    return 1 if errors or failed else 0
 
 
 # ---------------------------------------------------------------------------

@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Protocol
@@ -62,6 +62,16 @@ CURSOR_OVERLAP = timedelta(hours=1)
 UPSERT_BATCH = 250
 #: Numeros de AD por llamada a `link_ads_to_drs`.
 LINK_BATCH = 1000
+#: Numeros de AD por lectura de `drs_documents`. Cada AD tiene tres
+#: documentos como mucho, asi que la respuesta no llega al tope de 1000 filas
+#: de PostgREST.
+READ_BATCH = 250
+#: Columnas de `drs_documents` que devuelve `DrsStore.documents`: las mismas
+#: claves que `to_record`.
+DOCUMENT_COLUMNS = (
+    "document_guid, document_number, ad_number, status, doc_last_modified, publication_date, "
+    "effective_date, document_url, main_download_url, makes, models, regulatory_text, payload"
+)
 
 # Reglas de `upsert_drs_documents`, copiadas una a una de su fuente de verdad:
 # ad-scrapper, supabase/migrations/20260927211000_drs_writers.sql
@@ -237,6 +247,7 @@ class DrsStore(Protocol):
     def upsert(self, doctype: str, documents: list[dict]) -> dict | None: ...
     def advance(self, doctype: str, last_modified: str, initial_scan_done: bool) -> None: ...
     def link(self, ad_numbers: list[str]) -> int | None: ...
+    def documents(self, doctype: str, ad_numbers: list[str]) -> list[dict]: ...
 
 
 class SupabaseDrsStore:
@@ -266,14 +277,37 @@ class SupabaseDrsStore:
         resp = self._sb.rpc("link_ads_to_drs", {"p_ad_numbers": ad_numbers}).execute()
         return resp.data if isinstance(resp.data, int) else None
 
+    def documents(self, doctype: str, ad_numbers: list[str]) -> list[dict]:
+        """Todos los documentos guardados de `doctype` con esos numeros de AD
+        (no solo los de la corrida: un AD puede tener otro documento que no
+        cambio)."""
+        out: list[dict] = []
+        numbers = sorted(set(ad_numbers))
+        for chunk in _chunks(numbers, READ_BATCH):
+            resp = (self._sb.table("drs_documents")
+                    .select(DOCUMENT_COLUMNS)
+                    .eq("doctype", doctype)
+                    .in_("ad_number", chunk)
+                    .execute())
+            out.extend(resp.data or [])
+        return out
+
 
 class DryRunStore:
-    """Sin base: sin cursor (barrido completo) y sin escrituras."""
+    """Sin base: sin cursor (barrido completo) y sin escrituras. Guarda en
+    memoria lo que subiria, para que los pasos posteriores a la sync (ADs
+    anteriores a 1994, texto) se puedan ensayar sin base."""
+
+    def __init__(self):
+        self._documents: dict[str, dict[str, dict]] = {}
 
     def read_state(self, doctype: str) -> None:
         return None
 
     def upsert(self, doctype: str, documents: list[dict]) -> dict:
+        kept = self._documents.setdefault(doctype, {})
+        for doc in documents:
+            kept[doc["document_guid"]] = doc
         return {"inserted": 0, "updated": 0, "unchanged": 0, "dry_run": len(documents)}
 
     def advance(self, doctype: str, last_modified: str, initial_scan_done: bool) -> None:
@@ -281,6 +315,10 @@ class DryRunStore:
 
     def link(self, ad_numbers: list[str]) -> int:
         return 0
+
+    def documents(self, doctype: str, ad_numbers: list[str]) -> list[dict]:
+        wanted = set(ad_numbers)
+        return [d for d in self._documents.get(doctype, {}).values() if d["ad_number"] in wanted]
 
 
 def _coerce_state(raw) -> SyncState | None:
@@ -319,12 +357,19 @@ class SyncReport:
     results: list[DoctypeResult] = field(default_factory=list)
     linked: int | None = None
     link_error: str | None = None
+    before_link_error: str | None = None
+
+    def ad_numbers(self, doctype: str) -> set[str]:
+        """Numeros de AD de las paginas de `doctype` que si se subieron."""
+        return set().union(*(r.ad_numbers for r in self.results if r.doctype == doctype))
 
     @property
     def errors(self) -> list[str]:
         out = [f"{r.doctype}: {r.error}" for r in self.results if r.error]
         for r in self.results:
             out.extend(f"{r.doctype}: skipped {s}" for s in r.skipped)
+        if self.before_link_error:
+            out.append(f"after upsert: {self.before_link_error}")
         if self.link_error:
             out.append(f"link_ads_to_drs: {self.link_error}")
         return out
@@ -403,10 +448,16 @@ def sync_doctype(client: DrsClient, store: DrsStore, doctype: str, *, now: datet
 
 
 def sync(client: DrsClient, store: DrsStore, doctypes: Iterable[str] = DOCTYPES, *,
-         now: datetime | None = None) -> SyncReport:
+         now: datetime | None = None,
+         before_link: Callable[[SyncReport], None] | None = None) -> SyncReport:
     """Todas las `doctypes` en orden y luego `link_ads_to_drs` con los numeros
     de AD de las paginas que si se subieron (tambien si alguna fallo: lo
-    subido ya esta en la base). Una key rechazada corta el resto."""
+    subido ya esta en la base). Una key rechazada corta el resto.
+
+    `before_link` corre entre las dos cosas, con el reporte: ahi
+    `populate_db` crea las filas de `ads` de los ADs anteriores a 1994, que
+    asi quedan enlazadas en la misma corrida. Si falla, se reporta y el
+    enlace corre igual."""
     report = SyncReport()
     for doctype in doctypes:
         res = sync_doctype(client, store, doctype, now=now)
@@ -418,6 +469,12 @@ def sync(client: DrsClient, store: DrsStore, doctypes: Iterable[str] = DOCTYPES,
         )
         if res.auth_failed:
             break
+
+    if before_link is not None:
+        try:
+            before_link(report)
+        except Exception as e:
+            report.before_link_error = f"{type(e).__name__}: {e}"
 
     touched = sorted(set().union(*(r.ad_numbers for r in report.results)))
     if touched:

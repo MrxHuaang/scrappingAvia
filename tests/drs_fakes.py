@@ -136,6 +136,8 @@ class FakeStore:
         self.advances: list[dict] = []
         self.links: list[dict] = []
         self.rows: dict[str, dict] = {}
+        self.doctypes: dict[str, str] = {}
+        self.document_reads: list[dict] = []
 
     def read_state(self, doctype):
         if self.fail_read:
@@ -157,6 +159,7 @@ class FakeStore:
             else:
                 updated += 1
             self.rows[d["document_guid"]] = d
+            self.doctypes[d["document_guid"]] = doctype
         return {"inserted": inserted, "updated": updated, "unchanged": unchanged}
 
     def advance(self, doctype, last_modified, initial_scan_done):
@@ -169,3 +172,10 @@ class FakeStore:
         if self.fail_link:
             raise RuntimeError("link_ads_to_drs failed")
         return len(ad_numbers)
+
+    def documents(self, doctype, ad_numbers):
+        """Stored rows of `doctype` for those AD numbers, like a read of drs_documents."""
+        self.document_reads.append({"doctype": doctype, "ad_numbers": sorted(set(ad_numbers))})
+        wanted = set(ad_numbers)
+        return [copy.deepcopy(d) for guid, d in self.rows.items()
+                if self.doctypes.get(guid) == doctype and d["ad_number"] in wanted]
