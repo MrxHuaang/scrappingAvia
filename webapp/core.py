@@ -29,9 +29,16 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
 
-# Shared secret injected by the Next.js proxy (SEC-3). When set, /api/search*
-# rejects any request lacking the matching X-Internal-Secret header.
+# Shared secret injected by the Next.js proxy (SEC-3). /api/search* rejects
+# any request lacking the matching X-Internal-Secret header, and answers 503
+# while the secret is not configured (fail closed; see proxy_rejection).
 INTERNAL_PROXY_SECRET = os.environ.get("INTERNAL_PROXY_SECRET", "")
+
+# Explicit opt-in to run the data routes without the secret in local
+# development. Read per request, and honoured only off Vercel and only for
+# loopback requests (see local_unauthenticated_allowed).
+ALLOW_UNAUTHENTICATED_LOCAL_ENV = "ALLOW_UNAUTHENTICATED_LOCAL"
+_LOOPBACK = frozenset({"127.0.0.1", "::1"})
 
 SCRAPER_TIMEOUT = 45  # timeout maximo por fuente (segundos)
 
@@ -76,36 +83,83 @@ def get_supabase_admin():
 # ------------------------------------------------------------------- guards --
 def require_proxy(f: Callable) -> Callable:
     """
-    Guard for data endpoints reached through the Next.js proxy (SEC-3).
-    When INTERNAL_PROXY_SECRET is configured, requests must carry a matching
-    X-Internal-Secret header (set by the proxy); otherwise they are rejected.
-    If the secret is not configured, the guard is a no-op (backward compatible)
-    but logs a warning so the hardening can be rolled out via env config.
+    Guard for data endpoints reached through the Next.js proxy (SEC-3): the
+    request must carry the X-Internal-Secret the proxy sets, or it is
+    rejected with 403. See proxy_rejection for the unconfigured case.
     """
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not proxy_secret_ok():
-            return jsonify({"error": "Forbidden"}), 403
+        denied = proxy_rejection(403)
+        if denied:
+            return denied
         return f(*args, **kwargs)
     return decorated
 
 
-def proxy_secret_ok() -> bool:
+def proxy_rejection(denied_status: int) -> tuple[Response, int] | None:
     """
-    True si la request trae el X-Internal-Secret del proxy (comparacion en
-    tiempo constante), o si el secreto no esta configurado (no-op compatible,
-    con warning). Es la unica comprobacion del secreto: la usan `require_proxy`
-    y las rutas que deciden su propio status de rechazo.
+    El unico guard del proxy, compartido por v1 (`require_proxy`, 403) y v2
+    (401): None si la request puede seguir, o la respuesta de rechazo.
+
+    - Secreto configurado: pasa solo con un X-Internal-Secret igual;
+      si no, `denied_status`.
+    - Secreto sin configurar: falla cerrado con 503 y un error generico,
+      salvo el opt-in explicito de desarrollo local
+      (`local_unauthenticated_allowed`).
     """
     if not INTERNAL_PROXY_SECRET:
-        logger.warning(
-            "[SEC] INTERNAL_PROXY_SECRET not set — data endpoints are unauthenticated"
-        )
-        return True
+        if local_unauthenticated_allowed():
+            return None
+        return jsonify({"error": "Service unavailable"}), 503
+    if proxy_secret_ok():
+        return None
+    return jsonify({"error": "Unauthorized" if denied_status == 401 else "Forbidden"}), denied_status
+
+
+def proxy_secret_ok() -> bool:
+    """
+    True si el secreto esta configurado y la request trae el mismo
+    X-Internal-Secret (comparacion en tiempo constante).
+    """
+    if not INTERNAL_PROXY_SECRET:
+        return False
     sent = request.headers.get("X-Internal-Secret", "")
     # En bytes: compare_digest rechaza str con caracteres no ASCII (TypeError),
     # y una cabecera asi es un rechazo, no un 500.
     return hmac.compare_digest(sent.encode("utf-8"), INTERNAL_PROXY_SECRET.encode("utf-8"))
+
+
+def local_unauthenticated_allowed() -> bool:
+    """
+    Opt-in de desarrollo local para correr sin secreto. Cuenta solo si
+    ALLOW_UNAUTHENTICATED_LOCAL=1, fuera de Vercel (VERCEL sin definir) y
+    para una request de loopback: tanto el peer TCP real (el que ProxyFix
+    guarda antes de reescribir) como `request.remote_addr` ya reescrito
+    deben ser loopback, para que un X-Forwarded-For: 127.0.0.1 enviado
+    desde fuera no baste, ni un proxy local que reenvia trafico externo.
+    """
+    if os.environ.get("VERCEL"):
+        return False
+    if os.environ.get(ALLOW_UNAUTHENTICATED_LOCAL_ENV, "").strip() != "1":
+        return False
+    peer = request.environ.get("werkzeug.proxy_fix.orig", {}).get("REMOTE_ADDR", request.remote_addr)
+    return peer in _LOOPBACK and request.remote_addr in _LOOPBACK
+
+
+def log_proxy_guard_state() -> None:
+    """Un aviso claro al arrancar si el secreto del proxy falta."""
+    if INTERNAL_PROXY_SECRET:
+        return
+    if os.environ.get(ALLOW_UNAUTHENTICATED_LOCAL_ENV, "").strip() == "1" and not os.environ.get("VERCEL"):
+        logger.warning(
+            "[SEC] INTERNAL_PROXY_SECRET not set; ALLOW_UNAUTHENTICATED_LOCAL=1 lets "
+            "loopback requests use the data routes without it (local development only)."
+        )
+    else:
+        logger.error(
+            "[SEC] INTERNAL_PROXY_SECRET not set: every data route answers 503 "
+            "until it is configured."
+        )
 
 
 # --------------------------------------------------------------- rate limit --

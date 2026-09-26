@@ -134,8 +134,16 @@ llama servidor a servidor. Rutas:
 Cualquier otra ruta es un 404 JSON y `vercel.json` solo enruta `/api/*`.
 `tests/test_route_guards.py` recorre `app.url_map` y falla si una ruta que no
 sea health contesta sin el secreto: **toda ruta nueva lleva `require_proxy`
-(o `proxy_secret_ok()`) y entra en ese test**. `INTERNAL_PROXY_SECRET` es
-obligatorio en todo deploy; sin el, el guard no exige nada (solo dev local).
+(o `core.proxy_rejection()`) y entra en ese test**.
+
+**El guard falla cerrado.** Sin `INTERNAL_PROXY_SECRET` toda ruta de datos
+contesta 503 `{"error": "Service unavailable"}` (v1 y v2, el mismo helper
+`core.proxy_rejection()`) y la app lo avisa al arrancar. Para desarrollo local
+existe un opt-in explicito, `ALLOW_UNAUTHENTICATED_LOCAL=1`, que solo cuenta
+fuera de Vercel (`VERCEL` sin definir) y para requests de loopback: el peer TCP
+real y `request.remote_addr` (tras ProxyFix) deben ser `127.0.0.1`/`::1`, asi
+que un `X-Forwarded-For: 127.0.0.1` desde fuera no abre nada. Con el secreto
+configurado el opt-in se ignora.
 
 ### Contratos de `/api/search` y `/api/search/stream`
 
@@ -183,17 +191,19 @@ cuota consumida solo ante un 5xx o un fallo de transporte; con un evento
 **Fuentes en v2: las decide el proxy, no el query.** El proxy de Next calcula
 plan ∩ seleccion y lo manda en `X-Effective-Sources`. Flask solo la cree
 despues de validar `X-Internal-Secret` en tiempo constante
-(`core.proxy_secret_ok()`):
+(`core.proxy_rejection()`):
 
 | Caso | Respuesta |
 |------|-----------|
 | secreto ausente o invalido | 401 (aunque la cabecera sea valida) |
+| `INTERNAL_PROXY_SECRET` sin configurar (y sin opt-in local valido) | 503 |
 | secreto valido, cabecera ausente / vacia / con clave fuera de `VALID_SOURCES` | 400 |
 | `*` | sin filtro de fuente (`sources: null`) |
 | `easa,federal_register` | `sources` = esa lista (ordenada, sin duplicados); el `sources` del query se ignora |
 
-Sin `INTERNAL_PROXY_SECRET` configurado (dev local) el secreto no se exige,
-igual que en `require_proxy`, pero la cabecera si.
+Con el opt-in local (`ALLOW_UNAUTHENTICATED_LOCAL=1`, loopback, fuera de
+Vercel) el secreto no se exige, igual que en `require_proxy`, pero la cabecera
+si.
 
 `tests/fixtures/search_terms.json` es el **mismo archivo** en ad-scrapper: fija
 que `utils.search_term_normalize/search_term_kind` y las funciones SQL

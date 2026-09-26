@@ -12,7 +12,7 @@ plantillas, ni archivos estaticos. La suite de contrato HTTP
 from flask import Flask, jsonify
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from webapp import search
+from webapp import core, search
 
 
 def create_app() -> Flask:
@@ -28,6 +28,7 @@ def create_app() -> Flask:
     # servidor. Ningun navegador debe poder leer esta API desde otro origen.
 
     app.register_blueprint(search.bp)
+    core.log_proxy_guard_state()
 
     @app.errorhandler(404)
     def not_found(e):

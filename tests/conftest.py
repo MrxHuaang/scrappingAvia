@@ -5,6 +5,12 @@ La app se importa con TODOS los servicios externos vacios (Supabase, proxy
 secret): el comportamiento "sin configurar" es parte del contrato y es
 exactamente lo que corre en CI, donde no hay secretos. Los valores se vacian
 ANTES de importar app porque sus constantes se leen a nivel de modulo.
+
+Sin secreto el guard del proxy falla cerrado (503). `client` activa a
+proposito el opt-in de desarrollo local (el test client llega desde
+127.0.0.1) para que los tests de contrato lleguen a las rutas; `strict_client`
+es el mismo cliente sin opt-in, y `proxied` configura el secreto, que manda
+sobre el opt-in.
 """
 
 import os
@@ -13,7 +19,7 @@ import sys
 # Antes de importar app: entorno limpio y determinista.
 for var in (
     "SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_SERVICE_KEY",
-    "INTERNAL_PROXY_SECRET",
+    "INTERNAL_PROXY_SECRET", "ALLOW_UNAUTHENTICATED_LOCAL",
     "VERCEL",
 ):
     os.environ.pop(var, None)
@@ -27,7 +33,18 @@ from webapp import core  # noqa: E402
 
 
 @pytest.fixture()
-def client():
+def strict_client(monkeypatch):
+    """Cliente sin opt-in local: sin secreto, los datos contestan 503."""
+    monkeypatch.delenv("ALLOW_UNAUTHENTICATED_LOCAL", raising=False)
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        yield c
+
+
+@pytest.fixture()
+def client(monkeypatch):
+    """Cliente de loopback con el opt-in explicito de desarrollo local."""
+    monkeypatch.setenv("ALLOW_UNAUTHENTICATED_LOCAL", "1")
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         yield c

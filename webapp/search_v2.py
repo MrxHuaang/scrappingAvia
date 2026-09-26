@@ -19,7 +19,7 @@ from datetime import date
 from flask import Response, jsonify, request
 
 from utils import VALID_SOURCES, normalize_filter_values, validate_search_filters_v2
-from webapp.core import RouteResult, check_rate_limit, get_supabase_admin, logger, proxy_secret_ok
+from webapp.core import RouteResult, check_rate_limit, get_supabase_admin, logger, proxy_rejection
 from webapp.search_rows import row_to_result
 
 VERSION = 2
@@ -89,8 +89,9 @@ def _authorize() -> tuple[list[str] | None, RouteResult | None]:
     (None, respuesta) si no. El secreto va primero: sin el, la cabecera de
     fuentes no significa nada y ni se lee.
     """
-    if not proxy_secret_ok():
-        return None, (jsonify({"error": "Unauthorized"}), 401)
+    denied = proxy_rejection(401)
+    if denied:
+        return None, denied
     try:
         return parse_effective_sources(request.headers.get(EFFECTIVE_SOURCES_HEADER)), None
     except ValueError as e:

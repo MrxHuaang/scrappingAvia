@@ -61,7 +61,8 @@ DRS_API_ENABLED=                  # "true" turns the DRS sync on; off by default
 ```
 
 The search API also needs `INTERNAL_PROXY_SECRET`, the value the Next.js proxy
-sends in `X-Internal-Secret`.
+sends in `X-Internal-Secret`. For local development without it, set
+`ALLOW_UNAUTHENTICATED_LOCAL=1` (loopback requests only, ignored on Vercel).
 
 Never commit `.env`.
 
@@ -167,9 +168,16 @@ billing, export or CORS, and knows three routes:
 
 Any other path is a JSON 404, and `vercel.json` only routes `/api/*` to the
 function. `tests/test_route_guards.py` walks `app.url_map` and fails if any
-route other than health answers without the secret. Set
-`INTERNAL_PROXY_SECRET` in every deployment: without it the guard is a no-op
-(local development only).
+route other than health answers without the secret.
+
+The guard fails closed. Without `INTERNAL_PROXY_SECRET`, every data route
+answers 503 `{"error": "Service unavailable"}` and the app logs an error at
+startup. The one exception is the explicit local opt-in
+`ALLOW_UNAUTHENTICATED_LOCAL=1`: it counts only when `VERCEL` is unset and the
+request is loopback, both the TCP peer and `request.remote_addr` after
+ProxyFix, so a forged `X-Forwarded-For: 127.0.0.1` does not qualify. With the
+secret set, the opt-in is ignored. v1 and v2 share this check
+(`core.proxy_rejection`).
 
 Both search routes speak two contracts:
 
