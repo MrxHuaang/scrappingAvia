@@ -196,7 +196,8 @@ Helicopter 2).
 
 Las filas ya guardadas conservan el tipo de la migración
 `20260923180000_fr_product_type_from_title.sql` (regla anterior) hasta que la
-corrida las vuelva a escribir.
+corrida las vuelva a escribir o se corra `scripts/reclassify_product_type.py`
+(ver "Despliegue" en [applicability-contract.md](applicability-contract.md)).
 
 ## Antes de desplegar: correrlo sobre un volcado de tamaño producción
 

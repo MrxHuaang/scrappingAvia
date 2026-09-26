@@ -158,6 +158,45 @@ Los valores quedan dentro de `Aircraft|Engine|Propeller|Appliance|Helicopter`
 (`ads_product_type_chk` y `ad_product_type_code`). Medición antes/después en
 [applicability-coverage.md](applicability-coverage.md#tipo-de-producto-faa-antes-y-después).
 
+### Despliegue del tipo FAA y los subtipos
+
+Orden, sin saltarse pasos:
+
+1. **Migraciones de la BD** (ad-scrapper): el catálogo `product_type` /
+   `product_subtype`, `replace_ad_applicability` v2 y los triggers.
+2. **Backend con el clasificador nuevo** (este repo): desde aquí, lo que
+   escribe la corrida ya sale con Helicopter/Appliance y con subtipo.
+3. **Frontend con el filtro de tipo** que ofrece Helicopter y Appliance.
+4. **`scripts/reclassify_product_type.py`** sobre lo ya guardado:
+
+   ```bash
+   python scripts/reclassify_product_type.py --csv outputs/reclassify_plan.csv  # dry-run (por defecto)
+   python scripts/reclassify_product_type.py --apply
+   ```
+
+   Lee de `ads` (FAA) subject + `raw_data.Abstract` y aplica
+   `enrich.classify_product_type` + `enrich.product_subtype`: la regla es una
+   sola y no se repite en SQL. El dry-run imprime un CSV por AD que cambia y
+   los conteos de transiciones; `--apply` escribe con el mismo cliente y el
+   mismo `.env` que `populate_db`:
+   - `ads.product_type`, en lotes por tipo nuevo. El trigger
+     `ads_propagate_product_type` lleva el tipo a las filas de
+     `ad_applicability` con `product_type_source='derived'` y nada más: no
+     escribe `product_subtype` ni toca las filas `'explicit'`.
+   - Por eso, para los AD cuyas filas necesitan subtipo, o son `'explicit'`
+     con el tipo viejo, el script reenvía **todas** las filas guardadas del AD
+     por `replace_ad_applicability` (el mismo camino que `populate_db`,
+     `_send_applicability_batches`) con la misma clave natural, cambiando solo
+     `product_type` y `product_subtype`: la RPC actualiza en sitio, sin
+     insertar ni podar, y las filas quedan `'explicit'`, como las que escribe
+     la corrida. Una fila `'derived'` cuyo único cambio es el tipo se deja al
+     trigger y sigue `'derived'`.
+
+**Efecto intermedio.** Entre el paso 2 (o el 4) y el 3, una búsqueda con tipo
+"Aircraft" deja de devolver los ADs FAA de helicópteros y de appliances: su
+`ads.product_type` pasa a Helicopter/Appliance y el filtro actual solo ofrece
+Aircraft/Engine/Propeller. Por eso el script va después del frontend.
+
 `ApplicabilityError`: excepción que un scraper puede levantar (vía
 `raw_data["Applicability_Error"]`) para señalar que la extracción de
 applicability de un AD puntual falló a medias (ej. PDF ilegible en un detalle
