@@ -627,7 +627,9 @@ def _send_applicability_batches(supabase, payload: list[dict]) -> dict[str, int]
 # `ads.product_type` (mismo valor, resuelto server-side), y mandar 'unknown'
 # explicito lo marcaria como product_type_source='explicit' para siempre,
 # impidiendo que una correccion futura de ads.product_type se propague (eso
-# solo pasa sobre filas 'derived').
+# solo pasa sobre filas 'derived'). product_subtype solo viaja junto a su
+# product_type (la RPC rechaza uno sin el otro) y solo si enrich.product_subtype
+# lo deriva con seguridad.
 
 
 # `success_empty` no lo declara ningun extractor (docs/applicability-contract.md).
@@ -692,6 +694,9 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
             pairs = []
 
         pt_code = enrich.PRODUCT_TYPE_CODE.get(r.get("product_type") or "")
+        # Del mismo texto que decide el tipo; None si no pertenece a pt_code o
+        # no hay coincidencia segura (docs/applicability-contract.md).
+        pt_subtype = enrich.product_subtype(pt_code, r.get("subject") or "") if pt_code else None
 
         for mk, mod in pairs:
             # La RPC rechaza el payload entero si un AD repite clave natural.
@@ -727,6 +732,8 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
             }
             if pt_code:
                 row_payload["product_type"] = pt_code
+                if pt_subtype:
+                    row_payload["product_subtype"] = pt_subtype
             applic_by_ad[ad_id].append(row_payload)
 
         # Explicit SB list (EASA detail page) wins; else mine subject/abstract.

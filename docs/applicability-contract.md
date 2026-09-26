@@ -98,7 +98,35 @@ Propeller→propeller, Appliance→appliance`). Cuando no hay tipo derivable se 
 el campo del payload — la RPC lo deriva server-side de `ads.product_type`
 (`product_type_source='derived'`), lo que además deja la fila enganchada a
 correcciones futuras de `ads.product_type`; mandar un código explícito la fija
-como `'explicit'` para siempre.
+como `'explicit'` para siempre. El mapeo es `enrich.PRODUCT_TYPE_CODE`, y la
+clasificación FAA por título (`enrich.classify_product_type`) vive en el mismo
+módulo.
+
+`product_subtype` por fila (opcional): lo deriva `enrich.product_subtype()` del
+mismo texto que decide el tipo (el título FAA, el subject de EASA/TC/UK CAA/ANAC)
+y **solo viaja junto a `product_type`** — la RPC rechaza un subtipo sin tipo, y
+la FK compuesta uno que no pertenezca a su tipo. Catálogo cerrado
+(`enrich.PRODUCT_SUBTYPES`, copia del seed de la migración `20260926120000`):
+
+| product_type | subtipos | de qué sale |
+|---|---|---|
+| `aircraft` | airplane, glider, balloon, airship, powered_lift | el sustantivo que decidió el tipo: "Airplanes", "Gliders"/"Sailplanes", "Balloons", "Airships" |
+| `rotorcraft` | helicopter, gyroplane | "Helicopters", "Gyroplanes" |
+| `engine` | turbine, piston, apu, electric | el calificativo pegado a "Engines": Turbofan/Turbojet/Turboprop/Turboshaft → turbine, Reciprocating/Piston/Diesel → piston, Electric → electric; "Auxiliary Power Units" → apu |
+| `propeller` | — | nunca |
+| `appliance` | seats, avionics, elt, oxygen, fire_protection, landing_gear, lighting, evacuation, instruments, other | la pieza nombrada antes de "Installed on/Equipped with" |
+
+Reglas: sin coincidencia segura el campo se **omite** (nunca se adivina ni se
+cae a `other`, que no se emite); si el texto apunta a dos categorías ("Oxygen
+Cylinder and Fire Extinguisher Assemblies", "Reciprocating and Turboprop
+Engines") también se omite; un sustantivo que va tras "Installed on" nombra
+dónde va la pieza, no el producto. "Engines", "Aircraft" o "Rotorcraft" a secas
+no dicen el subtipo. Un subtipo que no pertenece al tipo de la fila no se
+produce nunca: la FAA tipa los helicópteros como `Aircraft`
+(`classify_product_type`), así que sus filas van con `product_type=aircraft` y
+**sin** subtipo, porque `helicopter` es de `rotorcraft`. Con un `product_type`
+explícito y sin subtipo, la RPC deja el subtipo en null (también al actualizar
+una fila existente).
 
 `ApplicabilityError`: excepción que un scraper puede levantar (vía
 `raw_data["Applicability_Error"]`) para señalar que la extracción de

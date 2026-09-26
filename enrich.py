@@ -211,7 +211,9 @@ _AIRCRAFT_QUALIFIER = re.compile(
 
 def _title_product_noun(subject: str) -> "re.Match | None":
     """El sustantivo de producto que decide el tipo: el ÚLTIMO del título, tras
-    cortar el calificativo "<Airplanes> Equipped With ..."."""
+    cortar el calificativo "<Airplanes> Equipped With ...". Lo comparten
+    `classify_product_type` y `product_subtype`, así el subtipo sale siempre del
+    mismo sustantivo que decidió el tipo."""
     title = _AIRCRAFT_QUALIFIER.sub(r"\1", subject or "", count=1)
     last = None
     for m in _TITLE_PRODUCT_NOUNS.finditer(title):
@@ -271,6 +273,119 @@ PRODUCT_TYPE_CODE = {
     "Propeller": "propeller",
     "Appliance": "appliance",
 }
+
+# Catálogo CERRADO de subtipos por tipo, copia del seed de la migración. La FK
+# compuesta (product_type, product_subtype) rechaza un subtipo de otro tipo;
+# aquí se filtra antes para no tumbar el lote. 'appliance/other' existe en el
+# catálogo pero no se emite nunca: "no sé cuál" es omitir, no 'other'.
+PRODUCT_SUBTYPES = {
+    "aircraft": frozenset({"airplane", "glider", "balloon", "airship", "powered_lift"}),
+    "rotorcraft": frozenset({"helicopter", "gyroplane"}),
+    "engine": frozenset({"turbine", "piston", "apu", "electric"}),
+    "propeller": frozenset(),
+    "appliance": frozenset({"seats", "avionics", "elt", "oxygen", "fire_protection",
+                            "landing_gear", "lighting", "evacuation", "instruments", "other"}),
+}
+
+# Sustantivo que decidió el tipo -> subtipo. Solo sustantivos que nombran el
+# subtipo sin ambigüedad: "aircraft", "rotorcraft" y "engines" a secas no dicen
+# cuál es, y se omiten.
+_NOUN_SUBTYPE = {
+    "airplane": "airplane", "airplanes": "airplane",
+    "glider": "glider", "gliders": "glider", "sailplane": "glider", "sailplanes": "glider",
+    "balloon": "balloon", "balloons": "balloon",
+    "airship": "airship", "airships": "airship",
+    "helicopter": "helicopter", "helicopters": "helicopter",
+    "gyroplane": "gyroplane", "gyroplanes": "gyroplane",
+    "turbofan": "turbine", "turbofans": "turbine", "turbojet": "turbine", "turbojets": "turbine",
+    "turboprop": "turbine", "turboprops": "turbine", "turboshaft": "turbine", "turboshafts": "turbine",
+}
+# Calificativo del motor delante de "Engines": "Turbofan Engines",
+# "Reciprocating Engines", "Turboprop and Turboshaft Engines". Se exige que la
+# frase entera apunte a UNA categoría. "Turbo-Propeller" no es "turboprop".
+_ENGINE_KIND = (
+    ("turbine", re.compile(r"\b(?:turbofans?|turbojets?|turboprops?|turboshafts?|gas\s+turbine|turbine)\b", re.I)),
+    ("piston", re.compile(r"\b(?:reciprocating|piston|diesel)\b", re.I)),
+    ("electric", re.compile(r"\belectric\b", re.I)),
+)
+# Solo la cadena de calificativos pegada al sustantivo: el nombre del titular
+# puede llevar otros ("Allison Gas Turbine Division, and Detroit Diesel
+# Allison) 250-B Series Turboshaft Engines").
+_ENGINE_CHAIN_RE = re.compile(
+    r"(?:\b(?:turbofans?|turbojets?|turboprops?|turboshafts?|gas|turbine|reciprocating|piston"
+    r"|diesel|electric|and|series|model)\b[\s,]*)+$",
+    re.I,
+)
+_APU_RE = re.compile(r"\b(?:auxiliary\s+power\s+units?|APUs?)\b", re.I)
+# Appliances: la categoría la da la pieza nombrada. Tiene que salir UNA sola;
+# dos ("Oxygen ... and Fire Extinguishers") es no saber, y se omite.
+_APPLIANCE_KIND = (
+    ("seats", re.compile(r"\b(?:seats?|seating|berths?)\b", re.I)),
+    ("elt", re.compile(r"\b(?:emergency\s+locator\s+transmitters?|ELTs?)\b", re.I)),
+    ("oxygen", re.compile(r"\boxygen\b", re.I)),
+    ("fire_protection", re.compile(
+        r"\b(?:fire\s+extinguish\w*|extinguishers?|smoke\s+detect\w*|fire\s+detect\w*|fire\s+suppression)\b", re.I)),
+    ("evacuation", re.compile(r"\b(?:evacuation|escape\s+slides?|slides?/rafts?|life\s+rafts?)\b", re.I)),
+    ("landing_gear", re.compile(r"\b(?:landing\s+gear|wheels?|brakes?|tires?)\b", re.I)),
+    ("lighting", re.compile(r"\b(?:lights?|lighting|lamps?)\b", re.I)),
+    ("avionics", re.compile(
+        r"\b(?:avionics|transponders?|radios?|autopilots?|flight\s+displays?|navigation\s+units?"
+        r"|communication\s+units?|receivers?|flight\s+management|TAWS|traffic\s+(?:alert|collision))\b", re.I)),
+    ("instruments", re.compile(r"\b(?:instruments?|indicators?|altimeters?|gauges?)\b", re.I)),
+)
+# Lo que viene tras "Installed on" / "Equipped with" describe DÓNDE va la
+# pieza, no qué pieza es ("Seats Installed on Airplanes Equipped With Oxygen").
+_INSTALLED_ON_RE = re.compile(r"\s+(?:installed|equipped|fitted|approved)\b.*$", re.I | re.S)
+
+
+def _one_kind(kinds, text: str) -> str | None:
+    found = {code for code, rx in kinds if rx.search(text)}
+    return found.pop() if len(found) == 1 else None
+
+
+def product_subtype(product_type_code: str | None, subject: str) -> str | None:
+    """
+    Subtipo del catálogo para una fila de applicability, o None.
+
+    Se deriva del mismo texto que ya decide el tipo (título FAA, subject de
+    EASA/TC/UK CAA/ANAC) y SOLO si pertenece a `product_type_code`: un título
+    FAA "... Helicopters" tipado Aircraft no produce 'helicopter' (es de
+    rotorcraft) — se omite en vez de mentir sobre el tipo o sobre el subtipo.
+    Sin coincidencia segura devuelve None; nunca adivina ni cae a 'other'.
+
+    - aircraft/rotorcraft: el sustantivo que decidió el tipo ("Airplanes",
+      "Sailplanes", "Hot Air Balloons", "Helicopters").
+    - engine: el calificativo delante del sustantivo ("Turbofan Engines" ->
+      turbine, "Reciprocating Engines" -> piston); "Auxiliary Power Units" ->
+      apu cuando no hay otro sustantivo de motor.
+    - appliance: la pieza nombrada (antes de "Installed on ..."), una sola.
+    - propeller: el catálogo no tiene subtipos.
+    """
+    allowed = PRODUCT_SUBTYPES.get(product_type_code or "")
+    if not allowed:
+        return None
+    text = subject or ""
+    code: str | None = None
+    noun = _title_product_noun(text)
+    if noun and product_type_code != "appliance" and _INSTALLED_ON_RE.search(text[: noun.start()]):
+        # "... APUs Installed on Airbus Airplanes": el sustantivo nombra dónde
+        # va la pieza, no el producto del AD.
+        return None
+    if product_type_code in ("aircraft", "rotorcraft"):
+        if noun and noun.lastgroup == "aircraft":
+            code = _NOUN_SUBTYPE.get(noun.group(0).lower())
+    elif product_type_code == "engine":
+        if noun and noun.lastgroup == "engine":
+            chain = _ENGINE_CHAIN_RE.search(text[: noun.start()].rstrip())
+            code = _NOUN_SUBTYPE.get(noun.group(0).lower()) or (
+                _one_kind(_ENGINE_KIND, chain.group(0)) if chain else None)
+        elif not noun and _APU_RE.search(text):
+            code = "apu"
+    elif product_type_code == "appliance":
+        code = _one_kind(_APPLIANCE_KIND, _INSTALLED_ON_RE.sub("", text))
+    if code == "other" or code not in allowed:
+        return None
+    return code
 
 
 # ---------------------------------------------------------------------------

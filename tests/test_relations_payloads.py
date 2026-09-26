@@ -324,6 +324,31 @@ def test_product_type_is_mapped_to_the_catalog_code_or_omitted(fake):
     assert "product_type" not in by_make["HONEYWELL"]
 
 
+def test_product_subtype_travels_only_with_its_product_type(fake):
+    rows = [
+        {"ad_number": "FR-10", "make": "CFM", "model": "CFM56-7B", "product_type": "Engine",
+         "subject": "CFM International S.A. Turbofan Engines", "raw_data": {}},
+        {"ad_number": "FR-11", "make": "ROBINSON", "model": "R44", "product_type": "Aircraft",
+         "subject": "Robinson Helicopter Company Helicopters", "raw_data": {}},
+        {"ad_number": "FR-12", "make": "AUSTRO", "model": "E4", "product_type": "Engine",
+         "subject": "Austro Engine GmbH Engines", "raw_data": {}},
+        {"ad_number": "FR-13", "make": "HONEYWELL", "model": "", "product_type": None,
+         "subject": "Honeywell International Inc. Turbofan Engines", "raw_data": {}},
+    ]
+    populate_db.populate_relations(fake, "federal_register", rows)
+
+    by_make = {r["make"]: r for e in _applic_elements(fake) for r in e.get("rows") or []}
+    assert by_make["CFM"]["product_subtype"] == "turbine"
+    # 'helicopter' es de rotorcraft: bajo aircraft se omite, no se fuerza.
+    assert by_make["ROBINSON"]["product_type"] == "aircraft"
+    assert "product_subtype" not in by_make["ROBINSON"]
+    # "Engines" a secas no dice cual.
+    assert "product_subtype" not in by_make["AUSTRO"]
+    # Sin product_type la RPC rechazaria el subtipo: nunca viaja solo.
+    assert "product_type" not in by_make["HONEYWELL"]
+    assert "product_subtype" not in by_make["HONEYWELL"]
+
+
 # ------------------------------------------------------------ empty_evidence
 
 @pytest.mark.parametrize("source", [
