@@ -10,7 +10,7 @@ import csv
 
 import pytest
 
-from drs_fakes import FAKE_KEY, FakeSession, load_fixture, make_doc
+from drs_fakes import FAKE_CONTACT, FAKE_KEY, FakeSession, load_fixture, make_doc
 from scripts import tcds_alias_candidates as tcds
 from scrapers import faa_drs_api as drs
 from scrapers import faa_drs_sync as sync
@@ -140,7 +140,7 @@ def test_main_needs_the_flag_to_call_the_api(groups_file, tmp_path, monkeypatch,
 # --------------------------------------------------------------- the API --
 
 def _client(session):
-    return drs.DrsClient(FAKE_KEY, session=session, sleep=lambda _s: None, retry_delay=0, retries=2)
+    return drs.DrsClient(FAKE_KEY, contact_email=FAKE_CONTACT, session=session, sleep=lambda _s: None, retry_delay=0, retries=2)
 
 
 def test_fetch_pages_tcdsmodel_read_only_and_keeps_only_the_report_fields(monkeypatch):

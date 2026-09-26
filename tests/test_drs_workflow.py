@@ -34,6 +34,11 @@ def test_the_key_and_flag_come_from_secrets_and_vars(job):
     assert env["DRS_API_ENABLED"] == "${{ vars.DRS_API_ENABLED }}"
 
 
+def test_the_contact_email_is_a_repository_variable_not_a_secret(job):
+    env = _sync_step(job)["env"]
+    assert env["DRS_CONTACT_EMAIL"] == "${{ vars.DRS_CONTACT_EMAIL }}"
+
+
 def test_the_process_budget_is_below_the_job_budget(job):
     step = _sync_step(job)
     soft = int(step["env"]["SOFT_MINUTES"])

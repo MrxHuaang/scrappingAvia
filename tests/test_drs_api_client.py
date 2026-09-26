@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 import requests
 
-from drs_fakes import FAKE_KEY, FakeResponse, FakeSession, load_fixture, make_doc
+from drs_fakes import FAKE_CONTACT, FAKE_KEY, FakeResponse, FakeSession, load_fixture, make_doc
 from scrapers import faa_drs_api as drs
 from scrapers.common import http
 
@@ -23,7 +23,7 @@ def _no_real_sleep(monkeypatch):
 def _client(session, **kw):
     kw.setdefault("sleep", lambda _s: None)
     kw.setdefault("retry_delay", 0)
-    return drs.DrsClient(FAKE_KEY, session=session, **kw)
+    return drs.DrsClient(FAKE_KEY, contact_email=kw.pop("contact_email", FAKE_CONTACT), session=session, **kw)
 
 
 def _corpus(n, lm="2024-05-30T19:48:53.441Z"):
@@ -45,19 +45,56 @@ def test_the_client_is_off_unless_the_flag_is_on():
 
 def test_enabled_without_a_key_is_a_config_error():
     with pytest.raises(drs.DrsConfigError):
-        drs.DrsClient.from_env({"DRS_API_ENABLED": "1", "DRS_API_KEY": "  "})
+        drs.DrsClient.from_env({"DRS_API_ENABLED": "1", "DRS_API_KEY": "  ", "DRS_CONTACT_EMAIL": FAKE_CONTACT})
+
+
+@pytest.mark.parametrize("bad_contact", [None, "", "   ", "not-an-email", "missing-domain@", "@no-local-part.com"])
+def test_enabled_with_a_missing_or_implausible_contact_fails_closed(bad_contact):
+    env = {"DRS_API_ENABLED": "1", "DRS_API_KEY": FAKE_KEY}
+    if bad_contact is not None:
+        env["DRS_CONTACT_EMAIL"] = bad_contact
+    with pytest.raises(drs.DrsConfigError):
+        drs.DrsClient.from_env(env)
 
 
 def test_the_key_travels_only_in_the_header_and_never_in_repr():
     session = FakeSession({"ADFREAD": _corpus(2)})
-    client = drs.DrsClient.from_env({"DRS_API_ENABLED": "1", "DRS_API_KEY": FAKE_KEY},
-                                    session=session, sleep=lambda _s: None)
+    client = drs.DrsClient.from_env(
+        {"DRS_API_ENABLED": "1", "DRS_API_KEY": FAKE_KEY, "DRS_CONTACT_EMAIL": FAKE_CONTACT},
+        session=session, sleep=lambda _s: None,
+    )
     client.fetch_page("ADFREAD")
     call = session.calls[0]
     assert call["headers"]["x-api-key"] == FAKE_KEY
     assert FAKE_KEY not in call["url"]
     assert FAKE_KEY not in repr(call["params"])
     assert FAKE_KEY not in repr(client)
+
+
+def test_the_user_agent_carries_the_contact_and_not_the_key():
+    session = FakeSession({"ADFREAD": _corpus(1)})
+    client = drs.DrsClient.from_env(
+        {"DRS_API_ENABLED": "1", "DRS_API_KEY": FAKE_KEY, "DRS_CONTACT_EMAIL": FAKE_CONTACT},
+        session=session, sleep=lambda _s: None,
+    )
+    client.fetch_page("ADFREAD")
+    ua = session.calls[0]["headers"]["User-Agent"]
+    assert ua == f"{drs.CLIENT_NAME}/{drs.CLIENT_VERSION} (+mailto:{FAKE_CONTACT})"
+    assert FAKE_KEY not in ua
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("a@b.co", True),
+    ("first.last+tag@example.com", True),
+    ("", False),
+    ("   ", False),
+    ("not-an-email", False),
+    ("missing-domain@", False),
+    ("@no-local-part.com", False),
+    ("has space@example.com", False),
+])
+def test_is_plausible_email(value, expected):
+    assert drs.is_plausible_email(value) is expected
 
 
 # ------------------------------------------------------------------ cursor --
@@ -116,7 +153,7 @@ def test_the_client_paces_its_requests():
     waits = []
     now = [0.0]
     session = FakeSession({"ADFRAWD": _corpus(1600)})
-    client = drs.DrsClient(FAKE_KEY, session=session, min_interval=2.0,
+    client = drs.DrsClient(FAKE_KEY, contact_email=FAKE_CONTACT, session=session, min_interval=2.0,
                            sleep=waits.append, clock=lambda: now[0])
     list(client.iter_pages("ADFRAWD"))
     assert waits == [2.0, 2.0]
@@ -146,7 +183,7 @@ def test_a_real_page_envelope_parses():
 
 def test_403_is_a_clear_auth_error_without_the_key():
     session = FakeSession({"ADFRAWD": _corpus(1)})
-    client = drs.DrsClient("wrong-key", session=session, sleep=lambda _s: None, retry_delay=0)
+    client = drs.DrsClient("wrong-key", contact_email=FAKE_CONTACT, session=session, sleep=lambda _s: None, retry_delay=0)
     with pytest.raises(drs.DrsAuthError) as exc:
         client.fetch_page("ADFRAWD")
     assert "403" in str(exc.value) and "DRS_API_KEY" in str(exc.value)

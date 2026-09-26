@@ -22,6 +22,12 @@ real:
 La key sale solo de la variable de entorno DRS_API_KEY y viaja solo en la
 cabecera `x-api-key`: nunca en la URL, en un log ni en un mensaje de error.
 El cliente no se construye si DRS_API_ENABLED no esta encendido.
+
+El cliente se identifica con un `User-Agent` propio que lleva un contacto
+("Hyvento-AD-Search/<version> (+mailto:<contacto>)"). El contacto sale de
+DRS_CONTACT_EMAIL, sin default hardcodeado: con el flag encendido, si falta
+o no tiene forma de email, el cliente no se construye (mismo tratamiento que
+una key faltante). Ver "Cómo encenderla" en docs/drs-sync.md.
 """
 
 from __future__ import annotations
@@ -56,9 +62,30 @@ FILTER_CHUNK = 10
 
 ENV_KEY = "DRS_API_KEY"
 ENV_ENABLED = "DRS_API_ENABLED"
+ENV_CONTACT = "DRS_CONTACT_EMAIL"
 _TRUE = {"1", "true"}
 
+#: Nombre y version del cliente para el User-Agent. La version sigue a
+#: `[project].version` en pyproject.toml (zephr-scrapers); actualizar a mano
+#: si una cambia sin la otra.
+CLIENT_NAME = "Hyvento-AD-Search"
+CLIENT_VERSION = "0.1.0"
+
 _CURSOR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
+#: Forma minima de un email plausible: sin espacios, un @ y un dominio con
+#: punto. No pretende validar RFC 5322 completo, solo descartar basura
+#: obvia (vacio, sin @, sin dominio).
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def is_plausible_email(value: str) -> bool:
+    """`True` si `value` tiene forma minima de direccion de email."""
+    return isinstance(value, str) and bool(_EMAIL_RE.match(value.strip()))
+
+
+def build_user_agent(contact: str) -> str:
+    """User-Agent con contacto para identificar al cliente ante DRS."""
+    return f"{CLIENT_NAME}/{CLIENT_VERSION} (+mailto:{contact})"
 
 
 class DrsError(Exception):
@@ -139,6 +166,7 @@ class DrsClient:
         self,
         api_key: str,
         *,
+        contact_email: str,
         session: requests.Session | None = None,
         base_url: str = BASE_URL,
         min_interval: float = 2.0,
@@ -150,7 +178,13 @@ class DrsClient:
     ):
         if not api_key or not api_key.strip():
             raise DrsConfigError(f"{ENV_KEY} is empty")
+        if not is_plausible_email(contact_email):
+            raise DrsConfigError(
+                f"{ENV_CONTACT} is missing or not a plausible email address (got {contact_email!r}); "
+                "the DRS client refuses to identify itself without a real contact"
+            )
         self._key = api_key.strip()
+        self._contact = contact_email.strip()
         self._session = session or requests.Session()
         self._base = base_url.rstrip("/")
         self._min_interval = min_interval
@@ -168,18 +202,19 @@ class DrsClient:
     @classmethod
     def from_env(cls, env: dict | None = None, **kwargs) -> DrsClient:
         """Construye el cliente desde el entorno; levanta DrsDisabledError si
-        el flag esta apagado y DrsConfigError si falta la key."""
+        el flag esta apagado y DrsConfigError si falta la key o el contacto."""
         env = env if env is not None else os.environ
         if not is_enabled(env):
             raise DrsDisabledError(f"{ENV_ENABLED} is off; the DRS sync does not run")
         key = (env.get(ENV_KEY) or "").strip()
         if not key:
             raise DrsConfigError(f"{ENV_ENABLED} is on but {ENV_KEY} is not set")
-        return cls(key, **kwargs)
+        contact = (env.get(ENV_CONTACT) or "").strip()
+        return cls(key, contact_email=contact, **kwargs)
 
     # ------------------------------------------------------------------ HTTP --
     def _headers(self) -> dict:
-        return {**API_HEADERS, "x-api-key": self._key}
+        return {**API_HEADERS, "User-Agent": build_user_agent(self._contact), "x-api-key": self._key}
 
     def _throttle(self) -> None:
         if self._last_request is not None:

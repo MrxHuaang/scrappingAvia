@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import pytest
 
 import populate_db
-from drs_fakes import FAKE_KEY, FakeSession, FakeStore, load_fixture, make_doc
+from drs_fakes import FAKE_CONTACT, FAKE_KEY, FakeSession, FakeStore, load_fixture, make_doc
 from scrapers import faa_drs_api as drs
 from scrapers import faa_drs_sync as sync
 from scrapers.common import http
@@ -31,7 +31,7 @@ def _no_real_sleep(monkeypatch):
 
 
 def _client(session):
-    return drs.DrsClient(FAKE_KEY, session=session, sleep=lambda _s: None, retry_delay=0, retries=2)
+    return drs.DrsClient(FAKE_KEY, contact_email=FAKE_CONTACT, session=session, sleep=lambda _s: None, retry_delay=0, retries=2)
 
 
 def _base():
@@ -338,7 +338,7 @@ def test_an_unreadable_cursor_makes_no_request():
 
 def test_a_rejected_key_stops_every_doctype():
     session = FakeSession({"ADFRAWD": _docs(3), "ADFREAD": _docs(3)})
-    client = drs.DrsClient("revoked-key", session=session, sleep=lambda _s: None, retry_delay=0)
+    client = drs.DrsClient("revoked-key", contact_email=FAKE_CONTACT, session=session, sleep=lambda _s: None, retry_delay=0)
     report = sync.sync(client, FakeStore(), now=NOW)
     assert len(report.results) == 1 and report.results[0].auth_failed
     assert len(session.calls) == 1

@@ -15,6 +15,7 @@ from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "drs"
 FAKE_KEY = "test-key-not-a-real-drs-key"
+FAKE_CONTACT = "drs-tests@example.com"
 #: The real API answers 400 to a filter with more than 10 values.
 FILTER_MAX_VALUES = 10
 

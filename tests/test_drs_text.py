@@ -310,7 +310,7 @@ def test_a_dry_run_parses_without_a_database(clean):
 
 
 def test_the_sync_sends_text_after_creating_the_pre_1994_rows(clean, monkeypatch):
-    from drs_fakes import FAKE_KEY, FakeSession
+    from drs_fakes import FAKE_CONTACT, FAKE_KEY, FakeSession
     from scrapers import faa_drs_api as drs
     from scrapers.common import http
 
@@ -324,7 +324,7 @@ def test_the_sync_sends_text_after_creating_the_pre_1994_rows(clean, monkeypatch
     real_link = store.link
     monkeypatch.setattr(store, "link", lambda nums: events.append("link") or real_link(nums))
     docs = load_fixture("adfrawd_pre1994.json")["documents"]
-    client = drs.DrsClient(FAKE_KEY, session=FakeSession({"ADFRAWD": docs}), sleep=lambda _s: None,
+    client = drs.DrsClient(FAKE_KEY, contact_email=FAKE_CONTACT, session=FakeSession({"ADFRAWD": docs}), sleep=lambda _s: None,
                            retry_delay=0, retries=2)
     assert populate_db.run_drs_sync(["ADFRAWD"], client=client, store=store, supabase=_TextDb({})) == 0
     assert events == ["backfill", "text", "link"]

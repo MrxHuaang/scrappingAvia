@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import pytest
 
 import populate_db
-from drs_fakes import FAKE_KEY, FakeSession, FakeStore, load_fixture, make_doc
+from drs_fakes import FAKE_CONTACT, FAKE_KEY, FakeSession, FakeStore, load_fixture, make_doc
 from scrapers import faa_drs_ads as pre
 from scrapers import faa_drs_api as drs
 from scrapers import faa_drs_sync as sync
@@ -341,7 +341,7 @@ def test_a_dry_run_counts_without_a_database(writes):
 # ------------------------------------------------------------- in the sync --
 
 def _client(session):
-    return drs.DrsClient(FAKE_KEY, session=session, sleep=lambda _s: None, retry_delay=0, retries=2)
+    return drs.DrsClient(FAKE_KEY, contact_email=FAKE_CONTACT, session=session, sleep=lambda _s: None, retry_delay=0, retries=2)
 
 
 def test_the_sync_creates_the_rows_after_upserting_and_before_linking(writes, monkeypatch):
