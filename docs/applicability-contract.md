@@ -1,56 +1,107 @@
 # Contrato de extracción de applicability (INT-3)
 
 Define qué evidencia autoriza a cada extractor a declarar el estado de un AD en el
-payload de `replace_ad_applicability` (RPC en el proyecto Supabase, migración
-`20260803020000`). **El estado lo declara el extractor; nunca se infiere de la forma
-del payload** — un `make` vacío no es prueba de nada por sí solo.
+payload de `replace_ad_applicability` (RPC en el proyecto Supabase, migración v2
+`20260926130000`, junto con `20260926120000`). **El estado lo declara el extractor;
+nunca se infiere de la forma del payload** — un `make` vacío **no** es evidencia de
+nada por sí solo (ver sección de evidencia más abajo: esto cambió respecto a la
+versión anterior de este documento).
 
 ## Los tres estados
 
 | Estado | Semántica | Efecto en la BD |
 |---|---|---|
 | `success_with_rows` | El extractor obtuvo la lista de make/model del AD | Upsert de las filas + poda de las que ya no reporta (update solo si algo cambió) |
-| `success_empty` | El extractor VIO la fuente y la fuente no lista applicability | Las filas existentes del AD se eliminan (0 filas es legítimo) |
-| `failed` | La extracción no pudo completarse | No se toca nada de ese AD |
+| `success_empty` | El extractor VIO la fuente, la fuente no lista applicability, **y lo declara con `empty_evidence`** (texto ≤256 chars) | Las filas existentes del AD se eliminan (0 filas es legítimo). **Sin `empty_evidence` la RPC degrada el elemento a `failed` en silencio** — el llamador debe leer `rows_now`/`status` de la respuesta para verlo (`populate_relations` lo hace y lo loguea) |
+| `failed` | La extracción no pudo completarse, o no hay evidencia real de ausencia | No se toca nada de ese AD |
 
-Atomicidad: **por lote** — cada llamada RPC es una transacción (≤500 ADs). Un proceso
-muerto entre lotes deja los lotes anteriores completos y los posteriores intactos;
-ningún AD queda a medias.
+Atomicidad: **por lote** — cada llamada RPC es una transacción (≤500 ADs, ≤20000
+filas totales, ≤8 MB). Un proceso muerto entre lotes deja los lotes anteriores
+completos y los posteriores intactos; ningún AD queda a medias.
 
 ## Arquitectura actual del pipeline
 
-En `populate_db.py`, la applicability se deriva de los campos `make`/`model` que cada
-scraper puso en la fila normalizada. Eso fija el contrato así:
+En `populate_db.py`, `_applicability_pairs()` deriva pares (make, model) de la fila
+normalizada:
 
-- **Un AD presente en la salida del scraper** fue scrapeado con éxito (los scrapers
-  descartan o lanzan ante fetch/parse fallido; una fila emitida = listado leído).
-  - `make` no vacío → `success_with_rows` (una fila por modelo; EASA empaqueta
-    varios modelos separados por coma).
-  - `make` vacío → `success_empty`: el listado de la fuente no trae
-    fabricante/modelo para ese AD. Es el caso estructural de fuentes de solo
-    listado (DGAC Chile, ANAC Argentina en filas antiguas) y de ADs de
-    equipo/appliance sin make.
+- **Camino estructurado** (`raw_data["Applicability"] = [{make, models[]}]`,
+  **solo EASA** hoy — `easa.py` lo construye recorriendo `li.tc_holder` del
+  listado/detalle): **una fila por approval holder**, con sus modelos unidos
+  por `", "` en el orden de la fuente — no una fila por modelo. La
+  tokenización de listas como `"737-600, -700, -800"` la hace Postgres
+  (`ad_model_index`/`ad_model_family`, migración `20260923160000`), no el
+  cliente; partir aquí solo arriesgaba fabricantes inventados sin ganar nada
+  de matching.
+- **Camino escalar** (FAA/Transport Canada/ANAC/DGAC/UK CAA, que nunca traen
+  más de un fabricante o no exponen la estructura por holder): `make` +
+  `model` completo de la fila, también en una sola fila, sin partir por coma.
+- En ningún camino se parte `make` por coma (los nombres de holder traen comas
+  propias; ver el docstring de `_applicability_pairs`).
+
+Por AD:
+- **Pares válidos** (≥1 tras deduplicar y validar límites) → `success_with_rows`.
+- **Sin pares**, pero la fuente autoriza `_empty_evidence()` (tabla más abajo) →
+  `success_empty` con ese texto. El criterio es estricto adrede: `empty_evidence`
+  exige que la fuente **declare explícitamente** "no hay pares" — "el parser/
+  listado no trajo make" nunca es esa evidencia, es un dato ausente, y un dato
+  ausente no autoriza a borrar lo ya guardado.
+- **Sin pares y sin evidencia** (que hoy es el caso general: make vacío por
+  cualquier motivo — título genérico como "Various Aircraft", AD de Appliance sin
+  fabricante declarado, listado sin esa columna, etc.), **o** con ≥1 fila
+  descartada por límite de tamaño, **o** con `ApplicabilityError` (extracción que
+  falló a medias) → `failed`: nunca se declara un subconjunto parcial como si
+  fuera la verdad completa, ni se infiere ausencia de un dato simplemente
+  faltante.
 - **Un AD ausente de la salida del scraper** no aparece en el payload — equivale a
   `failed` implícito: sus filas almacenadas quedan intactas. Por esto la corrida
   nocturna nunca puede vaciar la applicability de un AD por un timeout o un cambio
   de HTML: ese AD simplemente no viene en la salida.
-- El estado `failed` explícito existe en el contrato para extractores futuros que
-  procesen por-AD y puedan fallar parcialmente (p. ej. un detalle EASA con PDF
-  ilegible). Hoy `populate_db.py` no lo emite.
 
-## Evidencia por fuente activa
+`model_status` por fila: `listed` si hay texto de modelo, `unknown` si no. `none`
+(la fuente declara explícitamente "todos los modelos") no lo emite ninguna fuente
+hoy — ninguna da una señal distinguible de esa declaración; el día que una la dé,
+se define aquí antes de emitirlo.
 
-| Fuente | Qué autoriza `success_empty` | Qué es `failed` (ausencia en la salida) |
+`product_type` por fila: el código de catálogo (`aircraft/rotorcraft/engine/
+propeller/appliance`) derivado de `enrich.normalize_product_type()` sobre el AD
+completo (mapeo `Aircraft→aircraft, Helicopter→rotorcraft, Engine→engine,
+Propeller→propeller, Appliance→appliance`). Cuando no hay tipo derivable se omite
+el campo del payload — la RPC lo deriva server-side de `ads.product_type`
+(`product_type_source='derived'`), lo que además deja la fila enganchada a
+correcciones futuras de `ads.product_type`; mandar un código explícito la fija
+como `'explicit'` para siempre.
+
+`ApplicabilityError`: excepción que un scraper puede levantar (vía
+`raw_data["Applicability_Error"]`) para señalar que la extracción de
+applicability de un AD puntual falló a medias (ej. PDF ilegible en un detalle
+por-AD). Ningún scraper la usa hoy — es el enganche para cuando alguno procese
+detalle por-AD y pueda fallar parcialmente.
+
+## Evidencia por fuente activa (`empty_evidence` / `_empty_evidence()`)
+
+| Fuente | Qué autoriza `success_empty` | Qué es `failed` |
 |---|---|---|
-| `federal_register` | La FR API devolvió el documento y ni el título ni los campos estructurados dan make (p. ej. ADs de appliances) | HTTP ≠ 200 de la API, JSON malformado, documento descartado por identidad (sin AD en `docket_ids` ni amendment) |
-| `easa` | La fila del listado existe y su columna de tipo/fabricante está vacía | Timeout/HTTP ≠ 200 del listado o del detalle; parse error |
-| `transport_canada` | Fila del listado sin columna `model` | Timeout/HTTP ≠ 200; layout de tabla no reconocido |
-| `anac_brazil` | Fila del listado sin make/model | Ídem |
-| `dgac_chile`, `anac_argentina`, `uk_caa` | Listado leído, sin campos de make | Ídem |
+| `easa` | `raw_data["Applicability"]` es una lista **vacía**: `easa.py` recorrió la sección de holders (`li.tc_holder`) del listado/detalle y no encontró ninguno — es la única fuente cuyo scraper distingue "recorrí y no había nada" de "no llegué a verlo" | `Applicability` ausente (make vacío por otra vía); ≥1 fila descartada por tamaño; timeout/HTTP ≠ 200; parse error; AD ausente de la salida |
+| `transport_canada` | Nunca — el scraper **no emite** `raw_data["Applicability"]` (solo EASA lo hace), así que no hay forma de distinguir "sin holders" de "no pude leerlo": ambiguo, no se emite evidencia | Cualquier make vacío; timeout/HTTP ≠ 200; layout de tabla no reconocido; AD ausente de la salida |
+| `federal_register` | Nunca — un AD de tipo `Appliance` **sí** tiene applicability (el fabricante/pieza del propio appliance); declararlo `success_empty` borraría filas reales. Ni el tipo de producto ni un título genérico son la fuente afirmando "no hay pares" | Cualquier make vacío (Appliance incluido); HTTP ≠ 200 de la API, JSON malformado, documento descartado por identidad (sin AD en `docket_ids` ni amendment); AD ausente de la salida |
+| `anac_brazil`, `dgac_chile`, `anac_argentina`, `uk_caa` | Nunca — un listado sin make es el scraper **no extrayendo** el dato, no la fuente declarando que el AD no aplica a nada | Cualquier fila sin make; timeout/HTTP ≠ 200 del listado; layout no reconocido; AD ausente de la salida |
+
+Para estas cuatro fuentes de solo-listado, y para Transport Canada y Federal
+Register, **todo make vacío viaja `failed`**: las filas de `ad_applicability`
+que ya existían para ese AD quedan intactas hasta que una corrida futura
+consiga extraer el dato o hasta una limpieza manual explícita. Ningún
+extractor activo hoy declara `success_empty` salvo EASA en el caso descrito
+arriba.
 
 Reglas transversales:
 - Ningún extractor emite filas con `make` vacío (la RPC lo rechaza con 22023).
+- `make` ≤256 chars (`APPLICABILITY_MAKE_MAX`), `model` ≤2000 chars
+  (`APPLICABILITY_MODEL_MAX`) — límites separados desde la migración v2; una fila
+  que se pase de cualquiera de los dos se descarta y marca su AD `failed` (nunca
+  parcial).
 - Duplicados de clave natural dentro de un AD se deduplican en Python **antes** de
   declarar (la RPC rechaza el payload completo si los encuentra).
 - Todo fallo de la RPC incrementa `write_errors` → `status='error'` en `scrape_runs`
-  y exit ≠ 0 del proceso (regla de la Fase 2a).
+  y exit ≠ 0 del proceso (regla de la Fase 2a). `populate_relations` además lee
+  `status` de la respuesta de la RPC (autoridad real, no lo declarado) y loguea
+  cuántos ADs quedaron `failed` según la BD.

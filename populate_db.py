@@ -428,35 +428,61 @@ def _fetch_ad_ids(supabase, source: str, ad_numbers: list[str]) -> dict[str, str
     return ids
 
 
-# Igual que el limite por campo de `replace_ad_applicability` (INT-3). Si la RPC
-# lo cambia, cambia aqui: enviar un campo mas largo aborta el LOTE ENTERO, no la
-# fila. Lo vigila tests/test_applicability_pairs.py.
-APPLICABILITY_TEXT_MAX = 256
+# Limites separados de `replace_ad_applicability` (INT-3, migracion v2
+# 20260926130000): make y model tienen topes distintos porque un solo holder
+# puede legitimamente traer un listado largo de type designations
+# ("737-600, -700, -800, ..."). Si la RPC los cambia, cambian aqui: enviar un
+# campo mas largo aborta el LOTE ENTERO, no la fila. Lo vigila
+# tests/test_applicability_pairs.py.
+APPLICABILITY_MAKE_MAX = 256
+APPLICABILITY_MODEL_MAX = 2000
+
+
+class ApplicabilityError(Exception):
+    """Un scraper puede marcar con esto que la extraccion de applicability de
+    UN AD puntual fallo (ej. PDF de EASA ilegible, listado con estructura
+    reconocida pero corrupta). No es "no hay datos" (eso es success_empty)
+    sino "no se pudo leer" (failed): la AD entera queda `failed` y sus filas
+    guardadas no se tocan; nunca se declara un subconjunto parcial como si
+    fuera la verdad completa. Ningun scraper la lanza hoy — es el enganche
+    para cuando alguno procese detalle por-AD."""
 
 
 def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
-    """Pares (make, model) para un AD, sin inventar combinaciones.
+    """Pares (make, model) para un AD, sin inventar combinaciones ni tokenizar.
 
     Camino estructurado: el scraper aporta `raw_data["Applicability"]` como
     [{make, models[]}] — un approval holder con SUS modelos. Es el unico camino
-    correcto cuando un AD lista varios fabricantes, y EASA lo permite porque el
-    listado anida los type designations dentro de cada `li.tc_holder`. Asi un AD
-    multi-holder conserva pares reales en `high` en vez de degradar a make solo.
+    correcto cuando un AD lista varios fabricantes, y EASA/TC lo permiten
+    porque el listado anida los type designations dentro de cada holder. Cada
+    holder produce UNA fila: sus modelos viajan unidos por ", " en el orden de
+    la fuente, en vez de una fila por modelo. Partir "737-600, -700, -800" en
+    tres filas aqui no gana nada — `ad_model_index`/`ad_model_family` en
+    Postgres ya tokeniza el texto del modelo para el matching de flota — y
+    perder la lista completa en una sola fila desperdicia el limite de 2000
+    chars que la RPC reserva justo para esto.
 
-    Camino legado (FAA/TC/ANAC, que nunca traen mas de un fabricante): `make`
-    escalar y `model` con varios separados por coma.
+    Camino legado (FAA/ANAC/DGAC/UK CAA, que nunca traen mas de un
+    fabricante): `make` escalar y `model` completo tal cual lo dejo el
+    scraper, en UNA fila — tampoco se parte por coma.
 
-    Lo que este helper NO hace es partir `make` por coma. Los nombres de holder
-    llevan comas propias ("REVO, Inc.", "McDermott 214 Holdings, LLC"), asi que
-    el join no es reversible: sobre las 765 filas afectadas de EASA, partir da
-    1972 tokens de los que 316 son sufijos societarios ("INC." x194, "LLC" x56,
-    "GmbH" x42), y esos fragmentos terminarian como fabricantes en
-    `ad_applicability` y como opciones del filtro Make via `aircraft_makes()`.
-    Un `make` largo sin estructura que lo explique se reporta arriba contra
-    APPLICABILITY_TEXT_MAX; no se convierte en varios fabricantes plausibles.
+    Lo que este helper NO hace, en ningun camino, es partir `make` por coma.
+    Los nombres de holder llevan comas propias ("REVO, Inc.", "McDermott 214
+    Holdings, LLC"), asi que el join no es reversible: sobre las 765 filas
+    afectadas de EASA, partir da 1972 tokens de los que 316 son sufijos
+    societarios ("INC." x194, "LLC" x56, "GmbH" x42), y esos fragmentos
+    terminarian como fabricantes en `ad_applicability` y como opciones del
+    filtro Make via `aircraft_makes()`. Un `make` largo sin estructura que lo
+    explique se reporta arriba contra APPLICABILITY_MAKE_MAX; no se convierte
+    en varios fabricantes plausibles.
     """
-    holders = row.get("raw_data") or {}
-    holders = holders.get("Applicability") if isinstance(holders, dict) else None
+    raw = row.get("raw_data") or {}
+    if raw.get("Applicability_Error"):
+        # Enganche para scrapers futuros que procesen detalle por-AD: una
+        # extraccion que fallo a medias no es "el AD no aplica a nada".
+        raise ApplicabilityError(str(raw["Applicability_Error"]))
+
+    holders = raw.get("Applicability") if isinstance(raw, dict) else None
     if isinstance(holders, list) and holders:
         pairs: list[tuple[str, str | None]] = []
         for holder in holders:
@@ -468,17 +494,15 @@ def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
             models = [
                 m.strip() for m in (holder.get("models") or []) if isinstance(m, str) and m.strip()
             ]
-            if models:
-                pairs.extend((h_make, m) for m in models)
-            else:
-                pairs.append((h_make, None))
+            pairs.append((h_make, ", ".join(models) if models else None))
         if pairs:
             return pairs
 
     make_field = (row.get("make") or "").strip()
     if not make_field:
         # Sin fabricante no hay fila que declarar. El AD queda con
-        # `success_empty` mas abajo, no con una fila invalida.
+        # `success_empty` (con evidencia) o `failed` mas abajo, no con una
+        # fila invalida.
         return []
     if "," in make_field:
         # Una fuente que empaqueta fabricantes sin atribucion es una regresion
@@ -489,8 +513,7 @@ def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
             f"— el scraper deberia emitir raw_data['Applicability']"
         )
     model_field = (row.get("model") or "").strip()
-    models = [m.strip() for m in model_field.split(",") if m.strip()]
-    return [(make_field, m) for m in models] or [(make_field, None)]
+    return [(make_field, model_field or None)]
 
 
 # Igual que max_ads/max_total_rows de replace_ad_applicability (migracion D-21,
@@ -537,13 +560,86 @@ def _applicability_batches(payload: list[dict]) -> list[list[dict]]:
     return batches
 
 
-def _send_applicability_batches(supabase, payload: list[dict]) -> None:
-    """Envia cada lote de `_applicability_batches(payload)` a la RPC."""
+def _send_applicability_batches(supabase, payload: list[dict]) -> dict[str, int]:
+    """Envia cada lote de `_applicability_batches(payload)` a la RPC y lee la
+    respuesta real (`ad_id, status, rows_now` por AD, en orden de payload).
+
+    El status devuelto es la autoridad, no el declarado: la RPC degrada a
+    `failed` un `success_empty` sin `empty_evidence` (la migracion v2 lo hace
+    en silencio para no romper llamadores viejos). Sin leer `resp.data` ese
+    degradado pasaria desapercibido — se cuenta y se loguea aqui.
+    """
+    counts: dict[str, int] = {"success_with_rows": 0, "success_empty": 0, "failed": 0}
+    db_failed: list[str] = []
     for i, batch in enumerate(_applicability_batches(payload)):
         try:
-            supabase.rpc("replace_ad_applicability", {"p_ads": batch}).execute()
+            resp = supabase.rpc("replace_ad_applicability", {"p_ads": batch}).execute()
+            for rec in resp.data or []:
+                st = rec.get("status")
+                counts[st] = counts.get(st, 0) + 1
+                if st == "failed":
+                    db_failed.append(rec.get("ad_id"))
         except Exception as e:
             _record_write_error(f"  applicability: RPC replace fallo (lote {i + 1}): {e}")
+    if db_failed:
+        shown = db_failed[:20]
+        suffix = f" (+{len(db_failed) - 20} mas)" if len(db_failed) > 20 else ""
+        logger.warning(
+            f"  applicability: la BD reporto {len(db_failed)} AD(s) failed "
+            f"(incluye success_empty sin empty_evidence, degradado por la RPC): "
+            f"{shown}{suffix}"
+        )
+    return counts
+
+
+# ads.product_type (canonico via enrich.normalize_product_type) -> codigo del
+# catalogo de la BD (product_type/product_subtype, migracion 20260926120000).
+# None (AD sin tipo derivable) se omite del payload adrede: la RPC/el trigger
+# ya sabe derivarlo de `ads.product_type` (mismo valor, resuelto server-side),
+# y mandar 'unknown' explicito lo marcaria como product_type_source='explicit'
+# para siempre, impidiendo que una correccion futura de ads.product_type se
+# propague (eso solo pasa sobre filas 'derived').
+_PRODUCT_TYPE_CODE = {
+    "Aircraft": "aircraft",
+    "Helicopter": "rotorcraft",
+    "Engine": "engine",
+    "Propeller": "propeller",
+    "Appliance": "appliance",
+}
+
+
+# Evidencia de success_empty por fuente (docs/applicability-contract.md,
+# ajustado 2026-09-25). El criterio es estricto a proposito: `empty_evidence`
+# exige que la FUENTE declare explicitamente "no hay pares" — "el parser/
+# listado no trajo make" nunca es esa evidencia, es simplemente un dato
+# ausente, y un dato ausente no autoriza a la RPC a borrar lo que ya tenia
+# guardado. Ausente de este dict o condicion no cumplida => el AD viaja
+# `failed` (nada se toca) en vez de `success_empty`.
+def _empty_evidence(source: str, row: dict) -> str | None:
+    if source == "easa":
+        # `easa.py` construye `Applicability` recorriendo `li.tc_holder` del
+        # listado/detalle: una lista VACIA (no ausente) significa que esa
+        # seccion se recorrio y no habia ningun holder — es la unica fuente
+        # cuyo scraper distingue "recorri y no habia nada" de "no llegue a
+        # verlo". `Applicability` ausente (make vacio por otra via) no cuenta.
+        holders = (row.get("raw_data") or {}).get("Applicability")
+        if isinstance(holders, list) and len(holders) == 0:
+            return "EASA: listado sin ningun approval/type-certificate holder para este AD"
+        return None
+    # transport_canada: el scraper NUNCA emite `raw_data["Applicability"]`
+    # (solo EASA lo hace hoy, ver CLAUDE.md/docs/applicability-contract.md), asi
+    # que no hay forma de distinguir "recorri la seccion y no habia holders" de
+    # "no pude leerla" — ambiguo, no se emite evidencia.
+    #
+    # federal_register: un AD de tipo Appliance SI tiene applicability (el
+    # fabricante/pieza del appliance) — declararlo vacio borraria filas reales.
+    # Ni el tipo de producto ni un titulo generico son la fuente diciendo
+    # "no hay pares", asi que nunca se emite evidencia para esta fuente.
+    #
+    # anac_brazil / dgac_chile / anac_argentina / uk_caa: un listado sin make
+    # es ausencia de dato (el scraper no lo extrajo), no la fuente afirmando
+    # que el AD no aplica a nada. Tampoco se emite evidencia.
+    return None
 
 
 def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
@@ -554,9 +650,12 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
       - superseded_to_ad_id (si el scraper aporto 'Superseded_By')
     Applicability va por la RPC transaccional `replace_ad_applicability` con el
     estado triestado por AD del contrato (docs/applicability-contract.md):
-    un AD presente en la salida del scraper con make -> success_with_rows;
-    presente sin make -> success_empty; ausente -> no se toca (failed implicito).
-    SBs por upsert (ad_id, sb_number).
+    un AD presente en la salida del scraper con pares validos -> success_with_rows;
+    sin pares pero con evidencia de ausencia real (`_empty_evidence`) -> success_empty;
+    sin pares y sin evidencia, o con una fila descartada, o con extraccion
+    fallida (`ApplicabilityError`) -> failed (no se toca lo guardado);
+    ausente de `normalized` -> tampoco se toca (failed implicito, ni siquiera
+    viaja en el payload). SBs por upsert (ad_id, sb_number).
     """
     if not normalized:
         return
@@ -567,11 +666,15 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     # ad_id -> filas de applicability deduplicadas por clave natural.
     applic_by_ad: dict[str, list[dict]] = {}
     applic_seen: dict[str, set] = {}
+    # ad_id -> fila normalizada, para poder pedirle evidencia de ausencia por
+    # fuente una vez que se sabe que no aporto ningun par.
+    applic_row_by_ad: dict[str, dict] = {}
     sb_rows: list[dict] = []
     sb_seen: set[tuple[str, str]] = set()
-    # ADs con >=1 fila de applicability descartada por tamano de campo. Viajan
-    # `failed` en vez de `success_empty`/`success_with_rows`: lo que sobrevivio
-    # es un subconjunto accidental, no la verdad completa del AD.
+    # ADs con >=1 fila de applicability descartada por tamano de campo, o cuya
+    # extraccion levanto ApplicabilityError. Viajan `failed` en vez de
+    # `success_empty`/`success_with_rows`: lo que sobrevivio es un subconjunto
+    # accidental, no la verdad completa del AD.
     applic_dropped: set[str] = set()
     # (ad_id_to_update, target_ad_number) — the row at ad_id is superseded BY target.
     supersede_updates: list[tuple[str, str]] = []
@@ -582,16 +685,28 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
             continue
         applic_by_ad.setdefault(ad_id, [])
         applic_seen.setdefault(ad_id, set())
+        applic_row_by_ad[ad_id] = r
 
         raw = r.get("raw_data") or {}
 
-        for mk, mod in _applicability_pairs(r):
+        try:
+            pairs = _applicability_pairs(r)
+        except ApplicabilityError as e:
+            # Extraccion fallida a medias: nunca un subconjunto parcial
+            # declarado completo. El AD entero queda `failed`.
+            _record_write_error(f"  applicability: {r['ad_number']}: extraccion fallo: {e}")
+            applic_dropped.add(ad_id)
+            pairs = []
+
+        pt_code = _PRODUCT_TYPE_CODE.get(r.get("product_type") or "")
+
+        for mk, mod in pairs:
             # La RPC rechaza el payload entero si un AD repite clave natural.
             key = (mk, mod)
             if key in applic_seen[ad_id]:
                 continue
             applic_seen[ad_id].add(key)
-            if len(mk) > APPLICABILITY_TEXT_MAX or len(mod or "") > APPLICABILITY_TEXT_MAX:
+            if len(mk) > APPLICABILITY_MAKE_MAX or len(mod or "") > APPLICABILITY_MODEL_MAX:
                 # Se descarta la fila, pero NUNCA en silencio: un campo que no
                 # cabe es un dato que hay que mirar, y `_record_write_error`
                 # fuerza status='error' y salida != 0. Ademas marca el AD para
@@ -600,19 +715,26 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                 # nada, y declararlo `success_empty` le ordenaria a la RPC BORRAR
                 # lo que ya tenia guardado.
                 _record_write_error(
-                    f"  applicability: {r['ad_number']}: campo de mas de "
-                    f"{APPLICABILITY_TEXT_MAX} chars, fila descartada "
-                    f"(make={len(mk)}, model={len(mod or '')})"
+                    f"  applicability: {r['ad_number']}: campo fuera de limite, "
+                    f"fila descartada (make={len(mk)}/{APPLICABILITY_MAKE_MAX}, "
+                    f"model={len(mod or '')}/{APPLICABILITY_MODEL_MAX})"
                 )
                 applic_dropped.add(ad_id)
                 continue
-            applic_by_ad[ad_id].append({
+            row_payload = {
                 "make": mk,
                 "model": mod,
                 # make+model identifica una aeronave; solo make es mas debil.
                 # Alineado con lib/ads/applicability.ts del frontend.
                 "confidence": "high" if mod else "medium",
-            })
+                # listed si hay texto de modelo; unknown si no. `none` (la
+                # fuente declara "todos los modelos") no lo emite ninguna
+                # fuente hoy — no hay senal fiable de esa declaracion.
+                "model_status": "listed" if mod else "unknown",
+            }
+            if pt_code:
+                row_payload["product_type"] = pt_code
+            applic_by_ad[ad_id].append(row_payload)
 
         # Explicit SB list (EASA detail page) wins; else mine subject/abstract.
         explicit_sbs = raw.get("Service_Bulletins")
@@ -654,14 +776,22 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
             # filas que SI cupieron no son la verdad completa del AD. La RPC
             # rechaza `rows` no vacio salvo con status=success_with_rows.
             return {"ad_id": aid, "status": "failed", "rows": []}
-        return {
-            "ad_id": aid,
-            "status": "success_with_rows" if rows else "success_empty",
-            "rows": rows,
-        }
+        if rows:
+            return {"ad_id": aid, "status": "success_with_rows", "rows": rows}
+        evidence = _empty_evidence(source, applic_row_by_ad[aid])
+        if evidence:
+            return {
+                "ad_id": aid,
+                "status": "success_empty",
+                "rows": [],
+                "empty_evidence": evidence[:APPLICABILITY_MAKE_MAX],
+            }
+        # Sin pares y sin evidencia de ausencia real: no hay base para pedirle
+        # a la RPC que borre lo que ya tenia guardado.
+        return {"ad_id": aid, "status": "failed", "rows": []}
 
     applic_payload = [_applic_element(aid, rows) for aid, rows in applic_by_ad.items()]
-    _send_applicability_batches(supabase, applic_payload)
+    applic_counts = _send_applicability_batches(supabase, applic_payload)
 
     # ad_service_bulletins: upsert on (ad_id, sb_number)
     for i in range(0, len(sb_rows), 500):
@@ -714,15 +844,18 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                 except Exception as e:
                     _record_write_error(f"  supersede: update fallo target {tgt}: {e}")
 
-    # Contado sobre el payload REAL enviado (applic_payload), no sobre
-    # applic_by_ad: un AD con filas descartadas por tamano tiene `rows == []`
-    # ahi igual que uno legitimamente vacio, pero viaja `failed`, no
-    # `success_empty` — contarlo desde applic_by_ad los mezclaba.
-    n_empty = sum(1 for e in applic_payload if e["status"] == "success_empty")
-    n_failed = sum(1 for e in applic_payload if e["status"] == "failed")
+    # Declarado por el cliente (lo que se mando) vs. leido de la RPC (lo que
+    # la BD de verdad aplico — puede degradar success_empty sin evidencia a
+    # failed; ver _send_applicability_batches). Se loguean ambos porque
+    # difieren cuando eso pasa.
+    n_declared_empty = sum(1 for e in applic_payload if e["status"] == "success_empty")
+    n_declared_failed = sum(1 for e in applic_payload if e["status"] == "failed")
     logger.info(
         f"[{source}] relaciones: {sum(len(v) for v in applic_by_ad.values())} applicability "
-        f"({n_empty} declarados success_empty, {n_failed} failed por filas descartadas), "
+        f"({n_declared_empty} declarados success_empty, {n_declared_failed} declarados failed; "
+        f"BD: {applic_counts.get('success_with_rows', 0)} success_with_rows, "
+        f"{applic_counts.get('success_empty', 0)} success_empty, "
+        f"{applic_counts.get('failed', 0)} failed), "
         f"{len(sb_rows)} service bulletins, {len(supersede_updates)} supersession"
     )
 
