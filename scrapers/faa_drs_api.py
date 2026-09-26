@@ -42,6 +42,10 @@ log = get_logger(__name__)
 
 BASE_URL = "https://drs.faa.gov/api/drs/data-pull"
 DOCTYPES = ("ADFRAWD", "ADFREAD")
+#: Doctypes que el cliente sabe paginar. La sync solo usa DOCTYPES; TCDSMODEL
+#: (hojas de datos de certificados de tipo, un documento por modelo) lo lee
+#: scripts/tcds_alias_candidates.py para proponer alias de fabricantes.
+READ_DOCTYPES = DOCTYPES + ("TCDSMODEL",)
 PAGE_SIZE = 750
 
 #: Numeros de AD por POST `filtered`. La API no documenta el tope, pero lo
@@ -111,8 +115,8 @@ def validate_cursor(value: str | datetime) -> str:
 
 
 def _check_doctype(doctype: str) -> str:
-    if doctype not in DOCTYPES:
-        raise ValueError(f"unknown DRS doctype {doctype!r}; expected one of {DOCTYPES}")
+    if doctype not in READ_DOCTYPES:
+        raise ValueError(f"unknown DRS doctype {doctype!r}; expected one of {READ_DOCTYPES}")
     return doctype
 
 

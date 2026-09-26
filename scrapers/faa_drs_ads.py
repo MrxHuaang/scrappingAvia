@@ -56,7 +56,7 @@ _LITERAL_ESCAPE_RE = re.compile(r"\\[ntr]")
 # Collins", "Inc."): se vuelven a pegar a la marca anterior. Solo sufijos
 # societarios sueltos; nada que pueda ser un fabricante por si mismo.
 _CORPORATE_SUFFIX_RE = re.compile(
-    r"^(?:Inc|LLC|L\.L\.C|Ltd|Co|Corp|GmbH|S\.A|SA|AG|plc|N\.V|B\.V|S\.p\.A)\.?$", re.I)
+    r"^(?:Inc|LLC|L\.L\.C|Ltd|Co|Corp|GmbH|S\.A|SA|AG|plc|N\.V|B\.V|S\.p\.A|S\.r\.l|a\.s|s\.r\.o)\.?$", re.I)
 _PLACEHOLDERS = frozenset({"n/a", "na", "none", "unknown"})
 
 
@@ -142,13 +142,16 @@ def clean_makes(makes) -> list[str]:
     """Marcas de DRS sin repetidos (sin distinguir mayusculas), sin marcas de
     relleno ("N/A") y con los sufijos societarios que DRS separo por la coma
     vueltos a pegar a la marca anterior."""
-    out: list[str] = []
+    glued: list[str] = []
     for make in _strings(makes):
         if make.lower() in _PLACEHOLDERS:
             continue
-        if _CORPORATE_SUFFIX_RE.match(make) and out:
-            out[-1] = f"{out[-1]}, {make}"
-            continue
+        if _CORPORATE_SUFFIX_RE.match(make) and glued:
+            glued[-1] = f"{glued[-1]}, {make}"
+        else:
+            glued.append(make)
+    out: list[str] = []
+    for make in glued:
         if make.lower() not in (m.lower() for m in out):
             out.append(make)
     return out
