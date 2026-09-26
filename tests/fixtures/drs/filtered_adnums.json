@@ -1,0 +1,84 @@
+{
+ "summary": {
+  "doctypeName": "ADFRAWD",
+  "drsDoctypeName": "AD Final Rules",
+  "count": 2,
+  "hasMoreItems": false,
+  "totalItems": 2,
+  "offset": 0,
+  "sortBy": "drs:adfrawdCitationPublishDate",
+  "sortByOrder": "DESC"
+ },
+ "documents": [
+  {
+   "documentGuid": "FR-ADFRAWD-2024-13013-0000000000",
+   "docLastModifiedDate": "2026-03-30T09:30:02.877Z",
+   "drs:documentNumber": "2024-08-05",
+   "drs:status": "Historical",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/FR-ADFRAWD-2024-13013-0000000000.0001",
+   "drs:adfrawdCitationPublishDate": "2024-06-14",
+   "drs:adfrawdFooter": "Issued on April 17, 2024. Victor Wicklund, Deputy Director, Compliance & Airworthiness Division, Aircraft Certification Service. [FR Doc. 2024-13013 Filed 6-13-24; 8:45 am]",
+   "drs:adfrawdAmendment": "39-22738",
+   "drs:adfrawdAction": "Final rule.",
+   "drs:adfrawdMake": [
+    "Airbus SAS"
+   ],
+   "drs:adfrawdModel": [
+    "A330-201",
+    "A330-202",
+    "A330-203",
+    "A330-223",
+    "A330-223F",
+    "A330-243",
+    "A330-243F",
+    "A330-301",
+    "A330-302",
+    "A330-303",
+    "A330-321",
+    "A330-322",
+    "A330-323",
+    "A330-341",
+    "A330-342",
+    "A330-343",
+    "A330-841",
+    "A330-941"
+   ],
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/08a72840-a668-4708-bd23-38278514b264",
+   "mainDocumentFileName": "2024-08-05.html",
+   "hasMoreAttachments": false,
+   "drs:adfrawdCitation": "Federal Register, Volume 89 Number 116 (Friday, June 14, 2024)",
+   "drs:adfrawdSupersededBy": [
+    "2026-03-07"
+   ]
+  },
+  {
+   "documentGuid": "32367EAE9D7A95B4862581E6004E4163",
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "drs:documentNumber": "2017-24-03",
+   "drs:status": "Current",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/32367EAE9D7A95B4862581E6004E4163.0001",
+   "drs:adfrawdCitationPublishDate": "2017-11-28",
+   "drs:adfrawdFooter": "Issued in Renton, Washington, on November 15, 2017.\nJeffrey E. Duven,\nDirector, System Oversight Division, Aircraft Certification Service.\n[FR Doc. 2017-25253 Filed 11-27-17; 8:45 am]\nBILLING CODE 4910-13-P",
+   "drs:adfrawdAmendment": "39-19107",
+   "drs:adfrawdAction": "Final rule.",
+   "drs:adfrawdMake": [
+    "Airbus SAS"
+   ],
+   "drs:adfrawdModel": [
+    "A319-115",
+    "A319-132",
+    "A320-214",
+    "A320-232",
+    "A321-111",
+    "A321-213",
+    "A321-231"
+   ],
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/6e8d442f-9f72-43b8-ad72-9d05a39cb9a2",
+   "mainDocumentFileName": "2017-24-03.pdf",
+   "hasMoreAttachments": true,
+   "otherAttachmentDetailsUrl": "https://drs.faa.gov/api/drs/data-pull/get-other-attachment-details/6e8d442f-9f72-43b8-ad72-9d05a39cb9a2",
+   "drs:adfrawdCitation": "Federal Register Volume 82, Number 227 (Tuesday, November 28, 2017)",
+   "drs:adfrawdSupersededBy": null
+  }
+ ]
+}
