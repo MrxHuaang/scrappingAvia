@@ -270,7 +270,7 @@ def _parse_results_table(soup):
             issue_date = cells[2].get_text(strip=True) if len(cells) > 2 else ""
 
             # Columna 3: Subject
-            subject = cells[3].get_text(strip=True) if len(cells) > 3 else ""
+            subject = _subject_text(cells[3]) if len(cells) > 3 else ""
 
             # Columna 4: Approval Holder / Type Designation.
             #
@@ -414,6 +414,19 @@ def drop_cancelled_proposals(rows: list[dict]) -> list[dict]:
         r for r in rows
         if not (r.get("Document_Class") == "PAD" and _is_cancellation_notice(r.get("AD_Number", "")))
     ]
+
+
+# Link "send comment" que EASA pone bajo el Subject de un PAD abierto a
+# comentarios; get_text() lo pegaba al final ("... – Inspectionsend comment").
+_SEND_COMMENT_RE = re.compile(r"\s*send comment\s*$", re.I)
+
+
+def _subject_text(subject_cell) -> str:
+    """Texto del Subject sin el link "send comment" de los PADs."""
+    for link in subject_cell.find_all("a"):
+        if link.get_text(strip=True).lower() == "send comment":
+            link.decompose()
+    return _SEND_COMMENT_RE.sub("", subject_cell.get_text(strip=True))
 
 
 def _class_icon_alt(subject_cell):

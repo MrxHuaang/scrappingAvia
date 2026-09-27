@@ -394,3 +394,20 @@ def test_a_page_of_only_cancelled_pads_does_not_end_the_walk(monkeypatch):
 
     assert len(asked) == 3, "recorre las tres paginas: el total cuenta lo leido"
     assert [r["AD_Number"] for r in out] == ["2026-0052R2", "2024-0109-CN"]
+
+
+def test_the_send_comment_link_is_not_part_of_a_pad_subject():
+    [pad] = _parse(PAD_ROW)
+    assert pad["Subject"] == "Equipment / Furnishings – System Interface Unit – Replacement"
+
+
+def test_a_send_comment_glued_to_the_subject_text_is_stripped():
+    """Si el link llega como texto suelto (sin <a>), igual se quita."""
+    html = _row("26-114", "Turbine Blades – Inspectionsend comment", [("ROLLS-ROYCE", ["BR700"])])
+    [pad] = _parse(html)
+    assert pad["Subject"] == "Turbine Blades – Inspection"
+
+
+def test_a_subject_that_merely_mentions_comments_is_untouched():
+    [ad] = _parse(_row("2026-0002", "Comment sheet – send comments to EASA", [("X", ["Y"])]))
+    assert ad["Subject"] == "Comment sheet – send comments to EASA"
