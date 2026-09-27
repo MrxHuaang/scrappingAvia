@@ -1,0 +1,208 @@
+[
+  {
+    "file": "2024-08105.htm",
+    "document_number": "2024-08105",
+    "publication_date": "2024-04-17",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2024-04-17/html/2024-08105.htm",
+    "docket_ids": [
+      "Docket No. FAA-2023-1400",
+      "Project Identifier AD-2022-01374-T",
+      "Amendment 39-22708",
+      "AD 2024-06-03"
+    ],
+    "expected_ad": "2024-06-03",
+    "expected_amendment": "39-22708",
+    "title": "Airworthiness Directives; The Boeing Company Airplanes",
+    "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain The Boeing Company Model 737-8 and 737-9 airplanes. This AD was prompted by a determination that the loss of a ground through the P6 panel results in the failure of the standby power control unit (SPCU). The loss of the SPCU and ground through the P6 panel could result in the loss of significant flightcrew instrumentation and displays. This AD requires installing two bonding jumpers from the P6 panel structure to primary structure. The FAA is issuing this AD to address the unsafe condition on these products.",
+    "note": "2024; AMOC en (i), no en (h)."
+  },
+  {
+    "file": "2024-00993.htm",
+    "document_number": "2024-00993",
+    "publication_date": "2024-01-18",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2024-01-18/html/2024-00993.htm",
+    "docket_ids": [
+      "Docket No. FAA-2024-0032",
+      "Project Identifier AD-2024-00021-T",
+      "Amendment 39-22663",
+      "AD 2024-02-51"
+    ],
+    "expected_ad": "2024-02-51",
+    "expected_amendment": "39-22663",
+    "title": "Airworthiness Directives; The Boeing Company Airplanes",
+    "abstract": "The FAA is adopting a new airworthiness directive (AD) for certain The Boeing Company Model 737-9 airplanes. This AD was prompted by a report of an in-flight departure of a mid cabin door plug, which resulted in a rapid decompression of the airplane. This AD prohibits further flight of affected airplanes, until the airplane is inspected and all applicable corrective actions have been performed. The FAA previously sent an emergency AD to all known U.S. owners and operators of these airplanes. The FAA is issuing this AD to address the unsafe condition on these products.",
+    "note": "Emergency AD 2024-02-51 publicado como final rule."
+  },
+  {
+    "file": "2015-23117.htm",
+    "document_number": "2015-23117",
+    "publication_date": "2015-09-16",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2015-09-16/html/2015-23117.htm",
+    "docket_ids": [
+      "Docket No. FAA-2014-0194",
+      "Directorate Identifier 2014-NM-022-AD",
+      "Amendment 39-18266",
+      "AD 2015-19-03"
+    ],
+    "expected_ad": "2015-19-03",
+    "expected_amendment": "39-18266",
+    "title": "Airworthiness Directives; The Boeing Company Airplanes",
+    "abstract": "We are adopting a new airworthiness directive (AD) for all The Boeing Company Model 737-600, -700, -700C, -800, -900, and -900ER series airplanes. This AD was prompted by reports of latently failed fuel shutoff valves discovered during fuel filter replacement. This AD requires revising the maintenance or inspection program to include new airworthiness limitations. We are issuing this AD to detect and correct latent failures of the fuel shutoff valve to the engine, which could result in the inability to shut off fuel to the engine and, in case of certain engine fires, an uncontrollable fire that could lead to wing failure.",
+    "note": "2015; multi-modelo (737-600 ... -900ER)."
+  },
+  {
+    "file": "2015-06235.htm",
+    "document_number": "2015-06235",
+    "publication_date": "2015-03-19",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2015-03-19/html/2015-06235.htm",
+    "docket_ids": [
+      "Docket No. FAA-2014-1001",
+      "Directorate Identifier 2014-CE-034-AD",
+      "Amendment 39-18103",
+      "AD 2015-04-01"
+    ],
+    "expected_ad": "2015-04-01",
+    "expected_amendment": "39-18103",
+    "title": "Airworthiness Directives; Short Brothers & Harland Ltd. Airplanes",
+    "abstract": "The FAA is correcting an airworthiness directive (AD) that published in the Federal Register. That AD applies to all Short Brothers & Harland Ltd. Model SC-7 Series 3 airplanes. The amendment number in the Agency Identification Numbers in the preamble section of the AD is incorrect. Although no other part of the preamble or regulatory information has been corrected, we are publishing the entire rule in the Federal Register.",
+    "note": "2015, formato MCAI: (e) Reason, (f) Actions and Compliance, AMOC dentro de (g) Other FAA AD Provisions."
+  },
+  {
+    "file": "05-17333.htm",
+    "document_number": "05-17333",
+    "publication_date": "2005-09-01",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2005-09-01/html/05-17333.htm",
+    "docket_ids": [
+      "Docket No. FAA-2005-21599",
+      "Directorate Identifier 2005-NM-036-AD",
+      "Amendment 39-14246",
+      "AD-2005-18-06"
+    ],
+    "expected_ad": "2005-18-06",
+    "expected_amendment": "39-14246",
+    "title": "Airworthiness Directives; Bombardier Model CL-600-2B19 (Regional Jet Series 100 & 440) Airplanes",
+    "abstract": "The FAA is superseding an existing airworthiness directive (AD), which applies to all Bombardier Model CL-600-2B19 series airplanes. That AD currently requires revising the airplane flight manual (AFM) to provide the flightcrew with operating limitations and procedures to enable them to maintain controllability of the airplane in the event that aileron control stiffness is encountered during flight. This new AD requires revising the Airworthiness Limitations section of the Instructions of Continued Airworthiness to incorporate certain repetitive tasks for the aileron control system and requires a briefing to advise flightcrews that certain aileron control checks are no longer required. After accomplishing the applicable initial tasks, the existing AFM revisions for the aileron control check may be removed from the AFM. This AD results from the development of terminating actions for the AFM revisions. We are issuing this AD to prevent aileron control stiffness during flight, which could result in reduced or possible loss of controllability of the airplane.",
+    "note": "2005, encabezados sin letra y parrafos (a)...; docket_ids trae el AD con prefijo pegado, 'AD-2005-18-06'."
+  },
+  {
+    "file": "05-2578.htm",
+    "document_number": "05-2578",
+    "publication_date": "2005-02-11",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2005-02-11/html/05-2578.htm",
+    "docket_ids": [],
+    "expected_ad": "2005-03-11",
+    "expected_amendment": "39-13967",
+    "title": "Airworthiness Directives; Boeing Model 767-200 and -300 Series Airplanes",
+    "abstract": "The FAA is superseding an existing airworthiness directive (AD), which applies to certain Boeing Model 767 series airplanes. That AD currently requires repetitive detailed and eddy current inspections of the aft pressure bulkhead for damage and cracking, and repair if necessary. This new AD also requires one-time detailed and high frequency eddy current inspections of any ``oil-can'' located on the aft pressure bulkhead, and related corrective actions if necessary. An ``oil-can'' is an area on a pressure dome web that moves when pushed from the forward side. This AD is prompted by reports of cracking at ``oil-can'' boundaries on the aft pressure bulkhead. We are issuing this AD to detect and correct fatigue cracking of the aft pressure bulkhead, which could result in rapid depressurization of the airplane and possible damage or interference with the airplane control systems that penetrate the bulkhead, and consequent loss of controllability of the airplane.",
+    "note": "2005, docket_ids vacio; el encabezado dice '2005-NM-03-11' (errata) y el preambulo empareja 39-13967 con AD 2005-03-11."
+  },
+  {
+    "file": "98-4716.htm",
+    "document_number": "98-4716",
+    "publication_date": "1998-02-25",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-1998-02-25/html/98-4716.htm",
+    "docket_ids": [
+      "Docket No. 98-NM-04-AD",
+      "Amendment 39-10362",
+      "AD 98-02-51"
+    ],
+    "expected_ad": "98-02-51",
+    "expected_amendment": "39-10362",
+    "title": "Airworthiness Directives; Boeing Model 737-300, -400, and -500 Series Airplanes",
+    "abstract": "This document publishes in the Federal Register an amendment adopting Airworthiness Directive (AD) 98-02-51 that was sent previously to all known U.S. owners and operators of Boeing Model 737-300, -400, and -500 series airplanes by individual telegrams. This AD requires a one-time general visual inspection to detect any missing fasteners on the top and bottom of the leading edge skin where it attaches to the front spar of the horizontal stabilizer. This AD also requires a one- time detailed visual inspection to detect any loose or missing fasteners of the attachment of the elevator hinge plates to the horizontal stabilizer rear spar fittings. If a loose or missing fastener is detected, this AD requires installation of a new or serviceable fastener. This action is prompted by reports of loose or missing fasteners of the leading edge structure and elevator attachment fitting of the right-hand horizontal stabilizer. The actions specified by this AD are intended to prevent reduced structural integrity of the horizontal stabilizer due to loose or missing fasteners.",
+    "note": "1998, formato legado (Applicability:/Compliance:/To prevent...); AD de emergencia telegrafico 98-02-51."
+  },
+  {
+    "file": "01-917.htm",
+    "document_number": "01-917",
+    "publication_date": "2001-01-16",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2001-01-16/html/01-917.htm",
+    "docket_ids": [
+      "Docket No. 2000-NE-44-AD",
+      "Amendment 39-12071",
+      "AD 2001-01-01"
+    ],
+    "expected_ad": "2001-01-01",
+    "expected_amendment": "39-12071",
+    "title": "Airworthiness Directives; BMW Rolls-Royce GmbH Models BR700-710A1-10 and BR700-710A2-20 Turbofan Engines.",
+    "abstract": "",
+    "note": "2001, legado: la condicion insegura va dentro del parrafo Compliance."
+  },
+  {
+    "file": "E8-2623.htm",
+    "document_number": "E8-2623",
+    "publication_date": "2008-02-14",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2008-02-14/html/E8-2623.htm",
+    "docket_ids": [
+      "Docket Nos. FAA-2007-0410, FAA-2007-0411, and FAA-2007-0412",
+      "Directorate Identifiers 2007-NM-338-AD, 2007-NM-291-AD, and 2007-NM-290-AD",
+      "Amendments 39-15325, 39-15326, 39-15327",
+      "ADs 2008-01-02, 2004-07-22 R1, and 90-25-05 R1"
+    ],
+    "expected_ad": "2008-01-02",
+    "expected_amendment": "39-15325",
+    "title": "Airworthiness Directives; Viking Air Limited Model (Caribou) DHC-4 and (Caribou) DHC-4A Airplanes; and Boeing Model 747-100, 747-100B, 747-100B SUD, 747-200B, 747-200C, 747-200F, 747-300, 747-400, 747-400D, 747-400F, 747SR, and 747SP Series Airplanes",
+    "abstract": "",
+    "note": "Correccion de tres ADs: cita el corchete de cada uno y reproduce sus encabezados entre elisiones '* * *', sin su texto."
+  },
+  {
+    "file": "E7-1708.htm",
+    "document_number": "E7-1708",
+    "publication_date": "2007-02-12",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2007-02-12/html/E7-1708.htm",
+    "docket_ids": [
+      "Docket No. FAA-2006-25272",
+      "Directorate Identifier 2006-NE-16-AD",
+      "Amendment 39-14924",
+      "AD 2007-03-13"
+    ],
+    "expected_ad": "2007-03-13",
+    "expected_amendment": "39-14924",
+    "title": "Airworthiness Directives; Rolls-Royce Deutschland Ltd & Co KG (formerly Rolls-Royce plc) Dart 528, 529, 532, 535, 542, and 552 Series Turboprop Engines",
+    "abstract": "",
+    "note": "El encabezado regulatorio declara 'Amendment 39-149824' (errata); docket_ids dice 39-14924."
+  },
+  {
+    "file": "2017-25253.htm",
+    "document_number": "2017-25253",
+    "publication_date": "2017-11-28",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2017-11-28/html/2017-25253.htm",
+    "docket_ids": [
+      "Docket No. FAA-2017-0690",
+      "Product Identifier 2017-NM-061-AD",
+      "Amendment 39-19107",
+      "AD 2017-24-03"
+    ],
+    "expected_ad": "2017-24-03",
+    "expected_amendment": "39-19107",
+    "title": "Airworthiness Directives; Airbus Airplanes",
+    "abstract": "",
+    "note": "Rescision: no tiene seccion de condicion insegura."
+  },
+  {
+    "file": "2024-13013.htm",
+    "document_number": "2024-13013",
+    "publication_date": "2024-06-14",
+    "source_url": "https://www.govinfo.gov/content/pkg/FR-2024-06-14/html/2024-13013.htm",
+    "docket_ids": [
+      "Docket No. FAA-2024-0040",
+      "Project Identifier MCAI-2023-01196-T",
+      "Amendment 39-22738",
+      "AD 2024-08-05"
+    ],
+    "expected_ad": "2024-08-05",
+    "expected_amendment": "39-22738",
+    "title": "Airworthiness Directives; Airbus SAS Airplanes",
+    "abstract": "The FAA is superseding Airworthiness Directive (AD) 2014-15- 09, AD 2020-15-09, and AD 2022-16-07. AD 2014-15-09 applied to all Airbus SAS Model A330-200 Freighter, A330-200 and -300, and A340-200, - 300, -500, and -600 series airplanes. AD 2020-15-09 applied to all Airbus SAS Model A330-941 airplanes. AD 2014-15-09 and AD 2020-15-09 required repetitive operational tests of the hydraulic locking function on certain spoiler servo-controls (SSCs) and replacement if necessary. AD 2022-16-07 applied to certain Airbus SAS Model A330-200, A330-200 Freighter, and A330-300 series airplanes. AD 2022-16-07 required revising the existing maintenance or inspection program, as applicable, to incorporate new or more restrictive airworthiness limitations. This AD was prompted by the determination that new or more restrictive airworthiness limitations are necessary. This AD continues to require certain actions in AD 2014-15-09, AD 2020-15-09, and AD 2022-16-07 and requires revising the existing maintenance or inspection program, as applicable, to incorporate new or more restrictive airworthiness limitations, as specified in a European Union Aviation Safety Agency (EASA), which is incorporated by reference. This AD also removes Model A340-200, -300, -500, and -600 series airplanes from the applicability. The FAA is issuing this AD to address the unsafe condition on these products.",
+    "note": "El abstract describe la applicability de los ADs que reemplaza (A340); la seccion Applicability solo lista A330."
+  },
+  {
+    "file": "composed-2015-12-04-then-2006-15-08.htm",
+    "document_number": null,
+    "composed_from": [
+      "https://www.govinfo.gov/content/pkg/FR-2015-07-16/html/2015-16587.htm",
+      "https://www.govinfo.gov/content/pkg/FR-2006-07-20/html/E6-11540.htm"
+    ],
+    "note": "Compuesto de dos granulos reales: el bloque de AD 2015-12-04 (39-18177), cuyo 'Affected ADs' cita a AD 2006-15-08, y a continuacion el bloque de AD 2006-15-08 (39-14688). En los docket_ids de los 13570 RULE de 1994-2026 solo E8-2623 declara varios ADs, y es una correccion sin su texto."
+  }
+]

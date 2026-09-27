@@ -1,0 +1,644 @@
+{
+ "source": "POST ADFRAWD/filtered by drs:documentNumber, 2026-09-26; SupplementaryInfo dropped, long text fields and model lists trimmed",
+ "documents": [
+  {
+   "drs:documentNumber": "41-47-01",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "Unknown",
+   "drs:adfrawdAmendment": null,
+   "drs:adfrawdMake": [
+    "The Boeing Company"
+   ],
+   "drs:adfrawdModel": [
+    "DC3-G102",
+    "DC3-G102A",
+    "DC3-G103A",
+    "DC3-G202A",
+    "DC3A-S1C3G",
+    "DC3A-S1CG",
+    "DC3A-S4C4G",
+    "DC3A-SC3G"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Large Airplane"
+   ],
+   "drs:adfrawdSubject": "Control Surface",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "This information is not available.",
+   "drs:adfrawdPageNumber": null,
+   "drs:title": "DOUGLAS Model DC3 Series Aircraft",
+   "drs:adfrawdAction": null,
+   "drs:adfrawdSummary": null,
+   "drs:adfrawdAddresses": null,
+   "drs:adfrawdFurtherInfoContact": null,
+   "drs:adfrawdRegulatoryText": "41-47-01  DOUGLAS:  (Was Service Note 3 of AD-618-3 and Service Note 3 of AD-669-3.)  Applies to All DC3 Series Aircraft. \\n\\n\\tEach time a control surface is overhauled or repaired, the surface should be rebalanced. \\n\\n\\t(Douglas Service Bulletin No. 207 contains instructions on rebalancing.)",
+   "drs:adfrawdFooter": null,
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": null,
+   "drs:sectionNumber": null,
+   "drs:adfrawdCitationPublishDate": null,
+   "drs:adfrawdIssueDate": null,
+   "drs:effectiveDate": null,
+   "drs:comments": null,
+   "drs:documentOwner": null,
+   "drs:primaryRespOffice": null,
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "documentGuid": "4D578F336669A80D8625683200724DED",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/4D578F336669A80D8625683200724DED.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/779e7beb-fb20-47f5-80a8-30777cd3c159",
+   "mainDocumentFileName": "DRS_41-47-01.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "84-18-03 R1",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "Unknown",
+   "drs:adfrawdAmendment": "39-4997",
+   "drs:adfrawdMake": [
+    "California Department of Forestry",
+    "International Helicopters, Inc.",
+    "Richards Heavylift Helo, Inc.",
+    "Rotorcraft Development Corporation",
+    "Rotorcraft Development Corporation",
+    "Rotorcraft Development Corporation",
+    "Rotorcraft Development Corporation",
+    "Rotorcraft Development Corporation",
+    "Rotorcraft Development Corporation",
+    "Rotorcraft Development Corporation",
+    "Rotorcraft Development Corporation",
+    "Rotorcraft Development Corporation",
+    "Rotorcraft Development Corporation",
+    "San Joaquin Helicopters",
+    "Tamarack Helicopters, Inc."
+   ],
+   "drs:adfrawdModel": [
+    "UH-1F",
+    "UH-1B",
+    "UH-1A",
+    "UH-1B",
+    "UH-1B",
+    "UH-1E",
+    "UH-1L",
+    "UH-1B"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Rotorcraft"
+   ],
+   "drs:adfrawdSubject": "Clevis Inspection",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "This information is not available.",
+   "drs:adfrawdPageNumber": null,
+   "drs:title": "Airworthiness Directives; GARLICK HELICOPTERS, HAWKINS AND POWERS AVIATION, INC., WILCO \nAVIATION, CALIFORNIA DEPARTMENT OF FORESTRY, PILOT PERSONNEL INTERNATIONAL, \nINC., AND INTERNATIONAL HELICOPTER, INC. (BELL HELICOPTER TEXTRON, INC.) Model UH-1 Series Helicopters",
+   "drs:adfrawdAction": null,
+   "drs:adfrawdSummary": null,
+   "drs:adfrawdAddresses": null,
+   "drs:adfrawdFurtherInfoContact": null,
+   "drs:adfrawdRegulatoryText": "84-18-03 R1  GARLICK HELICOPTERS, HAWKINS AND POWERS AVIATION, INC., WILCO AVIATION, CALIFORNIA DEPARTMENT OF FORESTRY, PILOT PERSONNEL INTERNATIONAL, INC., AND INTERNATIONAL HELICOPTER, INC. (BELL HELICOPTER TEXTRON, INC.):  Amendment 39-4899 as amended by Amendment 39-4997.  Applies to Model UH-1 series helicopters certificated in the restricted category. \n\n\tCompliance is required within 10 hour",
+   "drs:adfrawdFooter": null,
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": null,
+   "drs:sectionNumber": null,
+   "drs:adfrawdCitationPublishDate": null,
+   "drs:adfrawdIssueDate": null,
+   "drs:effectiveDate": "1985-02-22",
+   "drs:comments": null,
+   "drs:documentOwner": null,
+   "drs:primaryRespOffice": null,
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "documentGuid": "EE6F7ECAB2A00C1A86256A4D0073BF0E",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/EE6F7ECAB2A00C1A86256A4D0073BF0E.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/1f70fc1c-371a-42b4-bf15-2ceae94a1d46",
+   "mainDocumentFileName": "DRS_84-18-03_R.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "85-14-02 R2",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "Unknown",
+   "drs:adfrawdAmendment": "39-6115",
+   "drs:adfrawdMake": [
+    "Airbus",
+    "The Boeing Company",
+    "Garrett Auxiliary Power Division"
+   ],
+   "drs:adfrawdModel": [
+    "A300 B4-601",
+    "A300 B4-603",
+    "A300 B4-605R",
+    "A300 B4-620",
+    "A300 B4-622",
+    "A300 B4-622R",
+    "A300 C4-605R Variant F",
+    "A300 F4-605R"
+   ],
+   "drs:adfrawdProductType": [
+    "Appliance"
+   ],
+   "drs:adfrawdProductSubType": null,
+   "drs:adfrawdSubject": "Auxiliary Power Units",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "This information is not available.",
+   "drs:adfrawdPageNumber": null,
+   "drs:title": "Airworthiness Directives;  GARRETT AUXILIARY POWER DIVISION (FORMERLY GARRETT TURBINE ENGINE \\nCOMPANY AND THE AIRESEARCH MANUFACTURING COMPANY OF ARIZONA):   GTEC Models GTCP331-200A, -200AC, -200C, -200ER, -250F, -25OH, and -200P Auxiliary Power Units",
+   "drs:adfrawdAction": null,
+   "drs:adfrawdSummary": null,
+   "drs:adfrawdAddresses": null,
+   "drs:adfrawdFurtherInfoContact": null,
+   "drs:adfrawdRegulatoryText": "85-14-02 R2  GARRETT AUXILIARY POWER DIVISION (FORMERLY GARRETT TURBINE ENGINE COMPANY AND THE AIRESEARCH MANUFACTURING COMPANY OF ARIZONA):   Amendment  39-5571 as  amended  by Amendment 39-6115. \\n\\n\\tApplicability:  All GTEC Models GTCP331-200A, -200AC, -200C, -200ER, -250F, -25OH, and -200P Auxiliary Power Units (APU) with fan assembly, Garrett Part Number 3862160-3, -4, or -5, installed; as i",
+   "drs:adfrawdFooter": null,
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": null,
+   "drs:sectionNumber": null,
+   "drs:adfrawdCitationPublishDate": null,
+   "drs:adfrawdIssueDate": null,
+   "drs:effectiveDate": "1989-02-22",
+   "drs:comments": null,
+   "drs:documentOwner": null,
+   "drs:primaryRespOffice": null,
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "documentGuid": "93863BBC325D7E3C86256A37006FA119",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/93863BBC325D7E3C86256A37006FA119.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/534f599c-9e73-4b40-8a12-0f7897866df0",
+   "mainDocumentFileName": "DRS_85-14-02_R.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "82-16-03",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "Unknown",
+   "drs:adfrawdAmendment": "39-4425",
+   "drs:adfrawdMake": null,
+   "drs:adfrawdModel": [
+    "F.28 Mark 1000",
+    "F.28 Mark 4000"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Large Airplane"
+   ],
+   "drs:adfrawdSubject": "Compliance With Service Bulletins",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "This information is not available.",
+   "drs:adfrawdPageNumber": null,
+   "drs:title": "Airworthiness Directives; FOKKER B.V. Model F28 Series 1000 and 4000 Airplanes",
+   "drs:adfrawdAction": null,
+   "drs:adfrawdSummary": null,
+   "drs:adfrawdAddresses": null,
+   "drs:adfrawdFurtherInfoContact": null,
+   "drs:adfrawdRegulatoryText": "82-16-03  FOKKER B.V.:  Amendment 39-4425.  Applies to Model F28 Series 1000 and 4000 airplanes, certificated in all categories, serial numbers as indicated below.  Note:  Some serial numbers listed may actually be 2000, 3000, 5000, or 6000 airplanes that are not presently eligible for U.S. certification.  If so, those serial numbers may be disregarded insofar as this AD is concerned. \n\t\n\t1.\tUnles",
+   "drs:adfrawdFooter": null,
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": null,
+   "drs:sectionNumber": null,
+   "drs:adfrawdCitationPublishDate": null,
+   "drs:adfrawdIssueDate": null,
+   "drs:effectiveDate": "1982-08-30",
+   "drs:comments": null,
+   "drs:documentOwner": null,
+   "drs:primaryRespOffice": null,
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "documentGuid": "5628601963291E97862569F1005B8FFA",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/5628601963291E97862569F1005B8FFA.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/30f23bd1-4bb9-41aa-8713-53f3743b7855",
+   "mainDocumentFileName": "DRS_82-16-03.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "91-20-02",
+   "drs:status": "Historical",
+   "drs:adfrawdDocketNo": "91-ANE-04",
+   "drs:adfrawdAmendment": "39-8036",
+   "drs:adfrawdMake": [
+    "General Electric Company"
+   ],
+   "drs:adfrawdModel": [
+    "CF6-80C2A1",
+    "CF6-80C2A2",
+    "CF6-80C2A3",
+    "CF6-80C2A5",
+    "CF6-80C2A8",
+    "CF6-80C2B1",
+    "CF6-80C2B1F",
+    "CF6-80C2B1F1"
+   ],
+   "drs:adfrawdProductType": [
+    "Engine"
+   ],
+   "drs:adfrawdProductSubType": null,
+   "drs:adfrawdSubject": "Fuel Manifolds",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": [
+    "2014-21-01"
+   ],
+   "drs:adfrawdCitation": "This information is not available.",
+   "drs:adfrawdPageNumber": null,
+   "drs:title": "GENERAL ELECTRIC COMPANY Models CF6-80C2 Series Engines",
+   "drs:adfrawdAction": null,
+   "drs:adfrawdSummary": null,
+   "drs:adfrawdAddresses": null,
+   "drs:adfrawdFurtherInfoContact": null,
+   "drs:adfrawdRegulatoryText": "91-20-02  GENERAL ELECTRIC COMPANY:  Amendment 39-8036. Docket Number 91-ANE-04.\n\n\tApplicability:   General Electric Company (GE) CF6-80C2 series turbofan engines, installed on, but not limited to, Airbus A300 and A310, Boeing 747 and 767, and McDonnell Douglas MD-11 aircraft. \n\n\tCompliance:  Required as indicated, unless previously accomplished. \n\n\tTo prevent engine fire, accomplish the following",
+   "drs:adfrawdFooter": null,
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": null,
+   "drs:sectionNumber": null,
+   "drs:adfrawdCitationPublishDate": null,
+   "drs:adfrawdIssueDate": null,
+   "drs:effectiveDate": "1991-11-25",
+   "drs:comments": "Updated RGL applicability to match AD applicability; CAR C-11-185",
+   "drs:documentOwner": null,
+   "drs:primaryRespOffice": null,
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2025-08-07T14:49:20.811Z",
+   "documentGuid": "F9B5B39028B382C28625686C0049FA1E",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/F9B5B39028B382C28625686C0049FA1E.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/fe26020b-dd74-4e0b-8556-041106a0d20d",
+   "mainDocumentFileName": "DRS_91-20-02.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "60-03-01",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "Unknown",
+   "drs:adfrawdAmendment": null,
+   "drs:adfrawdMake": [
+    "The Boeing Company"
+   ],
+   "drs:adfrawdModel": [
+    "707-100 Long Body",
+    "707-100B Long Body",
+    "707-100B Short Body",
+    "707-200",
+    "707-300 Series",
+    "707-300B Series",
+    "707-300C Series",
+    "707-400 Series"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Large Airplane"
+   ],
+   "drs:adfrawdSubject": "Wing Foreflaps",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "This information is not available.",
+   "drs:adfrawdPageNumber": null,
+   "drs:title": "BOEING Model 707 Series Aircraft",
+   "drs:adfrawdAction": null,
+   "drs:adfrawdSummary": null,
+   "drs:adfrawdAddresses": null,
+   "drs:adfrawdFurtherInfoContact": null,
+   "drs:adfrawdRegulatoryText": "60-03-01\\tBOEING:  Amdt. 87 Part 507 Federal Register January 26, 1960.  Applies to all Model 707 series aircraft. \\n\\n\\tDue to recent failures of the wing foreflaps, the following must be accomplished at times indicated: \\n\\n\\t(a)\\tConduct daily inspection of the original type outboard foreflap, P/N's 65-7360-3007 and 65-7360-3008, on outboard mainflap as follows: \\n\\n\\t\\t(1)\\tConduct detail visu",
+   "drs:adfrawdFooter": null,
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": null,
+   "drs:sectionNumber": null,
+   "drs:adfrawdCitationPublishDate": null,
+   "drs:adfrawdIssueDate": null,
+   "drs:effectiveDate": null,
+   "drs:comments": null,
+   "drs:documentOwner": null,
+   "drs:primaryRespOffice": null,
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "documentGuid": "135C2AD58121DA9A8625698B0067CB7C",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/135C2AD58121DA9A8625698B0067CB7C.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/557665e7-efe6-459e-adf9-b97052a1ff67",
+   "mainDocumentFileName": "DRS_60-03-01.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "65-06-04",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "Unknown",
+   "drs:adfrawdAmendment": "39-44",
+   "drs:adfrawdMake": [
+    "Eureka Williams Company"
+   ],
+   "drs:adfrawdModel": [
+    "Survivor Locator Lights"
+   ],
+   "drs:adfrawdProductType": [
+    "Appliance"
+   ],
+   "drs:adfrawdProductSubType": null,
+   "drs:adfrawdSubject": "Survivor Locator Light",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "Federal Register: March 6, 1965",
+   "drs:adfrawdPageNumber": null,
+   "drs:title": "Airworthiness Directives;  EUREKA WILLIAMS:  Applies to All Aircraft with Life Preservers or Liferafts Equipped with \nEureka Williams Survivor Locator Light Model EW-101-WL-( )-8 with a Yellow Polyethylene Lower Battery End Cap",
+   "drs:adfrawdAction": null,
+   "drs:adfrawdSummary": null,
+   "drs:adfrawdAddresses": null,
+   "drs:adfrawdFurtherInfoContact": null,
+   "drs:adfrawdRegulatoryText": "65-06-04  EUREKA WILLIAMS:  Amdt. 39-44 Part 39 Federal Register March 6, 1965.  Applies to All Aircraft with Life Preservers or Liferafts Equipped with Eureka Williams Survivor Locator Light Model EW-101-WL-( )-8 with a Yellow Polyethylene Lower Battery End Cap. \n\n\tCompliance required within 30 days after the effective date of this AD unless already accomplished. \n\n\tTo prevent further damage to l",
+   "drs:adfrawdFooter": null,
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": null,
+   "drs:sectionNumber": null,
+   "drs:adfrawdCitationPublishDate": "1965-03-06",
+   "drs:adfrawdIssueDate": null,
+   "drs:effectiveDate": "1965-03-06",
+   "drs:comments": null,
+   "drs:documentOwner": null,
+   "drs:primaryRespOffice": null,
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "documentGuid": "BE0B9641CD72187D86256A32006986FC",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/BE0B9641CD72187D86256A32006986FC.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/329e311b-2445-466d-be73-974bcfd1e8a4",
+   "mainDocumentFileName": "DRS_65-06-04.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "98-02-05",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "98-CE-06-AD",
+   "drs:adfrawdAmendment": "39-10306",
+   "drs:adfrawdMake": [
+    "Cessna Aircraft Company"
+   ],
+   "drs:adfrawdModel": [
+    "172R"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Small Airplane"
+   ],
+   "drs:adfrawdSubject": "Engine Exhaust Muffler",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "This information is not available.",
+   "drs:adfrawdPageNumber": null,
+   "drs:title": "Airworthiness Directives; Cessna Aircraft Company Model 172R Airplanes",
+   "drs:adfrawdAction": "Final rule; request for comments.",
+   "drs:adfrawdSummary": "This document publishes in the Federal Register an amendment adopting Airworthiness Directive (AD) 98-02-05, which was sent previously to all known U.S. owners and operators of Cessna Aircraft Company (Cessna) Model 172R airplanes.  This AD requires de-activating the cabin heating system until the e",
+   "drs:adfrawdAddresses": "Submit comments in triplicate to the Federal Aviation Administration (FAA), Central Region, Office of the Regional Counsel, Attention:  Rules Docket 98-CE-06-AD, Room 1558, 601 E. 12th Street, Kansas ",
+   "drs:adfrawdFurtherInfoContact": "Mr. Paul Pendleton, Aerospace Engineer, Wichita Aircraft Certification Office, 1801 Airport Road, Rm. 100, Mid-Continent Airport, Wichita, Kansas, 67209, telephone (316) 946-4143; facsimile (316) 946-",
+   "drs:adfrawdRegulatoryText": "98-02-05  CESSNA AIRCRAFT COMPANY:  Amendment 39-10306; Docket No. 98-CE- 06-AD. \n\n\tApplicability:  Model 172R airplanes (serial numbers 17280001 through 17280305), certificated in any category, that are equipped with an Aeroquip engine exhaust muffler (part number 00624-NH4000011-10  71379 0554011-2). \n\n\tNOTE 1:  The letters \"PT\" or \"PTT\" stamped on the right-hand external ring that supports the ",
+   "drs:adfrawdFooter": null,
+   "drs:partNumber": [
+    "Part 39 [63 FR 5879  NO. 24  02/05/98]"
+   ],
+   "drs:subPart": null,
+   "drs:sectionNumber": null,
+   "drs:adfrawdCitationPublishDate": null,
+   "drs:adfrawdIssueDate": null,
+   "drs:effectiveDate": "1998-02-23",
+   "drs:comments": null,
+   "drs:documentOwner": null,
+   "drs:primaryRespOffice": null,
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "documentGuid": "EC0829C3B10D5DA886256A4F0045168B",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/EC0829C3B10D5DA886256A4F0045168B.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/d9501758-efcb-4e63-8bfc-f6c8abb6be41",
+   "mainDocumentFileName": "DRS_98-02-05.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "98-02-05",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "98-CE-06-AD",
+   "drs:adfrawdAmendment": null,
+   "drs:adfrawdMake": [
+    "Cessna Aircraft Company"
+   ],
+   "drs:adfrawdModel": [
+    "172R"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Small Airplane"
+   ],
+   "drs:adfrawdSubject": "Engine Exhaust Muffler",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "This information is not available.",
+   "drs:adfrawdPageNumber": null,
+   "drs:title": "Cessna Aircraft Company Model 172R",
+   "drs:adfrawdAction": null,
+   "drs:adfrawdSummary": null,
+   "drs:adfrawdAddresses": null,
+   "drs:adfrawdFurtherInfoContact": "Mr. Paul Pendleton, Aerospace Engineer, Wichita Aircraft Certification Office, 1801 Airport Road, Rm. 100, Mid-Continent Airport, Wichita, Kansas, 67209, telephone (316) 946-4143; facsimile (316) 946-",
+   "drs:adfrawdRegulatoryText": "98-02-05  CESSNA AIRCRAFT COMPANY:  Priority Letter issued on January 9, 1998.  Docket No. 98-CE-06-AD.\n\n\tApplicability:  Model 172R airplanes (serial numbers 17280001 through 17280305), certificated in any category, that are equipped with an Aeroquip engine exhaust muffler (part number 00624-NH4000011-10  71379 0554011-2).\n\n\tNOTE 1:  The letters \"PT\" or \"PTT\" stamped on the right-hand external ri",
+   "drs:adfrawdFooter": "Issued on January 9, 1998 becomes effective upon receipt.",
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": null,
+   "drs:sectionNumber": null,
+   "drs:adfrawdCitationPublishDate": null,
+   "drs:adfrawdIssueDate": "1998-01-09",
+   "drs:effectiveDate": null,
+   "drs:comments": null,
+   "drs:documentOwner": null,
+   "drs:primaryRespOffice": null,
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "documentGuid": "D22CC8C414B0C9B286256CC50060CB4B",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/D22CC8C414B0C9B286256CC50060CB4B.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/1cc23421-bae6-48d4-ae45-7792de0a1e04",
+   "mainDocumentFileName": "DRS_98-02-05.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "2017-17-03",
+   "drs:status": "Historical",
+   "drs:adfrawdDocketNo": "FAA-2021-0334",
+   "drs:adfrawdAmendment": "39-21686",
+   "drs:adfrawdMake": [
+    "Airbus SAS"
+   ],
+   "drs:adfrawdModel": [
+    "A318-111",
+    "A318-112",
+    "A318-122",
+    "A319-111",
+    "A319-112",
+    "A319-113",
+    "A319-114",
+    "A319-115"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Large Airplane"
+   ],
+   "drs:adfrawdSubject": "Fuselage",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": [
+    "2017-12-13"
+   ],
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "(Federal Register Volume 86, Number 166 (Tuesday, August 31, 2021))",
+   "drs:adfrawdPageNumber": "(Pages 48485-48487)",
+   "drs:title": "Airworthiness Directives; Airbus SAS Airplanes",
+   "drs:adfrawdAction": "Final rule.",
+   "drs:adfrawdSummary": "The FAA is superseding Airworthiness Directive (AD) 2017-12- 13, which applied to certain Airbus SAS Model A320-212, -214, -232, and -233 airplanes. AD 2017-12-13 required repetitive low frequency eddy current inspections or repetitive high frequency eddy current inspections of the pocket radius at ",
+   "drs:adfrawdAddresses": "The Director of the Federal Register approved the incorporation by reference of a certain publication listed in this AD as of October 5, 2021. \\n\\nADDRESSES: For material incorporated by reference (IB",
+   "drs:adfrawdFurtherInfoContact": "Sanjay Ralhan, Aerospace Engineer, Large Aircraft Section, International Validation Branch, FAA, 2200 South 216th St., Des Moines, WA 98198; telephone and fax 206-231-3223; email Sanjay.Ralhan@faa.gov",
+   "drs:adfrawdRegulatoryText": "Adoption of the Amendment \\n\\n\\n\\tAccordingly, under the authority delegated to me by the Administrator, the FAA amends 14 CFR part 39 as follows: \\n\\nPART 39--AIRWORTHINESS DIRECTIVES \\n\\n0 1. The authority citation for part 39 continues to read as follows: \\n\\n\\n\\tAuthority:  49 U.S.C. 106(g), 40113, 44701. \\n\\n\\n\\nSec.  39.13   (Amended) \\n\\n0 2. The FAA amends Sec.  39.13 by: \\n\\n((Page 48487)",
+   "drs:adfrawdFooter": "Issued on August 4, 2021.\\nLance T. Gant,\\nDirector, Compliance & Airworthiness Division, Aircraft Certification Service.\\n(FR Doc. 2021-18702 Filed 8-30-21; 8:45 am)",
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": [
+    "_EMPTY_"
+   ],
+   "drs:sectionNumber": [
+    "_EMPTY_"
+   ],
+   "drs:adfrawdCitationPublishDate": "2021-08-31",
+   "drs:adfrawdIssueDate": "2021-08-04",
+   "drs:effectiveDate": "2021-10-05",
+   "drs:comments": "This AD was published with the wrong AD number. 2021-17-03 is the correct AD number and was published Sept 7, 2021.",
+   "drs:documentOwner": [
+    "AIR-500 Integrated Certificate Management Division"
+   ],
+   "drs:primaryRespOffice": [
+    "AIR-520: Continued Operational Safety Branch"
+   ],
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2025-11-21T23:18:15.159Z",
+   "documentGuid": "1D786FE9775FE51086258742004F0BBC",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/1D786FE9775FE51086258742004F0BBC.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/c31e907e-4b4e-4c4a-911e-14debf2a8b6f",
+   "mainDocumentFileName": "2017-17-03.pdf",
+   "hasMoreAttachments": true,
+   "otherAttachmentDetailsUrl": "https://drs.faa.gov/api/drs/data-pull/get-other-attachment-details/c31e907e-4b4e-4c4a-911e-14debf2a8b6f"
+  },
+  {
+   "drs:documentNumber": "2017-17-03",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "FAA-2017-0270",
+   "drs:adfrawdAmendment": null,
+   "drs:adfrawdMake": [
+    "MD Helicopters, Inc."
+   ],
+   "drs:adfrawdModel": [
+    "MD900"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Rotorcraft"
+   ],
+   "drs:adfrawdSubject": "Main Rotor Head",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": [
+    "2014-16-01"
+   ],
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "Federal Register Volume 82, Number 160 (Monday, August 21, 2017)",
+   "drs:adfrawdPageNumber": "Pages 39523-39525",
+   "drs:title": "Airworthiness Directives; MD Helicopters, Inc., Helicopters",
+   "drs:adfrawdAction": "Final rule.",
+   "drs:adfrawdSummary": "We are superseding Airworthiness Directive (AD) 2014-16-01 for MD Helicopters, Inc. (MDHI), Model MD900 helicopters. AD 2014-16-01 required an eddy current inspection of the main rotor upper hub assembly (upper hub) for a crack. This AD requires additional inspections and replacing the fillet seal. ",
+   "drs:adfrawdAddresses": "The Director of the Federal Register approved the incorporation by reference of a certain publication listed in this AD as of September 25, 2017. \nADDRESSES: For service information identified in this",
+   "drs:adfrawdFurtherInfoContact": "Eric Schrieber, Aviation Safety Engineer, Los Angeles ACO Branch, Compliance and Airworthiness Division, FAA, 3960 Paramount Blvd., Lakewood, California 90712; telephone (562) 627-5348; email eric.sch",
+   "drs:adfrawdRegulatoryText": "Adoption of the Amendment \n\n\n\tAccordingly, under the authority delegated to me by the Administrator, the FAA amends 14 CFR part 39 as follows: \n\nPART 39--AIRWORTHINESS DIRECTIVES \n\n0 1. The authority citation for part 39 continues to read as follows: \n\n\n\tAuthority:  49 U.S.C. 106(g), 40113, 44701. \n\n\n\nSec.  39.13  [Amended] \n\n0 2. The FAA amends Sec.  39.13 by removing Airworthiness Directive (AD)",
+   "drs:adfrawdFooter": "Issued in Fort Worth, Texas, on August 7, 2017.\nScott A. Horn,\nDeputy Director for Regulatory Operations, Compliance & Airworthiness\nDivision, Aircraft Certification Service.\n[FR Doc. 2017-17085 Filed 8-18-17; 8:45 am]\nBILLING CODE 4910-13-P",
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": null,
+   "drs:sectionNumber": null,
+   "drs:adfrawdCitationPublishDate": "2017-08-21",
+   "drs:adfrawdIssueDate": "2017-08-07",
+   "drs:effectiveDate": "2017-09-25",
+   "drs:comments": null,
+   "drs:documentOwner": null,
+   "drs:primaryRespOffice": null,
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "documentGuid": "9F08556334EE47418625818300515AEC",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/9F08556334EE47418625818300515AEC.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/5c6e0dee-68f2-4d48-acf2-fd75af532459",
+   "mainDocumentFileName": "2017-17-03.pdf",
+   "hasMoreAttachments": true,
+   "otherAttachmentDetailsUrl": "https://drs.faa.gov/api/drs/data-pull/get-other-attachment-details/5c6e0dee-68f2-4d48-acf2-fd75af532459"
+  }
+ ]
+}

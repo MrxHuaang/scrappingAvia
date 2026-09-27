@@ -6,9 +6,11 @@ Uso:
     python populate_db.py                        # todas las fuentes
     python populate_db.py --source easa          # fuente individual
     python populate_db.py --dry-run              # scrape pero no guarda
+    python populate_db.py --drs                  # sync FAA DRS (requiere DRS_API_ENABLED)
 """
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -26,9 +28,9 @@ import enrich
 
 # Agregar directorio raiz al path
 
+from scrapers import faa_drs_ads, faa_drs_api, faa_drs_sync, federal_register
 from scrapers.federal_register import search_ads as fr_search
 from scrapers.faa_govinfo import search_ads as govinfo_search
-from scrapers.faa_drs import search_ads as drs_search
 from scrapers.easa import (
     search_ads as easa_search,
     search_main_page as easa_main,
@@ -428,57 +430,90 @@ def _fetch_ad_ids(supabase, source: str, ad_numbers: list[str]) -> dict[str, str
     return ids
 
 
-# Igual que el limite por campo de `replace_ad_applicability` (INT-3). Si la RPC
-# lo cambia, cambia aqui: enviar un campo mas largo aborta el LOTE ENTERO, no la
-# fila. Lo vigila tests/test_applicability_pairs.py.
-APPLICABILITY_TEXT_MAX = 256
+# Limites separados de `replace_ad_applicability` (INT-3, migracion v2
+# 20260926130000): make y model tienen topes distintos porque un solo holder
+# puede legitimamente traer un listado largo de type designations
+# ("737-600, -700, -800, ..."). Si la RPC los cambia, cambian aqui: enviar un
+# campo mas largo aborta el LOTE ENTERO, no la fila. Lo vigila
+# tests/test_applicability_pairs.py.
+APPLICABILITY_MAKE_MAX = 256
+APPLICABILITY_MODEL_MAX = 2000
+
+
+class ApplicabilityError(Exception):
+    """Un scraper puede marcar con esto que la extraccion de applicability de
+    UN AD puntual fallo (ej. PDF de EASA ilegible, listado con estructura
+    reconocida pero corrupta). No es "no hay datos" (eso es success_empty)
+    sino "no se pudo leer" (failed): la AD entera queda `failed` y sus filas
+    guardadas no se tocan; nunca se declara un subconjunto parcial como si
+    fuera la verdad completa. `_applicability_pairs` la lanza tambien cuando
+    `raw_data["Applicability"]` trae un holder que no se puede interpretar."""
+
+
+def _holder_pair(holder) -> tuple[str, str | None]:
+    """El par (make, model) de un elemento de `raw_data["Applicability"]`, o
+    ApplicabilityError si el elemento no se puede interpretar entero: sin
+    make, `models` que no es lista (un string se recorreria como caracteres)
+    o un modelo que no es string. Un modelo en blanco no es un modelo."""
+    if not isinstance(holder, dict):
+        raise ApplicabilityError(f"holder que no es objeto: {holder!r:.80}")
+    make = holder.get("make")
+    if not isinstance(make, str) or not make.strip():
+        raise ApplicabilityError(f"holder sin make: {holder!r:.80}")
+    models = holder.get("models", [])
+    if not isinstance(models, list) or not all(isinstance(m, str) for m in models):
+        raise ApplicabilityError(f"models no es una lista de strings: {holder!r:.80}")
+    models = [m.strip() for m in models if m.strip()]
+    return make.strip(), ", ".join(models) if models else None
 
 
 def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
-    """Pares (make, model) para un AD, sin inventar combinaciones.
+    """Pares (make, model) para un AD, sin inventar combinaciones ni tokenizar.
 
     Camino estructurado: el scraper aporta `raw_data["Applicability"]` como
     [{make, models[]}] — un approval holder con SUS modelos. Es el unico camino
-    correcto cuando un AD lista varios fabricantes, y EASA lo permite porque el
-    listado anida los type designations dentro de cada `li.tc_holder`. Asi un AD
-    multi-holder conserva pares reales en `high` en vez de degradar a make solo.
+    correcto cuando un AD lista varios fabricantes, y EASA/TC lo permiten
+    porque el listado anida los type designations dentro de cada holder. Cada
+    holder produce UNA fila: sus modelos viajan unidos por ", " en el orden de
+    la fuente, en vez de una fila por modelo. Partir "737-600, -700, -800" en
+    tres filas aqui no gana nada — `ad_model_index`/`ad_model_family` en
+    Postgres ya tokeniza el texto del modelo para el matching de flota — y
+    perder la lista completa en una sola fila desperdicia el limite de 2000
+    chars que la RPC reserva justo para esto.
 
-    Camino legado (FAA/TC/ANAC, que nunca traen mas de un fabricante): `make`
-    escalar y `model` con varios separados por coma.
+    Camino legado (FAA/ANAC/DGAC/UK CAA, que nunca traen mas de un
+    fabricante): `make` escalar y `model` completo tal cual lo dejo el
+    scraper, en UNA fila — tampoco se parte por coma.
 
-    Lo que este helper NO hace es partir `make` por coma. Los nombres de holder
-    llevan comas propias ("REVO, Inc.", "McDermott 214 Holdings, LLC"), asi que
-    el join no es reversible: sobre las 765 filas afectadas de EASA, partir da
-    1972 tokens de los que 316 son sufijos societarios ("INC." x194, "LLC" x56,
-    "GmbH" x42), y esos fragmentos terminarian como fabricantes en
-    `ad_applicability` y como opciones del filtro Make via `aircraft_makes()`.
-    Un `make` largo sin estructura que lo explique se reporta arriba contra
-    APPLICABILITY_TEXT_MAX; no se convierte en varios fabricantes plausibles.
+    Lo que este helper NO hace, en ningun camino, es partir `make` por coma.
+    Los nombres de holder llevan comas propias ("REVO, Inc.", "McDermott 214
+    Holdings, LLC"), asi que el join no es reversible: sobre las 765 filas
+    afectadas de EASA, partir da 1972 tokens de los que 316 son sufijos
+    societarios ("INC." x194, "LLC" x56, "GmbH" x42), y esos fragmentos
+    terminarian como fabricantes en `ad_applicability` y como opciones del
+    filtro Make via `aircraft_makes()`. Un `make` largo sin estructura que lo
+    explique se reporta arriba contra APPLICABILITY_MAKE_MAX; no se convierte
+    en varios fabricantes plausibles.
     """
-    holders = row.get("raw_data") or {}
-    holders = holders.get("Applicability") if isinstance(holders, dict) else None
-    if isinstance(holders, list) and holders:
-        pairs: list[tuple[str, str | None]] = []
-        for holder in holders:
-            if not isinstance(holder, dict):
-                continue
-            h_make = (holder.get("make") or "").strip()
-            if not h_make:
-                continue
-            models = [
-                m.strip() for m in (holder.get("models") or []) if isinstance(m, str) and m.strip()
-            ]
-            if models:
-                pairs.extend((h_make, m) for m in models)
-            else:
-                pairs.append((h_make, None))
-        if pairs:
-            return pairs
+    raw = row.get("raw_data") or {}
+    if raw.get("Applicability_Error"):
+        # Enganche para scrapers futuros que procesen detalle por-AD: una
+        # extraccion que fallo a medias no es "el AD no aplica a nada".
+        raise ApplicabilityError(str(raw["Applicability_Error"]))
+
+    holders = raw.get("Applicability") if isinstance(raw, dict) else None
+    if holders is not None and not isinstance(holders, list):
+        raise ApplicabilityError(f"Applicability no es una lista: {holders!r:.80}")
+    if holders:
+        # Toda la estructura o nada: saltar un holder ilegible y declarar los
+        # demas como `success_with_rows` le haria podar a la RPC las filas del
+        # holder perdido.
+        return [_holder_pair(holder) for holder in holders]
 
     make_field = (row.get("make") or "").strip()
     if not make_field:
-        # Sin fabricante no hay fila que declarar. El AD queda con
-        # `success_empty` mas abajo, no con una fila invalida.
+        # Sin fabricante no hay fila que declarar: el AD queda `failed` mas
+        # abajo, no con una fila invalida.
         return []
     if "," in make_field:
         # Una fuente que empaqueta fabricantes sin atribucion es una regresion
@@ -489,8 +524,7 @@ def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
             f"— el scraper deberia emitir raw_data['Applicability']"
         )
     model_field = (row.get("model") or "").strip()
-    models = [m.strip() for m in model_field.split(",") if m.strip()]
-    return [(make_field, m) for m in models] or [(make_field, None)]
+    return [(make_field, model_field or None)]
 
 
 # Igual que max_ads/max_total_rows de replace_ad_applicability (migracion D-21,
@@ -537,13 +571,365 @@ def _applicability_batches(payload: list[dict]) -> list[list[dict]]:
     return batches
 
 
-def _send_applicability_batches(supabase, payload: list[dict]) -> None:
-    """Envia cada lote de `_applicability_batches(payload)` a la RPC."""
+# SQLSTATE de deadlock. PostgREST lo devuelve en `code` y postgrest-py lo deja
+# en `APIError.code`; cualquier otra excepcion (transporte incluido) no lo trae.
+DEADLOCK_SQLSTATE = "40P01"
+
+
+def _replace_applicability(supabase, batch: list[dict]):
+    """Una llamada a `replace_ad_applicability` y, si Postgres la aborto por
+    deadlock, UN reenvio del mismo lote. Cada intento es una llamada nueva: la
+    transaccion abortada ya se revirtio entera, asi que reenviar no duplica
+    nada. Si el segundo intento falla, ese error es el que sube; cualquier otro
+    error no se reintenta."""
+    try:
+        return supabase.rpc("replace_ad_applicability", {"p_ads": batch}).execute()
+    except Exception as e:
+        if str(getattr(e, "code", "")) != DEADLOCK_SQLSTATE:
+            raise
+        logger.warning("  applicability: deadlock (40P01) en la RPC, se reenvia el lote una vez")
+    return supabase.rpc("replace_ad_applicability", {"p_ads": batch}).execute()
+
+
+def _send_applicability_batches(supabase, payload: list[dict]) -> dict[str, int]:
+    """Envia cada lote de `_applicability_batches(payload)` a la RPC (con un
+    reenvio ante deadlock, `_replace_applicability`) y lee la respuesta real
+    (`ad_id, status, rows_now` por AD, en orden de payload).
+
+    El status devuelto es la autoridad, no el declarado: la RPC puede
+    degradar un elemento a `failed` en silencio (la migracion v2 lo hace con
+    un `success_empty` sin `empty_evidence`, para no romper llamadores
+    viejos). Sin leer `resp.data` ese degradado pasaria desapercibido — se
+    cuenta y se loguea aqui.
+    """
+    counts: dict[str, int] = {"success_with_rows": 0, "success_empty": 0, "failed": 0}
+    db_failed: list[str] = []
     for i, batch in enumerate(_applicability_batches(payload)):
         try:
-            supabase.rpc("replace_ad_applicability", {"p_ads": batch}).execute()
+            resp = _replace_applicability(supabase, batch)
+            for rec in resp.data or []:
+                st = rec.get("status")
+                counts[st] = counts.get(st, 0) + 1
+                if st == "failed":
+                    db_failed.append(rec.get("ad_id"))
         except Exception as e:
             _record_write_error(f"  applicability: RPC replace fallo (lote {i + 1}): {e}")
+    if db_failed:
+        shown = db_failed[:20]
+        suffix = f" (+{len(db_failed) - 20} mas)" if len(db_failed) > 20 else ""
+        logger.warning(
+            f"  applicability: la BD reporto {len(db_failed)} AD(s) failed: "
+            f"{shown}{suffix}"
+        )
+    return counts
+
+
+# ads.product_type (canonico via enrich.normalize_product_type) -> codigo del
+# catalogo de la BD: enrich.PRODUCT_TYPE_CODE. None (AD sin tipo derivable) se
+# omite del payload adrede: la RPC/el trigger ya sabe derivarlo de
+# `ads.product_type` (mismo valor, resuelto server-side), y mandar 'unknown'
+# explicito lo marcaria como product_type_source='explicit' para siempre,
+# impidiendo que una correccion futura de ads.product_type se propague (eso
+# solo pasa sobre filas 'derived'). product_subtype solo viaja junto a su
+# product_type (la RPC rechaza uno sin el otro) y solo si enrich.product_subtype
+# lo deriva con seguridad.
+
+
+# `success_empty` no lo declara ningun extractor (docs/applicability-contract.md).
+# Le ordena a la RPC borrar las filas guardadas del AD, asi que exige que la
+# FUENTE declare explicitamente "no hay pares", y ninguna fuente activa lo
+# hace: un listado sin make, un titulo generico o una lista de holders vacia
+# son datos ausentes, no evidencia. En EASA, `Applicability == []` es que el
+# selector `li.tc_holder` no encontro nada, y un cambio de markup da
+# exactamente lo mismo que un AD sin holders. Sin pares, el AD viaja `failed`.
+
+
+# ---------------------------------------------------------------------------
+# Texto del AD en secciones (FAA): ad_text_documents / ad_text_sections
+# ---------------------------------------------------------------------------
+# Limites de `replace_ad_text_sections` (migracion 20260927100000 de
+# ad-scrapper). Si la RPC los cambia, cambian aqui: un payload que se pase
+# aborta la llamada del AD. Lo vigila tests/test_text_sections_payload.py.
+TEXT_SECTIONS_MAX = 200
+TEXT_FIELD_MAX = 2048      # cada campo del intento y cada heading
+TEXT_LETTER_MAX = 8
+TEXT_BODY_MAX = 200000
+TEXT_PROVIDER = "govinfo"
+# La RPC es de un AD por llamada (una transaccion por AD). Si falla esta
+# cantidad de llamadas seguidas (RPC ausente, base caida) no se sigue
+# martillando: el resto se registra como un solo error de escritura.
+TEXT_MAX_CONSECUTIVE_FAILURES = 20
+
+
+def _text_sections_over_limits(sections: list[dict]) -> str | None:
+    """Motivo por el que la RPC rechazaria estas secciones, o None."""
+    if len(sections) > TEXT_SECTIONS_MAX:
+        return f"{len(sections)} sections, limit is {TEXT_SECTIONS_MAX}"
+    for s in sections:
+        heading, body, letter = s.get("heading") or "", s.get("body") or "", s.get("letter") or ""
+        if not heading.strip() or not body.strip():
+            return f"section {s.get('position')} without heading or body"
+        if len(heading) > TEXT_FIELD_MAX or len(letter) > TEXT_LETTER_MAX or len(body) > TEXT_BODY_MAX:
+            return f"section {s.get('position')} over the field limits"
+    return None
+
+
+def _text_payload(raw: dict, entry: dict) -> tuple[dict, list[dict], str | None]:
+    """(p_attempt, p_sections, problema) de un AD FAA desde su entrada del
+    cache full-text v2.
+
+    El intento dice lo que encontro el parser (extracted | unanchored | empty
+    | error); la base decide ok/partial con `ad_text_is_complete` y nunca
+    reemplaza texto conservado con un intento peor. Por eso aqui no se decide
+    nada sobre completitud ni se evita mandar un intento fallido: un `error`
+    tras un texto valido se registra como intento y el texto queda.
+
+    Solo un intento `extracted` lleva secciones (la RPC rechaza las demas). Si
+    las secciones no caben en los limites de la RPC, el intento viaja como
+    `error` sin secciones y se devuelve el problema para registrarlo: el AD
+    queda con su texto anterior y la corrida en error.
+    """
+    doc = (raw.get("FR_DocNumber") or "").strip()
+    status = entry.get("status")
+    sections = [
+        {"position": s.get("position"), "letter": s.get("letter"), "heading": s.get("heading"),
+         "kind": s.get("kind"), "body": s.get("body")}
+        for s in (entry.get("sections") or [])
+    ] if status == "extracted" else []
+    attempt = {
+        "status": status,
+        "provider": TEXT_PROVIDER,
+        "document_id": doc,
+        "source_url": federal_register.govinfo_source_url(raw.get("Publication_Date") or "", doc),
+        "sha256": entry.get("sha"),
+        "anchor": entry.get("anchor") if status == "extracted" else None,
+        "detail": entry.get("detail"),
+    }
+    return _checked_text_attempt(attempt, sections)
+
+
+def _checked_text_attempt(attempt: dict, sections: list[dict]) -> tuple[dict, list[dict], str | None]:
+    """Un intento `extracted` cuyas secciones o ancla no caben en los limites
+    de la RPC viaja como `error` sin secciones, con el problema devuelto para
+    registrarlo. Comun a GovInfo y DRS."""
+    status = attempt["status"]
+    problem = _text_sections_over_limits(sections) if status == "extracted" else None
+    if problem is None and (attempt["anchor"] or "") and len(attempt["anchor"]) > TEXT_FIELD_MAX:
+        problem = f"anchor over {TEXT_FIELD_MAX} characters"
+    if problem:
+        attempt.update(status="error", anchor=None, detail=f"sections not sent: {problem}")
+        sections = []
+    if attempt["detail"]:
+        attempt["detail"] = attempt["detail"][:TEXT_FIELD_MAX]
+    return attempt, sections, problem
+
+
+def _stored_text_state(supabase, ad_ids: list[str]) -> dict[str, str | None] | None:
+    """ad_id -> text_sha256 de ad_text_documents (None si el AD tiene intentos
+    pero ningun texto conservado). Un AD sin fila no aparece. None si la
+    lectura fallo (registrado)."""
+    kept = _kept_text(supabase, ad_ids)
+    return None if kept is None else {ad_id: rec.get("text_sha256") for ad_id, rec in kept.items()}
+
+
+def _kept_text(supabase, ad_ids: list[str]) -> dict[str, dict] | None:
+    """ad_id -> {text_sha256, text_provider} de ad_text_documents (los dos
+    None si el AD tiene intentos pero ningun texto conservado). Un AD sin
+    fila no aparece. None si la lectura fallo (registrado)."""
+    kept: dict[str, dict] = {}
+    BATCH = 300
+    for i in range(0, len(ad_ids), BATCH):
+        try:
+            resp = (supabase.table("ad_text_documents")
+                    .select("ad_id, text_sha256, text_provider")
+                    .in_("ad_id", ad_ids[i:i + BATCH])
+                    .execute())
+            for rec in resp.data or []:
+                kept[rec["ad_id"]] = {"text_sha256": rec.get("text_sha256"),
+                                      "text_provider": rec.get("text_provider")}
+        except Exception as e:
+            _record_write_error(f"  text: no se pudo leer ad_text_documents: {e}")
+            return None
+    return kept
+
+
+def _text_needs_send(entry: dict, fresh: bool, stored: dict[str, str | None] | None, ad_id: str) -> bool:
+    """Un intento de esta corrida se manda siempre: es el ultimo intento real
+    del AD. Uno guardado en el cache de una corrida anterior solo si la base
+    todavia no lo tiene: sin fila en ad_text_documents, o un `extracted` sin
+    texto conservado. Reenviarlo cada noche falsearia `last_attempt_at` y
+    reescribiria las mismas secciones de ~13.5k ADs."""
+    if fresh:
+        return True
+    if stored is None:  # la pre-lectura fallo: solo lo que es de hoy
+        return False
+    if ad_id not in stored:
+        return True
+    return entry.get("status") == "extracted" and stored[ad_id] is None
+
+
+def _send_text_sections(supabase, payload: list[tuple[str, dict, list[dict]]]) -> dict[str, int]:
+    """Una llamada a `replace_ad_text_sections` por AD y el estado que la base
+    guardo (ok | partial | unanchored | empty | error), contado. Cada fallo
+    de la RPC es un error de escritura; tras TEXT_MAX_CONSECUTIVE_FAILURES
+    seguidos se abandona el resto con un solo error."""
+    counts: dict[str, int] = {}
+    consecutive = 0
+    for n, (ad_id, attempt, sections) in enumerate(payload):
+        try:
+            resp = supabase.rpc("replace_ad_text_sections", {
+                "p_ad_id": ad_id, "p_attempt": attempt, "p_sections": sections,
+            }).execute()
+            stored = resp.data if isinstance(resp.data, str) else "unknown"
+            counts[stored] = counts.get(stored, 0) + 1
+            consecutive = 0
+        except Exception as e:
+            _record_write_error(f"  text: RPC replace_ad_text_sections fallo ({ad_id}): {e}")
+            counts["rpc_failed"] = counts.get("rpc_failed", 0) + 1
+            consecutive += 1
+            if consecutive >= TEXT_MAX_CONSECUTIVE_FAILURES:
+                left = len(payload) - n - 1
+                if left:
+                    _record_write_error(
+                        f"  text: {consecutive} fallos seguidos de la RPC, {left} AD(s) sin enviar"
+                    )
+                    counts["not_sent"] = left
+                break
+    return counts
+
+
+def populate_text_sections(supabase, normalized: list[dict], id_map: dict[str, str]) -> dict[str, int]:
+    """Texto de los ADs FAA hacia ad_text_documents/ad_text_sections, desde el
+    cache full-text v2 que dejo la corrida (`federal_register.fulltext_entry`).
+
+    Mismo `id_map` que applicability (ad_number -> ads.id de `_fetch_ad_ids`).
+    Un AD sin entrada v2 (sin GOVINFO_API_KEY no hay intento) no viaja: no hay
+    intento que registrar. Devuelve los conteos del estado que guardo la base.
+    """
+    by_ad: dict[str, tuple[dict, dict, bool]] = {}
+    for r in normalized:
+        ad_id = id_map.get(r["ad_number"])
+        raw = r.get("raw_data") or {}
+        doc = (raw.get("FR_DocNumber") or "").strip()
+        entry = federal_register.fulltext_entry(doc)
+        if not ad_id or not entry or entry.get("v") != 2:
+            continue
+        by_ad[ad_id] = (raw, entry, federal_register.fulltext_attempted(doc))
+    if not by_ad:
+        return {}
+
+    stored = None
+    if any(not fresh for _, _, fresh in by_ad.values()):
+        stored = _stored_text_state(supabase, list(by_ad))
+    payload = []
+    for ad_id, (raw, entry, fresh) in by_ad.items():
+        if not _text_needs_send(entry, fresh, stored, ad_id):
+            continue
+        attempt, sections, problem = _text_payload(raw, entry)
+        if problem:
+            _record_write_error(
+                f"  text: {raw.get('AD_Number') or ad_id}: secciones fuera de limite ({problem}), "
+                f"se registra el intento como error"
+            )
+        payload.append((ad_id, attempt, sections))
+
+    counts = _send_text_sections(supabase, payload)
+    logger.info(
+        f"[federal_register] texto: {len(payload)} intentos enviados de {len(by_ad)} ADs con entrada "
+        f"({sum(1 for *_, f in by_ad.values() if f)} de esta corrida); BD: "
+        + ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+    )
+    return counts
+
+
+# Texto de DRS (`drs_documents.regulatory_text`, texto plano) para los ADs FAA
+# sin texto de GovInfo conservado: los anteriores a 1994, que GovInfo no
+# tiene, y los que GovInfo no pudo anclar. Mismo parser (modo texto plano),
+# mismos estados de intento y misma RPC; la base aplica la misma regla de
+# completitud y nunca reemplaza texto conservado con un intento peor.
+TEXT_PROVIDER_DRS = "drs"
+DRS_TEXT_DOCTYPE = "ADFRAWD"   # ADFREAD no trae texto regulatorio
+DRS_TEXT_BATCH = 500           # numeros de AD por lectura de drs_documents
+
+
+def _drs_text_payload(record: dict) -> tuple[dict, list[dict], str | None]:
+    """(p_attempt, p_sections, problema) de un AD desde su documento DRS,
+    anclado al numero del propio AD como en GovInfo. El amendment no se
+    exige: el de DRS puede ser el de la ultima enmienda ("Amendment 39-5571
+    as amended by Amendment 39-6115")."""
+    ad = record["ad_number"]
+    text = record.get("regulatory_text") or ""
+    parsed = enrich.split_ad_sections(text, ad, plain=True)
+    status = parsed["status"]
+    detail = {
+        "unanchored": f"no regulatory header in the DRS text declares AD {ad}",
+        "empty": "the DRS document has no regulatory text",
+        "error": "anchored DRS text without sections",
+    }.get(status)
+    attempt = {
+        "status": status,
+        "provider": TEXT_PROVIDER_DRS,
+        "document_id": record.get("document_guid"),
+        "source_url": record.get("document_url"),
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest() if text.strip() else None,
+        "anchor": parsed["anchor"] if status == "extracted" else None,
+        "detail": detail,
+    }
+    sections = [dict(s) for s in parsed["sections"]] if status == "extracted" else []
+    return _checked_text_attempt(attempt, sections)
+
+
+def _drs_text_needs_send(kept: dict | None, sha256: str | None) -> bool:
+    """El texto de DRS solo entra donde no hay texto de GovInfo conservado:
+    AD sin fila en ad_text_documents, con intentos pero sin texto, o con
+    texto de DRS que cambio. Un texto de GovInfo conservado nunca se toca, y
+    uno de DRS igual al que ya esta no se reenvia."""
+    if kept is None or not kept.get("text_sha256"):
+        return True
+    return kept.get("text_provider") == TEXT_PROVIDER_DRS and kept.get("text_sha256") != sha256
+
+
+def populate_drs_text_sections(supabase, store, ad_numbers, *, dry_run: bool = False) -> dict[str, int]:
+    """Intentos de texto desde DRS para los ADs FAA de `ad_numbers` (los de
+    las paginas subidas en la corrida). El documento de cada AD es el mismo
+    que elige `link_ads_to_drs` (`faa_drs_ads.pick_document`). Un AD sin fila
+    en `ads` no viaja. Devuelve los conteos del parseo (`parsed_<estado>`) y
+    del estado que guardo la base."""
+    counts: dict[str, int] = {}
+
+    def bump(key: str, n: int = 1) -> None:
+        counts[key] = counts.get(key, 0) + n
+
+    numbers = sorted(set(ad_numbers))
+    for i in range(0, len(numbers), DRS_TEXT_BATCH):
+        groups = faa_drs_ads.group_by_ad(store.documents(DRS_TEXT_DOCTYPE, numbers[i:i + DRS_TEXT_BATCH]))
+        parsed = {n: _drs_text_payload(faa_drs_ads.pick_document(docs)) for n, docs in groups.items()}
+        for attempt, _sections, _problem in parsed.values():
+            bump(f"parsed_{attempt['status']}")
+        if dry_run or not parsed:
+            continue
+        id_map = _fetch_ad_ids(supabase, "federal_register", list(parsed))
+        kept = _kept_text(supabase, list(id_map.values()))
+        if kept is None:
+            return counts
+        payload = []
+        for number, (attempt, sections, problem) in parsed.items():
+            ad_id = id_map.get(number)
+            if not ad_id:
+                bump("not_in_ads")
+                continue
+            if not _drs_text_needs_send(kept.get(ad_id), attempt["sha256"]):
+                bump("text_already_kept")
+                continue
+            if problem:
+                _record_write_error(f"  text: {number} (DRS): secciones fuera de limite ({problem}), "
+                                    f"se registra el intento como error")
+            payload.append((ad_id, attempt, sections))
+        for status, n in _send_text_sections(supabase, payload).items():
+            bump(status, n)
+    logger.info(f"[DRS] texto{' (DRY-RUN)' if dry_run else ''}: "
+                + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    return counts
 
 
 def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
@@ -552,11 +938,15 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
       - ad_applicability  (make/model afectados)
       - ad_service_bulletins (SBs referenciados en subject/abstract)
       - superseded_to_ad_id (si el scraper aporto 'Superseded_By')
+      - ad_text_documents / ad_text_sections (solo FAA, populate_text_sections)
     Applicability va por la RPC transaccional `replace_ad_applicability` con el
     estado triestado por AD del contrato (docs/applicability-contract.md):
-    un AD presente en la salida del scraper con make -> success_with_rows;
-    presente sin make -> success_empty; ausente -> no se toca (failed implicito).
-    SBs por upsert (ad_id, sb_number).
+    un AD presente en la salida del scraper con pares validos -> success_with_rows;
+    sin pares (ninguna fuente da evidencia de ausencia real), o con una fila
+    descartada, o con extraccion
+    fallida (`ApplicabilityError`) -> failed (no se toca lo guardado);
+    ausente de `normalized` -> tampoco se toca (failed implicito, ni siquiera
+    viaja en el payload). SBs por upsert (ad_id, sb_number).
     """
     if not normalized:
         return
@@ -569,9 +959,10 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     applic_seen: dict[str, set] = {}
     sb_rows: list[dict] = []
     sb_seen: set[tuple[str, str]] = set()
-    # ADs con >=1 fila de applicability descartada por tamano de campo. Viajan
-    # `failed` en vez de `success_empty`/`success_with_rows`: lo que sobrevivio
-    # es un subconjunto accidental, no la verdad completa del AD.
+    # ADs con >=1 fila de applicability descartada por tamano de campo, o cuya
+    # extraccion levanto ApplicabilityError. Viajan `failed` en vez de
+    # `success_empty`/`success_with_rows`: lo que sobrevivio es un subconjunto
+    # accidental, no la verdad completa del AD.
     applic_dropped: set[str] = set()
     # (ad_id_to_update, target_ad_number) — the row at ad_id is superseded BY target.
     supersede_updates: list[tuple[str, str]] = []
@@ -585,13 +976,31 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
 
         raw = r.get("raw_data") or {}
 
-        for mk, mod in _applicability_pairs(r):
+        try:
+            pairs = _applicability_pairs(r)
+        except ApplicabilityError as e:
+            # Extraccion fallida a medias: nunca un subconjunto parcial
+            # declarado completo. El AD entero queda `failed`.
+            _record_write_error(f"  applicability: {r['ad_number']}: extraccion fallo: {e}")
+            applic_dropped.add(ad_id)
+            pairs = []
+
+        pt_code = enrich.PRODUCT_TYPE_CODE.get(r.get("product_type") or "")
+        # Del mismo texto que decide el tipo; None si no pertenece a pt_code o
+        # no hay coincidencia segura (docs/applicability-contract.md). En FAA
+        # el abstract marca el titulo como FAA (titular ignorado, respaldo en
+        # el abstract), igual que en classify_product_type.
+        faa_abstract = (raw.get("Abstract") or "") if source == "federal_register" else None
+        pt_subtype = (enrich.product_subtype(pt_code, r.get("subject") or "", faa_abstract)
+                      if pt_code else None)
+
+        for mk, mod in pairs:
             # La RPC rechaza el payload entero si un AD repite clave natural.
             key = (mk, mod)
             if key in applic_seen[ad_id]:
                 continue
             applic_seen[ad_id].add(key)
-            if len(mk) > APPLICABILITY_TEXT_MAX or len(mod or "") > APPLICABILITY_TEXT_MAX:
+            if len(mk) > APPLICABILITY_MAKE_MAX or len(mod or "") > APPLICABILITY_MODEL_MAX:
                 # Se descarta la fila, pero NUNCA en silencio: un campo que no
                 # cabe es un dato que hay que mirar, y `_record_write_error`
                 # fuerza status='error' y salida != 0. Ademas marca el AD para
@@ -600,19 +1009,28 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                 # nada, y declararlo `success_empty` le ordenaria a la RPC BORRAR
                 # lo que ya tenia guardado.
                 _record_write_error(
-                    f"  applicability: {r['ad_number']}: campo de mas de "
-                    f"{APPLICABILITY_TEXT_MAX} chars, fila descartada "
-                    f"(make={len(mk)}, model={len(mod or '')})"
+                    f"  applicability: {r['ad_number']}: campo fuera de limite, "
+                    f"fila descartada (make={len(mk)}/{APPLICABILITY_MAKE_MAX}, "
+                    f"model={len(mod or '')}/{APPLICABILITY_MODEL_MAX})"
                 )
                 applic_dropped.add(ad_id)
                 continue
-            applic_by_ad[ad_id].append({
+            row_payload = {
                 "make": mk,
                 "model": mod,
                 # make+model identifica una aeronave; solo make es mas debil.
                 # Alineado con lib/ads/applicability.ts del frontend.
                 "confidence": "high" if mod else "medium",
-            })
+                # listed si hay texto de modelo; unknown si no. `none` (la
+                # fuente declara "todos los modelos") no lo emite ninguna
+                # fuente hoy — no hay senal fiable de esa declaracion.
+                "model_status": "listed" if mod else "unknown",
+            }
+            if pt_code:
+                row_payload["product_type"] = pt_code
+                if pt_subtype:
+                    row_payload["product_subtype"] = pt_subtype
+            applic_by_ad[ad_id].append(row_payload)
 
         # Explicit SB list (EASA detail page) wins; else mine subject/abstract.
         explicit_sbs = raw.get("Service_Bulletins")
@@ -654,14 +1072,18 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
             # filas que SI cupieron no son la verdad completa del AD. La RPC
             # rechaza `rows` no vacio salvo con status=success_with_rows.
             return {"ad_id": aid, "status": "failed", "rows": []}
-        return {
-            "ad_id": aid,
-            "status": "success_with_rows" if rows else "success_empty",
-            "rows": rows,
-        }
+        if rows:
+            return {"ad_id": aid, "status": "success_with_rows", "rows": rows}
+        # Sin pares no hay base para pedirle a la RPC que borre lo que ya
+        # tenia guardado (ver el comentario sobre `success_empty`).
+        return {"ad_id": aid, "status": "failed", "rows": []}
 
     applic_payload = [_applic_element(aid, rows) for aid, rows in applic_by_ad.items()]
-    _send_applicability_batches(supabase, applic_payload)
+    applic_counts = _send_applicability_batches(supabase, applic_payload)
+
+    # Texto del AD en secciones: solo FAA tiene cache full-text con secciones.
+    if source == "federal_register":
+        populate_text_sections(supabase, normalized, id_map)
 
     # ad_service_bulletins: upsert on (ad_id, sb_number)
     for i in range(0, len(sb_rows), 500):
@@ -714,15 +1136,17 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                 except Exception as e:
                     _record_write_error(f"  supersede: update fallo target {tgt}: {e}")
 
-    # Contado sobre el payload REAL enviado (applic_payload), no sobre
-    # applic_by_ad: un AD con filas descartadas por tamano tiene `rows == []`
-    # ahi igual que uno legitimamente vacio, pero viaja `failed`, no
-    # `success_empty` — contarlo desde applic_by_ad los mezclaba.
-    n_empty = sum(1 for e in applic_payload if e["status"] == "success_empty")
-    n_failed = sum(1 for e in applic_payload if e["status"] == "failed")
+    # Declarado por el cliente (lo que se mando) vs. leido de la RPC (lo que
+    # la BD de verdad aplico, que puede degradar a failed; ver
+    # _send_applicability_batches). Se loguean ambos porque difieren cuando
+    # eso pasa.
+    n_declared_failed = sum(1 for e in applic_payload if e["status"] == "failed")
     logger.info(
         f"[{source}] relaciones: {sum(len(v) for v in applic_by_ad.values())} applicability "
-        f"({n_empty} declarados success_empty, {n_failed} failed por filas descartadas), "
+        f"({n_declared_failed} declarados failed; "
+        f"BD: {applic_counts.get('success_with_rows', 0)} success_with_rows, "
+        f"{applic_counts.get('success_empty', 0)} success_empty, "
+        f"{applic_counts.get('failed', 0)} failed), "
         f"{len(sb_rows)} service bulletins, {len(supersede_updates)} supersession"
     )
 
@@ -857,30 +1281,20 @@ def _merge_faa_results(fr_rows: list[dict], govinfo_rows: list[dict]) -> list[di
 def run_federal_register(since: str | None = None, with_govinfo: bool = False) -> list[dict]:
     """
     Source 'federal_register' consolida upstreams FAA bajo el mismo source key:
-      1. DRS (drs.faa.gov)        -> pre-1995 historicos (best-effort)
-      2. FR API (year-split)      -> 1994+ via federalregister.gov (contenido
+      1. FR API (year-split)      -> 1994+ via federalregister.gov (contenido
          E identidad: `docket_ids` trae numero AD, docket y amendment)
-      3. GovInfo API (MODS XML)   -> opcional (--with-govinfo). Ya no aporta
+      2. GovInfo API (MODS XML)   -> opcional (--with-govinfo). Ya no aporta
          identidad; solo completa Docket/Amendment faltantes.
 
     since (YYYY-MM-DD): acota FR API y GovInfo a publicaciones desde esa fecha
-    (runs incrementales); DRS no aplica (historicos pre-1995).
+    (runs incrementales).
     """
-    logger.info("Scraping federal_register (DRS + FR API%s)..." %
+    logger.info("Scraping federal_register (FR API%s)..." %
                 (" + GovInfo MODS" if with_govinfo else ""))
     all_results: list[dict] = []
 
-    # Fase 1: DRS pre-1995 (best-effort, no falla si Akamai bloquea)
-    logger.info("  [1] DRS (drs.faa.gov, pre-1995 historicos)...")
-    try:
-        drs_results = drs_search(pre_govinfo_only=True)
-        logger.info(f"  DRS: {len(drs_results)} ADs")
-        all_results.extend(drs_results)
-    except Exception as e:
-        logger.warning(f"  DRS fallo (continua pipeline): {e}")
-
-    # Fase 2: FR API year-split (1994 -> current)
-    logger.info("  [2] Federal Register API (year-split, identidad via docket_ids)...")
+    # Fase 1: FR API year-split (1994 -> current)
+    logger.info("  [1] Federal Register API (year-split, identidad via docket_ids)...")
     if since:
         from scrapers.federal_register import search_ads_by_year_range
         # Year-split desde el anio de --since; el filtro fino por fecha lo da
@@ -890,16 +1304,16 @@ def run_federal_register(since: str | None = None, with_govinfo: bool = False) -
         fr_results = fr_search()
     logger.info(f"  FR API: {len(fr_results)} ADs")
 
-    # Fase 3 (opcional): GovInfo MODS. Solo completa Docket/Amendment; la
+    # Fase 2 (opcional): GovInfo MODS. Solo completa Docket/Amendment; la
     # identidad ya viene de docket_ids y NO debe pisarse con el MODS XML.
     gov_results: list[dict] = []
     if not with_govinfo:
-        logger.info("  [3] GovInfo MODS: omitido (--with-govinfo para habilitar)")
+        logger.info("  [2] GovInfo MODS: omitido (--with-govinfo para habilitar)")
         all_results.extend(_merge_faa_results(fr_results, gov_results))
         logger.info(f"federal_register: {len(all_results)} ADs encontrados (pre-dedupe)")
         return all_results
 
-    logger.info("  [3] GovInfo API (MODS XML: completa docket + amendment)...")
+    logger.info("  [2] GovInfo API (MODS XML: completa docket + amendment)...")
     try:
         # Mismo span que FR API (desde el 1 de enero del anio de --since) para
         # que el merge cubra los mismos documentos; el cache MODS hace baratos
@@ -1083,6 +1497,150 @@ RUNNERS = {
 
 
 # ---------------------------------------------------------------------------
+# FAA DRS: ADs anteriores a 1994 hacia `ads` (source federal_register)
+# ---------------------------------------------------------------------------
+#: Solo los AD finales: los de emergencia (ADFREAD) empiezan en 1997.
+DRS_BACKFILL_DOCTYPE = "ADFRAWD"
+
+
+def _ads_not_created_from_drs(supabase, ad_numbers: list[str]) -> set[str] | None:
+    """Numeros de `ad_numbers` que ya tienen fila `federal_register` creada
+    por otro camino (el scraper del Federal Register): esas filas no se tocan.
+    None si la lectura fallo (registrado): sin saberlo no se escribe nada."""
+    taken: set[str] = set()
+    BATCH = 300
+    uniq = sorted(set(ad_numbers))
+    for i in range(0, len(uniq), BATCH):
+        try:
+            resp = (supabase.table("ads")
+                    .select("ad_number, origin:raw_data->>Origin")
+                    .eq("source", "federal_register")
+                    .in_("ad_number", uniq[i:i + BATCH])
+                    .execute())
+        except Exception as e:
+            _record_write_error(f"[DRS] ADs anteriores a 1994: no se pudo leer ads: {e}")
+            return None
+        for rec in resp.data or []:
+            if rec.get("origin") != faa_drs_ads.ORIGIN:
+                taken.add(rec["ad_number"])
+    return taken
+
+
+def backfill_pre_federal_register(supabase, store, ad_numbers, *, dry_run: bool = False) -> dict[str, int]:
+    """Filas de `ads` (source `federal_register`) para los ADs anteriores a
+    la FR API entre `ad_numbers`, desde sus documentos en `drs_documents`
+    (scrapers/faa_drs_ads.py). Mismo camino que cualquier fila FAA:
+    `normalize` -> `upsert_ads` -> `populate_relations`.
+
+    Se leen todos los documentos guardados de cada AD, no solo los de la
+    corrida: en un incremental puede llegar solo uno de sus documentos. Una
+    fila `federal_register` que no creo este camino nunca se reescribe."""
+    counts = {"candidates": 0, "rows": 0, "skipped_existing": 0, "new": 0, "updated": 0}
+    candidates = sorted(n for n in set(ad_numbers) if faa_drs_ads.may_predate_federal_register(n))
+    counts["candidates"] = len(candidates)
+    if not candidates:
+        return counts
+    documents = store.documents(DRS_BACKFILL_DOCTYPE, candidates)
+    rows = [n for n in (normalize(r, "federal_register")
+                        for r in faa_drs_ads.pre_federal_register_rows(documents)) if n]
+    counts["rows"] = len(rows)
+    if rows and not dry_run:
+        taken = _ads_not_created_from_drs(supabase, [r["ad_number"] for r in rows])
+        if taken is None:
+            return counts
+        rows = [r for r in rows if r["ad_number"] not in taken]
+        counts["skipped_existing"] = len(taken)
+        if rows:
+            counts["new"], counts["updated"] = upsert_ads(supabase, rows)
+            populate_relations(supabase, "federal_register", rows)
+    logger.info(
+        f"[DRS] ADs anteriores a 1994{' (DRY-RUN)' if dry_run else ''}: {counts['candidates']} candidatos "
+        f"por numero, {counts['rows']} filas, {counts['skipped_existing']} ya del Federal Register, "
+        f"{counts['new']} nuevas, {counts['updated']} actualizadas"
+    )
+    return counts
+
+
+# ---------------------------------------------------------------------------
+# FAA DRS: sincronizacion de drs_documents
+# ---------------------------------------------------------------------------
+def run_drs_sync(doctypes: list[str], dry_run: bool = False, env: dict | None = None,
+                 client=None, store=None, supabase=None) -> int:
+    """Sincroniza DRS y devuelve el exit code (0 ok, 1 con errores).
+
+    Alimenta `drs_documents` y el vinculo `ads.drs_document_guid`
+    (scrapers/faa_drs_sync.py) y, entre los dos, crea en `ads` los ADs
+    anteriores a 1994 que solo estan en DRS (`backfill_pre_federal_register`).
+    No escribe `scrape_runs`. Una corrida con cualquier error (pagina
+    fallida, documento descartado, escritura o enlace fallido) sale != 0 para
+    que el job quede en rojo; el cursor solo avanza tras recorrer todas las
+    paginas de un doctype.
+
+    Con DRS_API_ENABLED apagado no hace nada y sale 0: el job queda verde y
+    el log dice por que no corrio.
+    """
+    if client is None:
+        if not faa_drs_api.is_enabled(env):
+            logger.info("[DRS] DRS_API_ENABLED apagado: la sincronizacion DRS no corre")
+            return 0
+        try:
+            client = faa_drs_api.DrsClient.from_env(env)
+        except faa_drs_api.DrsError as e:
+            logger.error(f"[DRS] {e}")
+            return 1
+    if store is None:
+        if dry_run:
+            store = faa_drs_sync.DryRunStore()
+        else:
+            supabase = supabase or get_supabase_client()
+            store = faa_drs_sync.SupabaseDrsStore(supabase)
+
+    write_errors_before = len(_write_errors)
+    backfill: dict[str, int] = {}
+
+    text: dict[str, int] = {}
+
+    def _after_upsert(report: faa_drs_sync.SyncReport) -> None:
+        # Primero las filas de los ADs anteriores a 1994, para que su texto
+        # tenga a que AD ir; el texto corre aunque esas filas fallen.
+        numbers = report.ad_numbers(DRS_BACKFILL_DOCTYPE)
+        try:
+            backfill.update(backfill_pre_federal_register(supabase, store, numbers, dry_run=dry_run))
+        finally:
+            text.update(populate_drs_text_sections(supabase, store, numbers, dry_run=dry_run))
+
+    # Un llamador que inyecta solo el store (sin base) sincroniza drs_documents
+    # y nada mas; la corrida real siempre tiene cliente.
+    after = _after_upsert if dry_run or supabase is not None else None
+    if after is None:
+        logger.info("[DRS] sin cliente de base: no se crean ADs anteriores a 1994 ni se envia texto")
+    report = faa_drs_sync.sync(client, store, doctypes, before_link=after)
+    errors = report.errors
+    for err in errors[:50]:
+        _record_write_error(f"[DRS] {err}")
+    if len(errors) > 50:
+        _record_write_error(f"[DRS] ... y {len(errors) - 50} errores mas")
+    lines = [f"Resumen DRS{' (DRY-RUN)' if dry_run else ''}"]
+    lines += [
+        f"  {r.doctype:8}: {r.mode or '-'}, {r.pages} paginas, {r.documents} documentos, "
+        f"cursor -> {r.advanced_to}{' ERROR' if r.error else ''}"
+        for r in report.results
+    ]
+    if backfill:
+        lines.append(f"  Pre-1994      : {backfill['rows']} filas, {backfill['new']} nuevas, "
+                     f"{backfill['skipped_existing']} ya del Federal Register")
+    if text:
+        lines.append("  Texto DRS     : " + ", ".join(f"{k}={v}" for k, v in sorted(text.items())))
+    # Los errores de la sync ya estan en _write_errors (arriba); ademas cuentan
+    # las escrituras fallidas de las filas de `ads` y sus relaciones.
+    failed = len(_write_errors) - write_errors_before
+    lines += [f"  ADs enlazados : {report.linked}", f"  Errores       : {failed}"]
+    bar = "=" * 50
+    logger.info("\n".join(["", bar, *lines, bar]))
+    return 1 if errors or failed else 0
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -1118,7 +1676,29 @@ def main():
         help="Solo federal_register: corre tambien la fase GovInfo MODS "
              "(lenta; solo completa docket/amendment, no la identidad)",
     )
+    parser.add_argument(
+        "--drs",
+        action="store_true",
+        help="Sincroniza FAA DRS (ADFRAWD + ADFREAD) hacia drs_documents en vez de "
+             "scrapear fuentes. Requiere DRS_API_ENABLED y DRS_API_KEY",
+    )
+    parser.add_argument(
+        "--drs-doctype",
+        choices=faa_drs_api.DOCTYPES,
+        default=None,
+        help="Solo con --drs: sincroniza un solo doctype (ADFREAD es una pagina)",
+    )
     args = parser.parse_args()
+
+    if args.drs_doctype and not args.drs:
+        parser.error("--drs-doctype requiere --drs")
+    if args.drs:
+        clashing = [flag for flag, on in (("--source", args.source), ("--reset", args.reset),
+                                          ("--since", args.since), ("--with-govinfo", args.with_govinfo)) if on]
+        if clashing:
+            parser.error(f"--drs no se combina con {', '.join(clashing)}")
+        doctypes = [args.drs_doctype] if args.drs_doctype else list(faa_drs_api.DOCTYPES)
+        sys.exit(run_drs_sync(doctypes, dry_run=args.dry_run))
 
     if args.since and not re.match(r"^\d{4}-\d{2}-\d{2}$", args.since):
         parser.error("--since debe tener formato YYYY-MM-DD")

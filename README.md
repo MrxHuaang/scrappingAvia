@@ -52,25 +52,64 @@ See `.env.example` for the full annotated list. The scraping path needs:
 
 ```
 SUPABASE_URL=https://<project>.supabase.co
-SUPABASE_SERVICE_KEY=eyJ...       # service role (writes)
-SUPABASE_ANON_KEY=eyJ...          # anon (reads only)
+SUPABASE_SERVICE_KEY=eyJ...       # service role (writes) — required, no anon fallback
+SUPABASE_ANON_KEY=eyJ...          # anon, read-only reporting fallback (scripts/validate_ads.py only)
 GOVINFO_API_KEY=...               # free key https://api.govinfo.gov/signup/
                                   # without it FAA deep fields silently self-skip
+DRS_API_KEY=...                   # FAA DRS data-pull key (drs.faa.gov/drs-api), only for --drs
+DRS_API_ENABLED=                  # "true" turns the DRS sync on; off by default
 ```
+
+The database revokes write privileges on the `ads`/`rate_limits`/etc. tables
+for the `anon`/`authenticated` roles, so `SUPABASE_SERVICE_KEY` is required
+everywhere a script or the web app writes: every admin client (`populate_db.py`,
+`webapp/core.get_supabase_admin()`, `scripts/cleanup_faa_stale.py`, and the rest
+of `scripts/`) refuses to fall back to the anon key and instead errors out
+(scripts exit non-zero; the web app's rate limiter fails closed with 503, same
+as the proxy guard below). The one exception is `scripts/validate_ads.py`,
+which only runs `SELECT`s for its read-only quality report and may fall back
+to `SUPABASE_ANON_KEY` when the service key isn't set.
+
+The search API also needs `INTERNAL_PROXY_SECRET`, the value the Next.js proxy
+sends in `X-Internal-Secret`. For local development without it, set
+`ALLOW_UNAUTHENTICATED_LOCAL=1` (loopback requests only, ignored on Vercel).
+`SUPABASE_SERVICE_KEY` is required too: without it, `webapp.core.get_supabase_admin()`
+returns `None` and the rate limiter fails closed (503) on every data route,
+the same as the missing-proxy-secret case.
 
 Never commit `.env`.
 
-### FAA: optional Playwright for pre-1995 ADs
+### FAA upstreams
 
-The `federal_register` source consolidates 3 upstreams: DRS (Playwright,
-pre-1995 historical), FR API (year-split, 1994+), and GovInfo (MODS XML,
-optional `--with-govinfo`). DRS is best-effort — the pipeline does not fail if
-the browser is missing.
+The `federal_register` source consolidates 2 upstreams: FR API (year-split,
+1994+) and GovInfo (MODS XML, optional `--with-govinfo`). Both take holder and
+models from `scrapers/common/fr_applicability.py`. ADs before 1994 are not in
+either; the old DRS scraper that tried drs.faa.gov through a browser was removed
+(Akamai blocked it, it always returned 0).
 
-```bash
-pip install playwright
-playwright install chromium       # ~150MB
-```
+### FAA DRS sync
+
+`python populate_db.py --drs` pulls every FAA final (ADFRAWD) and emergency
+(ADFREAD) AD from the official DRS data-pull API into `drs_documents` and links
+each FAA ad to its DRS record (`ads.drs_document_guid`). It is not an `ads`
+source and writes no `scrape_runs` row. The first run is a plain offset scan
+with no date filter (about 27 pages of 750, ~274 MB transferred), because the
+API's date filter compares at second resolution and 14,193 documents share one
+second; later runs ask for the stored cursor minus one hour and page to the end
+before advancing it. A failed page stops the run without moving the cursor.
+
+It is **off by default** (`DRS_API_ENABLED`, and the repository variable of the
+same name for the workflow job). ADs are U.S. government works in the public
+domain (17 U.S.C. §105), the DRS API publishes no terms of use, and the
+generic faa.gov disclaimer ("provided for U.S. Government-authorized use
+only") is a computer-system warning, not a usage license. **Before enabling it
+in production, work through the pre-enable checklist:** the DRS client
+identifying itself with a contact User-Agent (`DRS_CONTACT_EMAIL`), conservative request rates, never
+republishing material incorporated by reference, re-checking terms at each
+12-month key renewal, and the frontend disclaimer/attribution (tracked in
+`ad-scrapper`). A courtesy notice to the FAA / DRS team follows the first
+deploy rather than gating it. Details and first-run procedure:
+`docs/drs-sync.md`.
 
 ## Usage
 
@@ -83,6 +122,10 @@ python populate_db.py --source easa
 
 # All daily sources sequentially (skips DISABLED_SOURCES)
 python populate_db.py
+
+# FAA DRS sync (needs DRS_API_ENABLED and DRS_API_KEY; see docs/drs-sync.md)
+python populate_db.py --drs
+python populate_db.py --drs --drs-doctype ADFREAD --dry-run   # one page, no DB
 
 # DESTRUCTIVE: wipe a source and repopulate (use after schema changes)
 python populate_db.py --source federal_register --reset
@@ -124,6 +167,48 @@ Audit table `scrape_runs` records every live execution (source, status,
 counts, error_msg, timestamps). A run with failed writes is recorded as
 `status='error'` AND exits non-zero, so the Actions job goes red.
 
+## Search API
+
+The web app (`app.py` + `webapp/`) is an API with one client, the Ad-Scrapper
+Next.js proxy. It serves no HTML, templates or static files, has no login,
+billing, export or CORS, and knows three routes:
+
+| Route | Guard |
+|-------|-------|
+| `GET /api/health` | public; returns status, version, source list and timestamp only |
+| `POST /api/search` | proxy secret (`X-Internal-Secret`): v2 401, v1 403 |
+| `GET /api/search/stream` | proxy secret (`X-Internal-Secret`): v2 401, v1 403 |
+
+Any other path is a JSON 404, and `vercel.json` only routes `/api/*` to the
+function. `tests/test_route_guards.py` walks `app.url_map` and fails if any
+route other than health answers without the secret.
+
+The guard fails closed. Without `INTERNAL_PROXY_SECRET`, every data route
+answers 503 `{"error": "Service unavailable"}` and the app logs an error at
+startup. The one exception is the explicit local opt-in
+`ALLOW_UNAUTHENTICATED_LOCAL=1`: it counts only when `VERCEL` is unset and the
+request is loopback, both the TCP peer and `request.remote_addr` after
+ProxyFix, so a forged `X-Forwarded-For: 127.0.0.1` does not qualify. With the
+secret set, the opt-in is ignored. v1 and v2 share this check
+(`core.proxy_rejection`).
+
+Both search routes speak two contracts:
+
+- **v1** (no `v`): one SSE event per authority, per-source `offset`, backed by
+  the `search_ads` RPC. Each request logs `search_v1_requests=<n>`, the usage
+  signal for retiring it.
+- **v2** (`v=2` query / `{"v": 2}` body, `webapp/search_v2.py`): one
+  `search_ads_v2` call per page, global `offset` (<= 100000), `limit` <= 100,
+  `total` and `source_counts` computed before paging. Events: `page`, `done`,
+  `error` (`code: filter_gate`). A database failure is HTTP 502 with the POST's
+  JSON body (`code: upstream`) on both routes, never a 200 stream, so the proxy
+  refunds the search. Sources come from the proxy's
+  `X-Effective-Sources` header (`*` or a comma list), trusted only after the
+  secret check: bad secret -> 401, missing/invalid header -> 400.
+
+Rows in both contracts go through `webapp/search_rows.row_to_result()`. The
+full parameter list and event shapes are in CLAUDE.md.
+
 ## Project structure
 
 ```
@@ -131,7 +216,8 @@ scrapers/
   common/                    Shared HTTP (headers + backoff), atomic JSON cache, logging
   federal_register.py        FAA via federalregister.gov API (identity from docket_ids)
   faa_govinfo.py             GovInfo MODS XML (docket/amendment backfill, optional)
-  faa_drs.py                 FAA DRS via Playwright (pre-1995, best-effort)
+  faa_drs_api.py             FAA DRS data-pull API client (read-only, key from env)
+  faa_drs_sync.py            DRS first scan + incremental sync into drs_documents
   transport_canada.py        TC CAWIS HTML scraping (+ PDF deep fields)
   easa.py                    EASA AD list paginated HTML (+ detail page + PDF)
   anac_brazil.py             ANAC Brazil HTML
@@ -145,11 +231,11 @@ populate_db.py               Orchestrator + upsert + relations + scrape_runs log
 enrich.py                    All derivations (status/priority/product_type/SBs/...)
 enrich_ai.py                 LLM enrichment of deep fields (see docs)
 utils.py                     AD identity, normalization, timeouts, MAX_RESULTS_PER_SOURCE
-webapp/                      Flask app: core + blueprints (pages/auth/billing/search/export/status)
+webapp/                      Flask search API: core (config, proxy guard, rate limit) + search blueprint; search_v2 + search_rows
 app.py                       Web entry point (Vercel builds this; assembles webapp/)
 dashboard_server.py          Local monitor for enrich_ai (loopback-only + token guard)
 watch_progress.py            CLI/HTML progress monitor (planner-estimate counts)
-tests/                       HTTP contract suite (pytest) for the web app
+tests/                       HTTP contract and route-guard suites (pytest) for the web API
 scripts/                     11 maintenance utilities:
   validate_ads.py            Data quality report, emits ads_to_rescrape.csv
   build_equivalents.py       Cross-authority equivalents (staged swap via RPCs)
@@ -161,7 +247,6 @@ scripts/                     11 maintenance utilities:
   warm_faa_mods.py           Pre-warm the GovInfo MODS cache
   link_supersession.py       Resolve supersession chains
   test_*.py                  Self-checks (no network, no DB) — run in CI
-static/, templates/          Flask web assets
 outputs/                     Caches and generated CSVs (gitignored; cached in Actions)
 .github/workflows/           ci.yml (tests+lint+audit) and populate_db.yml (daily cron)
 ```

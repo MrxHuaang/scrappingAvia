@@ -12,9 +12,14 @@ Campos canonicos esperados por la tabla `ads`:
   - amoc_available  : bool
   - unsafe_condition / corrective_action / compliance_time : texto best-effort
   - service_bulletins : lista de numeros SB referenciados
+  - secciones del texto de un rule FAA : split_ad_sections
 """
 
+import html
 import re
+from datetime import date
+
+from utils import normalize_ad_number
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +189,367 @@ def normalize_product_type(pt: str | None) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Product type de la FAA desde el título
+# ---------------------------------------------------------------------------
+# Sustantivo de producto con el que la FAA cierra el título del AD ("The Boeing
+# Company Airplanes", "CFM International S.A. Turbofan Engines", "Hamilton
+# Sundstrand Propellers"). Plurales incluidos: `\bengine\b` no casa "Engines".
+_TITLE_PRODUCT_NOUNS = re.compile(
+    r"\b(?P<aircraft>airplanes?|aircraft|helicopters?|rotorcraft|gliders?|sailplanes?"
+    r"|airships?|balloons?|gyroplanes?)\b"
+    r"|\b(?P<engine>engines?|turbofans?|turbojets?|turboprops?|turboshafts?)\b"
+    r"|\b(?P<propeller>propellers?)\b"
+    r"|\b(?P<appliance>appliances?)\b",
+    re.I,
+)
+
+# "... Airplanes Equipped With General Electric CF6-80C2 Series Engines" es un
+# AD de avión: el motor viene DESPUÉS del producto, como calificativo. Se corta
+# el título en esa frase antes de leer el último sustantivo. Misma regla que la
+# migración 20260923180000_fr_product_type_from_title.sql de ad-scrapper.
+_AIRCRAFT_QUALIFIER = re.compile(
+    r"(\b(?:airplanes?|helicopters?|rotorcraft|aircraft|gliders?|sailplanes?)\b)"
+    r"\s+(?:equipped|powered|fitted|having|with)\b.*$",
+    re.I,
+)
+
+
+# Lo que viene tras "Installed on" / "Equipped with" / "Approved Under"
+# describe DÓNDE va (o bajo qué norma) el producto, no cuál es: "Superior Air
+# Parts, Inc., Piston Pins Installed on Teledyne Continental Motors
+# Reciprocating Engines" es un AD de la pieza. A diferencia del corte de
+# arriba, este vale tras cualquier palabra ("Units, Equipped with ...",
+# "Airplanes, Equipped With ... Engines"). "Powered" no está: "Turbo-Propeller
+# Powered ... Airplanes" es un avión, y lo resuelve el corte de arriba.
+_INSTALLED_ON_RE = re.compile(r"[\s,;]+(?:installed|equipped|fitted|approved)\b.*$", re.I | re.S)
+
+# Palabras de rotorcraft dentro del grupo aircraft: la FAA las cierra igual
+# ("... Helicopters") pero el tipo canónico es Helicopter.
+_ROTORCRAFT_NOUN_RE = re.compile(r"^(?:helicopters?|rotorcraft|gyroplanes?)$", re.I)
+# Pieza nombrada en el título: la palabra que convierte al AD en un AD de
+# appliance cuando no hay sustantivo de producto que la supere ("Passenger
+# Seats", "Emergency Locator Transmitters", "Oxygen Mask Regulators") o cuando
+# el sustantivo solo la califica ("Reciprocating Engine Connecting Rods",
+# "RECARO Aircraft Seating"). Nombres de pieza concretos: "Parts",
+# "Components" o "Systems" van en razones sociales y no cuentan.
+_PART_RE = re.compile(
+    r"\b(?:seats?|seating|berths?|belts?|harness(?:es)?|restraints?|transmitters?|receivers?"
+    r"|transponders?|radios?|autopilots?|displays?|indicators?|instruments?|altimeters?"
+    r"|gauges?|detectors?|extinguishers?|bottles?|masks?|regulators?|cylinders?|valves?"
+    r"|pumps?|carburetors?|magnetos?|starters?|generators?|alternators?|batter(?:y|ies)"
+    r"|hoists?|actuators?|tires?|wheels?|brakes?|lights?|lamps?|slides?|rafts?|seals?"
+    r"|connecting\s+rods?|pins?|servos?|controllers?|computers?|sensors?|lifts?|hooks?)\b",
+    re.I,
+)
+_APU_RE = re.compile(r"\b(?:auxiliary\s+power\s+units?|APUs?)\b", re.I)
+
+
+# "(Type Certificate Previously Held by Allison Engine Company)", "(Formerly
+# Intertechnique Aircraft Systems)": nombran a un titular anterior, no al
+# producto. Se borran con espacios para no mover las posiciones.
+_PREVIOUS_HOLDER_RE = re.compile(r"\((?:Type\s+Certificate\s+)?(?:Previously|Formerly)\b[^()]*\)", re.I)
+# Primera oración del abstract: la de applicability ("for all Sikorsky Model
+# 269A ... helicopters."). "Ltd. Model" no la corta.
+_FIRST_SENTENCE_RE = re.compile(r"\.\s+(?=(?:This|The|We|That|These|AD|As|In|Since)\b)")
+
+
+def _faa_holders(subject: str, abstract: str) -> tuple[str | None, tuple[str, ...]]:
+    """(titular, titulares anteriores) del título FAA, con la misma extracción
+    de applicability. Import diferido: `scrapers/__init__` importa el scraper
+    FR, que a su vez importa este módulo."""
+    from scrapers.common.fr_applicability import title_holders
+
+    return title_holders(subject or "", abstract or "")
+
+
+def _blank(text: str, start: int, end: int) -> str:
+    return text[:start] + " " * (end - start) + text[end:]
+
+
+def _product_phrase(subject: str, abstract: str | None = None, *, installed_cut: bool = True) -> str:
+    """El título donde nombra el producto, con las mismas posiciones que
+    `subject`: sin los paréntesis de titular anterior, sin el calificativo
+    "<Airplanes> Equipped With ...", (salvo `installed_cut=False`) sin lo que
+    sigue a "Installed on ..." y, en un título FAA (`abstract` no None), con
+    el titular borrado: su sustantivo no decide ("Sikorsky Aircraft
+    Corporation", "Airship Industries", "Lycoming Engines")."""
+    title = subject or ""
+    if abstract is not None:
+        holder, _ = _faa_holders(title, abstract)
+        i = title.find(holder) if holder else -1
+        if 0 <= i <= 4:
+            title = _blank(title, 0, i + len(holder))
+    title = _PREVIOUS_HOLDER_RE.sub(lambda m: " " * len(m.group(0)), title)
+    title = _AIRCRAFT_QUALIFIER.sub(r"\1", title, count=1)
+    return _INSTALLED_ON_RE.sub("", title, count=1) if installed_cut else title
+
+
+def _last_noun(text: str) -> "re.Match | None":
+    last = None
+    for m in _TITLE_PRODUCT_NOUNS.finditer(text):
+        last = m
+    return last
+
+
+def _abstract_product_noun(subject: str, abstract: str) -> tuple[str, "re.Match"] | None:
+    """Respaldo cuando el título no nombra producto fuera del titular ("Bell
+    Helicopter Textron Canada Limited", "Airbus Helicopters (Formerly
+    Eurocopter France)"): el PRIMER sustantivo de producto de la primera
+    oración del abstract, con los nombres de titular borrados. Es la oración
+    de applicability ("for certain Bell Model 206L-1 ... helicopters"); el
+    resto del abstract habla de motores y hélices aunque el AD sea de otra
+    cosa. Devuelve (texto, match) para que el subtipo lea el mismo sustantivo."""
+    text = _applicability_sentence(subject, abstract)
+    m = _TITLE_PRODUCT_NOUNS.search(text)
+    return (text, m) if m else None
+
+
+def _applicability_sentence(subject: str, abstract: str) -> str:
+    """Primera oración del abstract sin nombres de titular y cortada en
+    "installed on": "for certain (formerly ...) flightcrew oxygen mask
+    regulators as installed on, but not limited to, various airplanes" es un
+    AD del regulador, no de un avión."""
+    text = re.split(_FIRST_SENTENCE_RE, _abstract_without_holders(subject, abstract), maxsplit=1)[0]
+    return _INSTALLED_ON_RE.sub("", text, count=1)
+
+
+def _abstract_without_holders(subject: str, abstract: str) -> str:
+    """El abstract con el titular y los anteriores borrados: "for Sikorsky
+    Aircraft Corporation (Sikorsky) Model 269A ... helicopters" no es un AD de
+    Aircraft."""
+    holder, previous = _faa_holders(subject, abstract)
+    text = abstract or ""
+    for name in (holder, *previous):
+        if name:
+            text = re.sub(re.escape(name), lambda m: " " * len(m.group(0)), text, flags=re.I)
+    return text
+
+
+def _deciding_noun(subject: str, abstract: str | None) -> tuple[str, "re.Match"] | None:
+    """(texto, sustantivo) que decide el tipo: el último de la frase de
+    producto del título y, en un título FAA sin él, el del abstract. Lo
+    comparten `classify_product_type` y `product_subtype`, así el subtipo sale
+    siempre del mismo sustantivo que decidió el tipo."""
+    phrase = _product_phrase(subject, abstract)
+    noun = _last_noun(phrase)
+    if noun:
+        return phrase, noun
+    if abstract and _title_product_type(subject, abstract) is None:
+        return _abstract_product_noun(subject, abstract)
+    return None
+
+
+def _noun_type(noun: "re.Match") -> str:
+    if noun.lastgroup == "aircraft":
+        return "Helicopter" if _ROTORCRAFT_NOUN_RE.match(noun.group(0)) else "Aircraft"
+    return {"engine": "Engine", "propeller": "Propeller", "appliance": "Appliance"}[noun.lastgroup]
+
+
+def _title_product_type(subject: str, abstract: str = "") -> str | None:
+    """Tipo canónico que declara el título FAA (fuera del titular), o None."""
+    phrase = _product_phrase(subject, abstract)
+    noun = _last_noun(phrase)
+    if noun:
+        # "Reciprocating Engine Connecting Rods", "... Model 3410 Seats": el
+        # sustantivo califica a una pieza que viene detrás.
+        tail = re.split(r"[,;(]", phrase[noun.end():], maxsplit=1)[0]
+        if _PART_RE.search(" ".join(tail.split()[:3])):
+            return "Appliance"
+        return _noun_type(noun)
+    if _APU_RE.search(phrase):
+        return "Engine"
+    placed_on = _TITLE_PRODUCT_NOUNS.search(_product_phrase(subject, abstract, installed_cut=False))
+    if placed_on or _PART_RE.search(phrase):
+        # "<pieza> Installed on <titular> Airplanes" o una pieza sin producto
+        # alguno ("Passenger Seats"): el AD es de la pieza.
+        return "Appliance"
+    return None
+
+
+def classify_product_type(subject: str, abstract: str = "", cfr_refs=()) -> str:
+    """
+    Tipo de producto de un AD de la FAA a partir de su título.
+
+    El título es el campo que declara el producto; el abstract sólo lo
+    describe. Antes se buscaba "engine" en título + abstract, y el resumen de
+    un AD de avión casi siempre menciona un motor ("...engine fuel pump...",
+    "...an engine fire..."): 1.138 ADs cuyo título termina en "Airplanes" o
+    "Helicopters" quedaron como Engine, y filtrar por Product type = Aircraft
+    los escondía.
+
+    Gana el ÚLTIMO sustantivo de producto del título, porque la FAA lo pone al
+    final y el nombre del titular puede llevar otro antes ("Airbus Helicopters
+    Model EC135 Helicopters", "Rolls-Royce Deutschland Ltd & Co KG Turbofan
+    Engines"). Helicopters/Rotorcraft/Gyroplanes son Helicopter, no Aircraft:
+    el filtro de tipo los separa. Un AD cuyo producto es una pieza ("Passenger
+    Seats", "<pieza> Installed on ... Airplanes", "Reciprocating Engine
+    Connecting Rods") es Appliance; "Auxiliary Power Units" es Engine (subtipo
+    apu). Un sustantivo dentro del nombre del titular no cuenta ("Sikorsky
+    Aircraft Corporation", "Lycoming Engines").
+
+    Si el título no nombra producto fuera del titular, decide el primer
+    sustantivo de la oración de applicability del abstract ("for certain Bell
+    Model 206L-1 ... helicopters"), y si tampoco hay, la regla vieja sobre el
+    abstract (sin los nombres de titular) y luego CFR parte 39.
+    """
+    from_title = _title_product_type(subject, abstract)
+    if from_title:
+        return from_title
+    from_abstract = _abstract_product_noun(subject, abstract) if abstract else None
+    if from_abstract:
+        return _noun_type(from_abstract[1])
+    if abstract and _PART_RE.search(_applicability_sentence(subject, abstract)):
+        # "for certain Kidde Graviner hand-operated fire extinguishers": la
+        # oración de applicability nombra una pieza y ningún producto.
+        return "Appliance"
+
+    text = _abstract_without_holders(subject, abstract).lower() if abstract else ""
+    if re.search(r"\bengines?\b", text):
+        return "Engine"
+    if re.search(r"\bpropellers?\b", text):
+        return "Propeller"
+    if re.search(r"\bappliances?\b", text):
+        return "Appliance"
+    if re.search(r"\baircraft\b|\bairplanes?\b|\bairships?\b|\bgliders?\b", text):
+        return "Aircraft"
+    if re.search(r"\bhelicopters?\b|\brotorcraft\b", text):
+        return "Helicopter"
+    for ref in cfr_refs or ():
+        part = str(ref.get("part", "") if isinstance(ref, dict) else "")
+        if part == "39":
+            return "Aircraft"
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Catálogo de la BD: product_type / product_subtype
+# ---------------------------------------------------------------------------
+# product_type canónico (normalize_product_type) -> código del catálogo
+# (tablas product_type/product_subtype, migración 20260926120000 de
+# ad-scrapper). Un AD sin tipo derivable no tiene código: el llamador omite el
+# campo y la RPC lo deriva server-side de ads.product_type.
+PRODUCT_TYPE_CODE = {
+    "Aircraft": "aircraft",
+    "Helicopter": "rotorcraft",
+    "Engine": "engine",
+    "Propeller": "propeller",
+    "Appliance": "appliance",
+}
+
+# Catálogo CERRADO de subtipos por tipo, copia del seed de la migración. La FK
+# compuesta (product_type, product_subtype) rechaza un subtipo de otro tipo;
+# aquí se filtra antes para no tumbar el lote. 'appliance/other' existe en el
+# catálogo pero no se emite nunca: "no sé cuál" es omitir, no 'other'.
+PRODUCT_SUBTYPES = {
+    "aircraft": frozenset({"airplane", "glider", "balloon", "airship", "powered_lift"}),
+    "rotorcraft": frozenset({"helicopter", "gyroplane"}),
+    "engine": frozenset({"turbine", "piston", "apu", "electric"}),
+    "propeller": frozenset(),
+    "appliance": frozenset({"seats", "avionics", "elt", "oxygen", "fire_protection",
+                            "landing_gear", "lighting", "evacuation", "instruments", "other"}),
+}
+
+# Sustantivo que decidió el tipo -> subtipo. Solo sustantivos que nombran el
+# subtipo sin ambigüedad: "aircraft", "rotorcraft" y "engines" a secas no dicen
+# cuál es, y se omiten.
+_NOUN_SUBTYPE = {
+    "airplane": "airplane", "airplanes": "airplane",
+    "glider": "glider", "gliders": "glider", "sailplane": "glider", "sailplanes": "glider",
+    "balloon": "balloon", "balloons": "balloon",
+    "airship": "airship", "airships": "airship",
+    "helicopter": "helicopter", "helicopters": "helicopter",
+    "gyroplane": "gyroplane", "gyroplanes": "gyroplane",
+    "turbofan": "turbine", "turbofans": "turbine", "turbojet": "turbine", "turbojets": "turbine",
+    "turboprop": "turbine", "turboprops": "turbine", "turboshaft": "turbine", "turboshafts": "turbine",
+}
+# Calificativo del motor delante de "Engines": "Turbofan Engines",
+# "Reciprocating Engines", "Turboprop and Turboshaft Engines". Se exige que la
+# frase entera apunte a UNA categoría. "Turbo-Propeller" no es "turboprop".
+_ENGINE_KIND = (
+    ("turbine", re.compile(r"\b(?:turbofans?|turbojets?|turboprops?|turboshafts?|gas\s+turbine|turbine)\b", re.I)),
+    ("piston", re.compile(r"\b(?:reciprocating|piston|diesel)\b", re.I)),
+    ("electric", re.compile(r"\belectric\b", re.I)),
+)
+# Solo la cadena de calificativos pegada al sustantivo: el nombre del titular
+# puede llevar otros ("Allison Gas Turbine Division, and Detroit Diesel
+# Allison) 250-B Series Turboshaft Engines").
+_ENGINE_CHAIN_RE = re.compile(
+    r"(?:\b(?:turbofans?|turbojets?|turboprops?|turboshafts?|gas|turbine|reciprocating|piston"
+    r"|diesel|electric|and|series|model)\b[\s,]*)+$",
+    re.I,
+)
+# Appliances: la categoría la da la pieza nombrada. Tiene que salir UNA sola;
+# dos ("Oxygen ... and Fire Extinguishers") es no saber, y se omite.
+_APPLIANCE_KIND = (
+    ("seats", re.compile(r"\b(?:seats?|seating|berths?)\b", re.I)),
+    ("elt", re.compile(r"\b(?:emergency\s+locator\s+transmitters?|ELTs?)\b", re.I)),
+    ("oxygen", re.compile(r"\boxygen\b", re.I)),
+    ("fire_protection", re.compile(
+        r"\b(?:fire\s+extinguish\w*|extinguishers?|smoke\s+detect\w*|fire\s+detect\w*|fire\s+suppression)\b", re.I)),
+    ("evacuation", re.compile(r"\b(?:evacuation|escape\s+slides?|slides?/rafts?|life\s+rafts?)\b", re.I)),
+    ("landing_gear", re.compile(r"\b(?:landing\s+gear|wheels?|brakes?|tires?)\b", re.I)),
+    ("lighting", re.compile(r"\b(?:lights?|lighting|lamps?)\b", re.I)),
+    ("avionics", re.compile(
+        r"\b(?:avionics|transponders?|radios?|autopilots?|flight\s+displays?|navigation\s+units?"
+        r"|communication\s+units?|receivers?|flight\s+management|TAWS|traffic\s+(?:alert|collision))\b", re.I)),
+    ("instruments", re.compile(r"\b(?:instruments?|indicators?|altimeters?|gauges?)\b", re.I)),
+)
+def _one_kind(kinds, text: str) -> str | None:
+    found = {code for code, rx in kinds if rx.search(text)}
+    return found.pop() if len(found) == 1 else None
+
+
+def product_subtype(product_type_code: str | None, subject: str, abstract: str | None = None) -> str | None:
+    """
+    Subtipo del catálogo para una fila de applicability, o None.
+
+    Se deriva del mismo sustantivo que decide el tipo y SOLO si pertenece a
+    `product_type_code`: un "... Helicopters" que otra fuente tipara Aircraft
+    no produce 'helicopter' (es de rotorcraft) — se omite en vez de mentir sobre
+    el tipo o el subtipo. Sin coincidencia segura devuelve None; nunca adivina
+    ni cae a 'other'.
+
+    `abstract` (aunque sea "") marca un título FAA: el titular se ignora y, si
+    el título no nombra producto fuera de él, se lee el sustantivo del abstract
+    que usó `classify_product_type`. Con `abstract=None` (EASA/TC/UK CAA/ANAC)
+    se lee el subject tal cual.
+
+    - aircraft/rotorcraft: el sustantivo que decidió el tipo ("Airplanes",
+      "Sailplanes", "Hot Air Balloons", "Helicopters").
+    - engine: el calificativo delante del sustantivo ("Turbofan Engines" ->
+      turbine, "Reciprocating Engines" -> piston); "Auxiliary Power Units" ->
+      apu cuando no hay otro sustantivo de motor.
+    - appliance: la pieza nombrada (antes de "Installed on ..."), una sola.
+    - propeller: el catálogo no tiene subtipos.
+    """
+    allowed = PRODUCT_SUBTYPES.get(product_type_code or "")
+    if not allowed:
+        return None
+    code: str | None = None
+    found = _deciding_noun(subject or "", abstract)
+    text, noun = found if found else ("", None)
+    if product_type_code in ("aircraft", "rotorcraft"):
+        if noun and noun.lastgroup == "aircraft":
+            code = _NOUN_SUBTYPE.get(noun.group(0).lower())
+    elif product_type_code == "engine":
+        if noun and noun.lastgroup == "engine":
+            chain = _ENGINE_CHAIN_RE.search(text[: noun.start()].rstrip())
+            code = _NOUN_SUBTYPE.get(noun.group(0).lower()) or (
+                _one_kind(_ENGINE_KIND, chain.group(0)) if chain else None)
+        elif not noun and _APU_RE.search(_product_phrase(subject, abstract)):
+            code = "apu"
+    elif product_type_code == "appliance":
+        code = _one_kind(_APPLIANCE_KIND, _product_phrase(subject, abstract))
+        if code is None and abstract and _title_product_type(subject, abstract) is None:
+            # El título solo nombra al titular ("Kidde Graviner"): la pieza
+            # está en la oración de applicability, igual que para el tipo.
+            code = _one_kind(_APPLIANCE_KIND, _applicability_sentence(subject, abstract))
+    if code == "other" or code not in allowed:
+        return None
+    return code
+
+
+# ---------------------------------------------------------------------------
 # AMOC disponible
 # ---------------------------------------------------------------------------
 def detect_amoc(*texts: str) -> bool:
@@ -286,22 +652,559 @@ _COMPLIANCE_PHRASES = re.compile(
 )
 
 
-def extract_compliance_from_fulltext(text: str | None) -> str | None:
-    """
-    Extrae el plazo de cumplimiento del cuerpo COMPLETO del AD (no del abstract).
-    Localiza la seccion '(g) Compliance' y busca una frase de plazo; si no hay
-    patron explicito, cae a la primera oracion de esa seccion.
-    """
-    if not text:
-        return None
-    m = re.search(r"\([a-z]\)\s*Compliance\b(.{0,1500}?)(?:\([a-z]\)\s+[A-Z]|$)", text, re.I | re.S)
-    scope = m.group(1) if m else text
-    pm = _COMPLIANCE_PHRASES.search(scope)
-    if pm:
-        return re.sub(r"\s+", " ", pm.group(0)).strip()
-    if m:
-        first = re.split(r"(?<=[.])\s", re.sub(r"\s+", " ", scope).strip())[0]
-        first = first.strip()
-        if 8 <= len(first) <= 240:
-            return first
+_AMOC_PHRASE_RE = re.compile(r"alternative methods? of compliance", re.I)
+
+
+def compliance_time_from_sections(sections: list[dict] | None) -> str | None:
+    """Plazo de cumplimiento del texto anclado del AD: la primera frase de
+    `_COMPLIANCE_PHRASES` en sus secciones `compliance` o `required_actions`,
+    en el orden del documento. Sin frase no hay plazo: la oración "Comply
+    with this AD within the compliance times specified" no es uno."""
+    for s in sections or []:
+        if s.get("kind") in ("compliance", "required_actions"):
+            m = _COMPLIANCE_PHRASES.search(s.get("body") or "")
+            if m:
+                return re.sub(r"\s+", " ", m.group(0)).strip()
     return None
+
+
+def amoc_from_sections(sections: list[dict] | None) -> bool:
+    """El AD prevé AMOC: tiene una sección `amoc`, o sus acciones requeridas
+    la nombran. El preámbulo del documento FR ya no cuenta: discute AMOCs de
+    otros ADs y comentarios del público."""
+    return any(
+        s.get("kind") == "amoc"
+        or (s.get("kind") == "required_actions" and _AMOC_PHRASE_RE.search(s.get("body") or ""))
+        for s in sections or []
+    )
+
+
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august",
+           "september", "october", "november", "december")
+# "This AD is effective May 22, 2024.", "This amendment becomes effective on
+# March 2, 1998, to all persons except ...", "... is effective on January 18,
+# 2024." La fecha va pegada a "effective": "the emergency AD was effective for
+# those owners ... on the date it was provided" no es una.
+_EFFECTIVE_ON_RE = re.compile(
+    r"\beffective\s+(?:on\s+)?(" + "|".join(_MONTHS) + r")\s+(\d{1,2}),?\s+(\d{4})\b", re.I
+)
+
+
+def effective_date_from_sections(sections: list[dict] | None) -> str | None:
+    """Fecha efectiva (YYYY-MM-DD) que declara la sección `effective_date` del
+    texto anclado del AD, o None."""
+    for s in sections or []:
+        if s.get("kind") != "effective_date":
+            continue
+        m = _EFFECTIVE_ON_RE.search(s.get("body") or "")
+        if m:
+            try:
+                return date(int(m.group(3)), _MONTHS.index(m.group(1).lower()) + 1, int(m.group(2))).isoformat()
+            except ValueError:  # "February 30": errata de la fuente
+                return None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Texto del rule FAA (GovInfo) en secciones, anclado al encabezado de identidad
+# ---------------------------------------------------------------------------
+# El granulo de GovInfo trae el documento FR entero: preámbulo, discusión y la
+# enmienda a 14 CFR 39.13 con el texto regulatorio del AD. Solo ese bloque es
+# el AD, y solo vale si su encabezado DECLARA el AD esperado:
+#
+#   2024-06-03 The Boeing Company: Amendment 39-22708; Docket No. FAA-...
+#   98-02-51  Boeing: Amendment 39-10362. Docket 98-NM-04-AD.
+#   Airbus: Amendment 39-10410. Docket 98-NM-22-AD.        (1998, sin número)
+#
+# Una cita en el cuerpo ("This AD replaces AD ...", la tabla "Affected ADs",
+# una corrección que reproduce el corchete del preámbulo) no declara nada: es
+# el error de identidad de 2026-07-28 (CLAUDE.md) pero con el texto en vez del
+# número. Sin encabezado propio el intento es `unanchored`, aunque el número
+# aparezca citado.
+
+# Identidad en el corchete del preámbulo: "[Docket No. ...; Amendment
+# 39-10410; AD 98-06-27]". La usa el respaldo de identidad de
+# federal_register (docket_ids sin AD) y, aquí, el encabezado regulatorio que
+# no trae número propio o lo trae mal escrito ("2005-NM-03-11 Boeing:").
+FT_HEADER_AD_RE = re.compile(
+    r"Amendment\s*(?:No\.?\s*)?39[-–—]\d{3,6}\s*[;,]?\s*"
+    r"(?:AD|A\.D\.)?\s*((?:\d{4}|\d{2})[-–—]\d{2}[-–—]\d{2,4}(?:R\d+)?)\b",
+    re.I,
+)
+
+
+def header_ad_for_amendment(txt: str, amendment: str) -> str | None:
+    """AD que el corchete del preámbulo empareja con `amendment`, o None."""
+    if not amendment:
+        return None
+    pat = re.compile(
+        re.escape(amendment).replace(r"\-", "[-–—]")
+        + r"\s*[;,]?\s*(?:AD|A\.D\.)?\s*((?:\d{4}|\d{2})[-–—]\d{2}[-–—]\d{2,4}(?:R\d+)?)\b",
+        re.I,
+    )
+    m = pat.search(txt)
+    return normalize_ad_number(m.group(1)) if m else None
+
+
+# Encabezado del bloque regulatorio: al inicio de línea, número (opcional en
+# 1998), titular hasta ":" (puede ocupar varias líneas: "Honeywell
+# International Inc. (formerly ...; and\nAiResearch ...): Amendment") y el
+# amendment, a veces tras el docket ("Rolls-Royce plc: Docket No. FAA
+# 2017-1117; Amendment 39-19112"). El titular puede traer corchetes
+# ("R[eacute]gional"), pero una línea que empieza con "["
+# o con comillas (el corchete del preámbulo, una corrección que lo cita) no
+# es un encabezado.
+_BLOCK_HEADER_RE = re.compile(
+    r"^(?:(?P<ad>\d{2,4}[-–—][\dA-Z]{2,4}[-–—]\d{2}(?:[-–—]\d{2})?(?:\s?R\d+)?)[ \t]+)?"
+    r"(?P<holder>[A-Za-z][^\n:`]{0,200}(?:\n(?![ \t]*\n)[^\n:`]{1,150}){0,3})"
+    r":\s*(?:Docket[^:\n]{0,60}?;\s*)?Amendment\s+(?:No\.?\s*)?(?P<amendment>39\s*[-–—]\s*\d{3,6})",
+    re.M,
+)
+# Fin del bloque: la firma ("Issued in Renton, Washington, on ...", "Issued
+# on May 2, 2024.") o el pie del documento FR.
+_BLOCK_END_RE = re.compile(r"^[ \t]*(?:Issued\s+(?:in|on)\b|\[FR\s+Doc\.)", re.M | re.I)
+_HEADER_END_RE = re.compile(r"\n(?=[ \t]*\n|[ \t]+\S|\*[ \t]*\*)")
+_PAGE_MARK_RE = re.compile(r"^[ \t]*\[\[Page \d+\]\][ \t]*\n?", re.M)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+# Tipo de sección por encabezado y por contenido: una sola tabla. El orden
+# importa: "Alternative Methods of Compliance" es amoc antes que compliance, y
+# "Actions and Compliance" es required_actions. El patrón de contenido mira el
+# principio del cuerpo (los párrafos legados no tienen encabezado propio).
+# required_actions por contenido solo vale después de compliance o de la
+# condición insegura: antes, un párrafo que empieza con "Within ..." no es una
+# acción requerida.
+SECTION_KINDS = {
+    "effective_date": (
+        r"effective date",
+        r"^this (?:ad|amendment|airworthiness directive)\b[^.]{0,40}?\b(?:becomes|is) effective",
+    ),
+    "affected_ads": (
+        r"affected ads?\b|ads? affected",
+        r"^this ad (?:supersedes|replaces|revises) (?:ad|airworthiness directive|emergency ad)\b",
+    ),
+    "applicability": (r"applicab", r"^this ad (?:applies to|affects)\b"),
+    "subject": (r"^subject\b", r"^(?:air transport association|joint aircraft system)"),
+    "unsafe_condition": (
+        r"unsafe condition|^reason\b",
+        r"^(?:this ad (?:was prompted|results from)|to (?:prevent|detect|correct|ensure|minimize"
+        r"|reduce|avoid|preclude)\b)",
+    ),
+    "amoc": (r"alternative method", r"alternative methods? of compliance|different method of compliance"),
+    "compliance": (
+        r"^compliance\b(?! and)|compliance times?",
+        r"^(?:comply with this ad|required as indicated|you are responsible for having the actions)",
+    ),
+    "material": (
+        r"incorporation by reference|material incorporated",
+        r"incorporation by reference|shall be (?:done|accomplished) in accordance with",
+    ),
+    "related_information": (r"related information|additional information", None),
+    "required_actions": (
+        r"required actions?|^requirements?\b|\bactions?\b|inspections?\b|\btests?\b|\bchecks?\b"
+        r"|replacement|corrective|modification|terminating",
+        r"^(?:within|before|prior to|at the|upon|after|when|thereafter|if\b)|\b(?:inspect|replace"
+        r"|perform|do|modify|remove|install|insert|accomplish|revise|repair)\b",
+    ),
+}
+_KIND_RES = {
+    kind: (re.compile(h, re.I), re.compile(c, re.I) if c else None)
+    for kind, (h, c) in SECTION_KINDS.items()
+}
+
+# Encabezado con letra (formato >= 2007): "(c) Applicability" solo en su
+# línea (o en hasta tres: "(h) Initial and Repetitive Inspections of ... at
+# the\nForward Keel Beam Attachment Joint"), seguido de una línea en blanco o
+# sangrada y sin puntuación final (un párrafo legado de una línea, "(d)
+# Special flight permits will not be issued.", no lo es).
+_LETTER_HEADING_RE = re.compile(
+    r"^[ \t]*\(([a-z])\)[ \t]+([A-Z][^\n]{0,150}?(?:\n(?!\([a-z]\))[A-Za-z(][^\n]{0,150}?){0,2})"
+    r"(?<![.:;,])[ \t]*\n"
+    r"(?=[ \t]*\n|[ \t]+\S)",
+    re.M,
+)
+# Encabezado sin letra (formato 2000-2007): "Unsafe Condition" solo en su
+# línea, entre líneas en blanco; los párrafos "(d) ..." van debajo. En 2005
+# también en pregunta: "What Is the Unsafe Condition Presented in This AD?".
+_PLAIN_HEADING_RE = re.compile(r"^[A-Z][A-Za-z0-9 ,&()/'\-]{1,100}\??$")
+# Párrafo legado: "    Applicability: ...", "    (a) Within 5 flight cycles ...".
+# La etiqueta también va sola en su línea ("Applicability", rotorcraft 2007).
+_LABEL_RE = re.compile(r"^(Applicability|Compliance)(?::\s*|\s*$)")
+# La misma etiqueta en frase, sin dos puntos (ADs anteriores a 1994): "Applies
+# to All DC3 Series Aircraft." y "Compliance required within 30 days after
+# ...". La frase es parte del cuerpo.
+_LABEL_PHRASE_RE = re.compile(r"^(?:(?P<applicability>Applies [Tt]o)|(?P<compliance>Compliance (?:is )?required))\b")
+_LETTER_PARA_RE = re.compile(r"^\(([a-z])\)(?:\s+|(?=\(\d))")
+_TABLE_LINE_RE = re.compile(r"-{8,}|\.{6,}|\S {3,}\S")
+_CLOSING_KINDS = ("amoc", "material", "effective_date")
+_EMBEDDED_UNSAFE_RE = re.compile(r"(?<=\.)\s+(?=To (?:prevent|detect|correct|ensure|minimize|reduce|avoid|preclude)\b)")
+
+
+# ---------------------------------------------------------------------------
+# Texto regulatorio en texto plano (DRS `adfrawdRegulatoryText`)
+# ---------------------------------------------------------------------------
+# DRS trae solo el bloque regulatorio, sin HTML, en tres formas segun la
+# epoca: con saltos de linea reales; con los saltos escritos como "\n" y "\t"
+# literales (barra y letra) y las marcas de pagina como "((Page 48487))"; y,
+# desde 2021, en una sola linea ("... (a) Effective Date This AD is effective
+# ... (b) Affected ADs None. ..."). `plain_regulatory_text` lo lleva a la
+# forma con lineas del granulo de GovInfo, para que lo lea el mismo parser.
+#
+# Los ADs anteriores a 1994 no siempre traen "Amendment 39-": "41-47-01
+# DOUGLAS: (Was Service Note 3 ...) Applies to All DC3 Series Aircraft.",
+# "65-06-04 EUREKA WILLIAMS: Amdt. 39-44 ...". En texto plano el encabezado
+# puede ser solo numero + titular + ":" al inicio de linea, pero el numero
+# tiene que ser el del AD esperado: el anclaje sigue siendo la identidad del
+# propio AD.
+_LITERAL_ESCAPE_RE = re.compile(r"\\r\\n|\\[ntr]")
+_LITERAL_ESCAPES = {"\\r\\n": "\n", "\\n": "\n", "\\t": "\t", "\\r": "\n"}
+_PLAIN_PAGE_MARK_RE = re.compile(r"[ \t]*(?:\[\[|\(\()Page \d+(?:\]\]|\)\))[ \t]*")
+_TRAILING_SPACE_RE = re.compile(r"[ \t]+\n")
+_LETTER_AD_SUFFIX_RE = re.compile(r"\s+P?L$", re.I)
+# El titular de un AD antiguo puede ser una lista larga de operadores
+# ("GARLICK HELICOPTERS, HAWKINS AND POWERS AVIATION, INC., ... (BELL
+# HELICOPTER TEXTRON, INC.):"), de ahi el tope de 400.
+_NUMBER_ONLY_HEADER_RE = re.compile(
+    r"^[ \t]*(?P<ad>T?\d{2,4}[-–—]\d{2}[-–—]\d{2,4}(?:[ \t]?R\d+)?(?:[ \t](?:PL|L|C\d))?)[ \t]+"
+    r"(?P<holder>[A-Za-z][^\n:]{0,400}):"
+    r"(?:[ \t]*(?:Amendment|Amdt\.?)\s+(?:No\.?\s*)?(?P<amendment>39\s*[-–—]\s*\d{1,6}))?",
+    re.M,
+)
+# La aplicabilidad dentro del parrafo del encabezado ("...: Amendment 39-4425.
+# Applies to Model F28 ..."): se separa del encabezado.
+_INLINE_APPLICABILITY_RE = re.compile(r"(?<=[\s.;:)])(?:Applies [Tt]o|Applicability:)")
+# Una sola linea: "(a) Effective Date This AD ...". El encabezado es la racha de
+# palabras con mayuscula (y conectores en minuscula) hasta la primera palabra
+# que abre la frase del cuerpo, un "(1)" o un ":".
+_ONE_LINE_LETTER = r"(?<=\s)\(%s\)[ \t]+(?=[A-Z])"
+_HEADING_CONNECTORS = frozenset(
+    "of and the for to in on by with or a an from under at as not than into per".split())
+_BODY_OPENERS = frozenset(
+    "This These That Those The A An None None. Comply Except Within Before After If For You Your Joint Air "
+    "Unless As At Do Where When Reserved Reserved. All Any Each No Although Accomplishing Refer "
+    "Operators Owners Prior Upon Use Using In On".split())
+_HEADING_MAX_WORDS = 12
+
+
+def _one_line_heading_end(text: str, start: int) -> int | None:
+    """Fin del encabezado que empieza en `start` en un texto de una linea, o
+    None si no hay una racha de encabezado reconocible."""
+    end = None
+    for i, w in enumerate(re.finditer(r"\S+", text[start:start + 400])):
+        token = w.group(0)
+        if i >= _HEADING_MAX_WORDS or re.fullmatch(r"\(\d+\)|\([ivx]+\)", token):
+            break
+        if i > 0 and token in _BODY_OPENERS:
+            break
+        bare = token.rstrip(":;,")
+        if not (bare[:1].isupper() or bare[:1].isdigit() or bare[:1] == "("
+                or bare.lower() in _HEADING_CONNECTORS):
+            break
+        end = start + w.start() + len(bare)
+        if token.endswith((":", ";")):
+            break
+    return end
+
+
+def _restructure_one_line(text: str, expected_ad: str | None) -> str:
+    """Saltos de linea para un texto escrito en una sola linea: antes del
+    encabezado del AD esperado y, desde ahi, antes de cada "(a)", "(b)", ...
+    en secuencia, con su encabezado en su propia linea."""
+    number = normalize_ad_number(expected_ad or "")
+    if not number:
+        return text
+    pattern = r"\s*".join(r"[-–—]" if c in "-–—" else re.escape(c) for c in number.replace(" ", ""))
+    head = re.search(rf"(?<!\S){pattern}\s+[A-Za-z][^:]{{0,200}}:", text)
+    if not head:
+        return text
+    out, pos, letter = [text[:head.start()].rstrip(), "\n\n"], head.start(), "a"
+    while letter <= "z":
+        m = re.compile(_ONE_LINE_LETTER % letter).search(text, pos)
+        if not m:
+            break
+        out.append(text[pos:m.start()].rstrip())
+        heading_end = _one_line_heading_end(text, m.end())
+        if heading_end is None:
+            out += ["\n\n\t", text[m.start():m.end()]]
+            pos = m.end()
+        else:
+            out += ["\n\n", text[m.start():heading_end], "\n\n\t"]
+            pos = heading_end
+            while pos < len(text) and text[pos] in ":; ":
+                pos += 1
+        letter = chr(ord(letter) + 1)
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def plain_regulatory_text(text: str | None, expected_ad: str | None = None) -> str:
+    """El texto regulatorio de DRS con saltos de linea reales, sin marcas de
+    pagina y, si venia en una sola linea, con un parrafo por seccion."""
+    text = _LITERAL_ESCAPE_RE.sub(lambda m: _LITERAL_ESCAPES[m.group(0)], text or "")
+    text = _PLAIN_PAGE_MARK_RE.sub(" ", text.replace("\r\n", "\n").replace("\r", "\n"))
+    # DRS deja un espacio antes de cada salto; en GovInfo no lo hay y el
+    # parser cuenta con eso (un encabezado no termina en ".").
+    text = _TRAILING_SPACE_RE.sub("\n", text)
+    if "\n" not in text.strip():
+        text = _restructure_one_line(text, expected_ad)
+    return text
+
+
+def fr_document_text(html_text: str | None) -> str:
+    """Texto plano del granulo de GovInfo: sin etiquetas, entidades resueltas
+    y sin las marcas de página "[[Page 27375]]" que cortan los párrafos."""
+    text = html.unescape(_HTML_TAG_RE.sub("", html_text or "")).replace("\r\n", "\n")
+    return _PAGE_MARK_RE.sub("", text)
+
+
+def _ad_key(ad: str | None) -> str:
+    return re.sub(r"\s+", "", normalize_ad_number(ad or "")).upper()
+
+
+def _amendment_key(amendment: str | None) -> str:
+    return re.sub(r"\s+", "", (amendment or "").replace("–", "-").replace("—", "-"))
+
+
+def _declared_ad(m: "re.Match", text: str) -> str:
+    """AD que declara un encabezado: su número, o el que el preámbulo empareja
+    con su amendment cuando no trae uno bien formado."""
+    ad = _ad_key(m.group("ad"))
+    if _FAA_NUMBER.match(ad):
+        return ad
+    return _ad_key(header_ad_for_amendment(text, _amendment_key(m.group("amendment"))))
+
+
+def _header_end(text: str, m: "re.Match") -> int:
+    """Fin del párrafo del encabezado ("...; Docket No. FAA-2023-1400;
+    Project Identifier AD-2022-01374-T."): la línea en blanco, una línea
+    sangrada o la elisión "* * *" que le siga."""
+    end = _HEADER_END_RE.search(text, m.end())
+    return end.end() if end else len(text)
+
+
+def _is_excerpt(text: str, m: "re.Match") -> bool:
+    """Un encabezado entre elisiones "* * * * *" es la cita de una corrección
+    ("... is corrected to read as follows: * * * <encabezado> * * *"): nombra
+    al AD pero no trae su texto."""
+    return text[_header_end(text, m):].lstrip().startswith("*")
+
+
+def _paragraph_text(lines: list[str]) -> str:
+    """Un párrafo en una línea; las tablas conservan sus líneas."""
+    if any(_TABLE_LINE_RE.search(ln) for ln in lines[1:]):
+        return "\n".join(ln.rstrip() for ln in lines).strip("\n")
+    text = ""
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        # "FAA-\n2023-1400": el guion del corte es parte de la palabra.
+        text += ln if text.endswith("-") or not text else " " + ln
+    return text
+
+
+def _paragraphs(block: str) -> list[tuple[str, bool]]:
+    """(texto, es_encabezado_sin_letra) por párrafo. Un párrafo empieza en una
+    línea sangrada o tras una línea en blanco; las continuaciones van en la
+    columna 0."""
+    lines = block.split("\n")
+    out: list[tuple[str, bool]] = []
+    cur: list[str] = []
+
+    def flush():
+        if cur:
+            out.append((_paragraph_text(cur), False))
+            cur.clear()
+
+    for i, ln in enumerate(lines):
+        if not ln.strip():
+            flush()
+            continue
+        prev_blank = i == 0 or not lines[i - 1].strip()
+        next_blank = i + 1 >= len(lines) or not lines[i + 1].strip()
+        if prev_blank and next_blank and _PLAIN_HEADING_RE.match(ln.rstrip()):
+            flush()
+            out.append((ln.strip(), True))
+            continue
+        if ln[:1].isspace() and cur and not _TABLE_LINE_RE.search(ln):
+            flush()
+        cur.append(ln)
+    flush()
+    return out
+
+
+def _lead(text: str) -> str:
+    """Encabezado de un párrafo legado: hasta el primer '.' o ':' de fin de
+    frase, 120 caracteres como mucho."""
+    m = re.match(r"(.{1,120}?)[.:](?:\s|$)", text)
+    lead = m.group(1) if m else text if len(text) <= 120 else text[:120].rsplit(" ", 1)[0]
+    return lead.strip()
+
+
+def _raw_sections(block: str) -> list[dict]:
+    """[{letter, heading, body}] del bloque, en orden, según su formato."""
+    # 1) >= 2007: "(a) Effective Date" ... en secuencia desde (a). La
+    # secuencia descarta continuaciones que empiezan con "(h) of this AD".
+    headings, expected = [], "a"
+    for m in _LETTER_HEADING_RE.finditer(block):
+        if m.group(1) == expected:
+            headings.append(m)
+            expected = chr(ord(expected) + 1)
+    if len(headings) >= 2:
+        out = []
+        for i, m in enumerate(headings):
+            end = headings[i + 1].start() if i + 1 < len(headings) else len(block)
+            body = "\n\n".join(t for t, _ in _paragraphs(block[m.end():end]))
+            out.append({"letter": m.group(1), "heading": " ".join(m.group(2).split()), "body": body})
+        return out
+
+    # 2) Hasta 2007, por párrafos:
+    #   - legado: "Applicability:", "Compliance:", la frase "To prevent ...,
+    #     accomplish the following:" y cada párrafo (a), (b), ... es una sección
+    #     cuyo encabezado es su propia frase inicial (`lead`: el tipo sale solo
+    #     del contenido);
+    #   - 2000-2007: además, encabezados sin letra ("Unsafe Condition") que
+    #     agrupan los párrafos con letra que les siguen.
+    # Las notas y los subpárrafos (1), (2) van con la sección en curso. Los
+    # encabezados sin letra cuentan solo si al menos dos van seguidos de un
+    # párrafo con letra: un listado de modelos legado también tiene líneas
+    # sueltas ("General Aviation Airplanes").
+    paras = _paragraphs(block)
+    use_headings = sum(
+        1 for (_, is_heading), (nxt, _) in zip(paras, paras[1:])
+        if is_heading and _LETTER_PARA_RE.match(nxt)
+    ) >= 2
+    out, expected = [], "a"
+    for text, is_heading in paras:
+        label = _LABEL_RE.match(text)
+        phrase = None if label else _LABEL_PHRASE_RE.match(text)
+        letter = _LETTER_PARA_RE.match(text)
+        in_heading = bool(out) and out[-1].get("grouped", False)
+        if is_heading and use_headings:
+            out.append({"letter": None, "heading": text, "body": "", "grouped": True})
+        elif label:
+            out.append({"letter": None, "heading": label.group(1), "body": text[label.end():]})
+        elif phrase and not in_heading:
+            heading = "Applicability" if phrase.group("applicability") else "Compliance"
+            out.append({"letter": None, "heading": heading, "body": text})
+        elif letter and letter.group(1) == expected:
+            expected = chr(ord(expected) + 1)
+            # Un encabezado agrupa sus párrafos, pero el AMOC, la incorporación
+            # por referencia y la fecha efectiva que le siguen sin encabezado
+            # propio son secciones aparte ("New Requirements of This AD" y
+            # debajo, al final, "(e) An alternative method of compliance...").
+            if in_heading and out[-1]["letter"] and _section_kind(None, text, False) in _CLOSING_KINDS:
+                in_heading = False
+            if in_heading:
+                out[-1]["letter"] = out[-1]["letter"] or letter.group(1)
+                out[-1]["body"] = f"{out[-1]['body']}\n\n{text}".strip()
+            else:
+                out.append({"letter": letter.group(1), "heading": _lead(text[letter.end():]),
+                            "body": text, "lead": True})
+        elif _KIND_RES["unsafe_condition"][1].match(text) and not in_heading:
+            out.append({"letter": None, "heading": _lead(text), "body": text, "lead": True})
+        elif out:
+            out[-1]["body"] = f"{out[-1]['body']}\n\n{text}".strip()
+    # "Compliance: Required as indicated, unless already done. To prevent ...,
+    # accomplish the following:" en un solo párrafo: la condición insegura es
+    # su propia sección.
+    for i, sec in enumerate(out):
+        split = sec["heading"] == "Compliance" and _EMBEDDED_UNSAFE_RE.search(sec["body"])
+        if split:
+            unsafe = sec["body"][split.end():]
+            sec["body"] = sec["body"][:split.start()]
+            out.insert(i + 1, {"letter": None, "heading": _lead(unsafe), "body": unsafe, "lead": True})
+            break
+    return out
+
+
+def _section_kind(heading: str | None, body: str, after_compliance: bool) -> str:
+    """Tipo por encabezado y, si no lo da (o es la frase inicial de un párrafo
+    legado, `heading=None`), por el principio del cuerpo."""
+    for kind, (heading_re, _) in _KIND_RES.items():
+        if heading and heading_re.search(heading):
+            return kind
+    lead = _LETTER_PARA_RE.sub("", body[:300], count=1)
+    for kind, (_, content_re) in _KIND_RES.items():
+        if content_re is None or (kind == "required_actions" and not after_compliance):
+            continue
+        if content_re.search(lead):
+            return kind
+    return "other"
+
+
+def split_ad_sections(html_text: str | None, expected_ad: str | None,
+                      expected_amendment: str | None = None, *, plain: bool = False) -> dict:
+    """
+    Secciones del AD `expected_ad` dentro de un granulo de GovInfo o, con
+    `plain=True`, dentro del texto regulatorio en texto plano de DRS
+    (`plain_regulatory_text`). En texto plano el encabezado puede venir sin
+    amendment (ADs antiguos), siempre con el numero del AD esperado, y la
+    aplicabilidad escrita dentro del parrafo del encabezado se separa de el.
+
+    Devuelve {status, anchor, sections[]}; cada sección es {position, letter,
+    heading, kind, body} con `position` desde 1 en el orden del documento y
+    `kind` de SECTION_KINDS (o 'other'). `status`:
+
+    - extracted: bloque anclado con al menos una sección.
+    - unanchored: ningún encabezado regulatorio declara `expected_ad`, o el
+      que lo declara trae otro amendment que `expected_amendment`. Es
+      determinista: el mismo documento da el mismo resultado.
+    - empty: respuesta vacía o la página "request access" de GovInfo.
+    - error: bloque anclado del que no sale ninguna sección, o el parseo falló.
+
+    Nunca decide si el texto está completo: eso lo decide la base con una
+    sola regla sobre los `kind` enviados.
+    """
+    result = {"status": "error", "anchor": None, "sections": []}
+    try:
+        if not (html_text or "").strip() or (not plain and "request access" in html_text[:600].lower()):
+            result["status"] = "empty"
+            return result
+        text = plain_regulatory_text(html_text, expected_ad) if plain else fr_document_text(html_text)
+        headers = list(_BLOCK_HEADER_RE.finditer(text))
+        want = _ad_key(expected_ad)
+        idx = next((i for i, m in enumerate(headers)
+                    if want and _declared_ad(m, text) == want and not _is_excerpt(text, m)), None)
+        if idx is None and plain and want:
+            # DRS numera los AD emitidos por carta con un sufijo que el texto no
+            # repite ("86-16-11 L" se encabeza "86-16-11 BELL HELICOPTER ...").
+            wanted = {want, _ad_key(_LETTER_AD_SUFFIX_RE.sub("", normalize_ad_number(expected_ad or "")))}
+            headers = [m for m in _NUMBER_ONLY_HEADER_RE.finditer(text) if _ad_key(m.group("ad")) in wanted][:1]
+            idx = 0 if headers else None
+        if idx is None:
+            result["status"] = "unanchored"
+            return result
+        head = headers[idx]
+        if expected_amendment and _amendment_key(head.group("amendment") or "") != _amendment_key(expected_amendment):
+            result["status"] = "unanchored"
+            return result
+
+        body_start = _header_end(text, head)
+        if plain:
+            inline = _INLINE_APPLICABILITY_RE.search(text, head.end(), body_start)
+            if inline:
+                body_start = inline.start()
+        ends = [len(text)]
+        if idx + 1 < len(headers):
+            ends.append(headers[idx + 1].start())
+        stop = _BLOCK_END_RE.search(text, body_start)
+        if stop:
+            ends.append(stop.start())
+        block = text[body_start:min(ends)]
+        result["anchor"] = re.sub(r"\s+", " ", text[head.start():body_start]).strip()
+
+        sections, after_compliance = [], False
+        for raw in _raw_sections(block):
+            body = raw["body"].strip()
+            if not body:
+                continue
+            kind = _section_kind(None if raw.get("lead") else raw["heading"], body, after_compliance)
+            after_compliance = after_compliance or kind in ("compliance", "unsafe_condition")
+            sections.append({"position": len(sections) + 1, "letter": raw["letter"],
+                             "heading": raw["heading"], "kind": kind, "body": body})
+        result["sections"] = sections
+        result["status"] = "extracted" if sections else "error"
+    except Exception:  # un documento raro no tumba la corrida
+        result.update(status="error", anchor=None, sections=[])
+    return result

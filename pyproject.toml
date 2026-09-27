@@ -11,14 +11,9 @@ dependencies = [
   "requests>=2.31.0,<3",
   "beautifulsoup4>=4.12.0,<5",
   "lxml>=6.1.0,<7",
-  "pandas>=2.1.0,<3",
-  "openpyxl>=3.1.0,<4",
   "flask>=3.0.0,<4",
-  "flask-cors>=4.0.0,<7",
   "supabase>=2.0.0,<3",
-  "stripe>=7.0.0,<14",
   "python-dotenv>=1.0.0,<2",
-  "playwright>=1.40.0,<2",
   "pypdf>=4.0.0,<8",
 ]
 
@@ -28,7 +23,6 @@ dependencies = [
 [tool.setuptools]
 py-modules = [
   "app",
-  "build_aliases",
   "dashboard_server",
   "enrich",
   "enrich_ai",
@@ -42,7 +36,7 @@ packages = ["scrapers", "scrapers.common", "webapp"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = [".venv", "outputs", "results"]
+extend-exclude = [".venv", "outputs"]
 
 [tool.ruff.lint]
 # Explicit set (newer ruff ships a much wider default): pyflakes + pycodestyle

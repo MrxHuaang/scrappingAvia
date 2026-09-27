@@ -26,6 +26,7 @@ DRY_RUN=1 (default) = read-only plan. DRY_RUN=0 = execute.
 import json
 import os
 import re
+import sys
 from collections import defaultdict
 
 from dotenv import load_dotenv
@@ -83,9 +84,23 @@ def target_of(adn: str, docmap: dict):
     return t if (t and is_bare(t)) else None
 
 
+def _client():
+    """
+    Este script re-escribe y borra filas de `ads` (y repuntea/borra referencias
+    de usuario en ad_saved/ad_reviewed/ad_compliance/ad_notes), asi que
+    necesita la service key: la BD revoca los privilegios de escritura de
+    anon/authenticated sobre esas tablas, y degradar a la anon key aqui ya no
+    es un respaldo funcional (fallaria en runtime incluso en DRY_RUN=0).
+    """
+    url = os.environ.get("SUPABASE_URL", "").strip()
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
+    if not url or not key:
+        sys.exit("ERROR: SUPABASE_URL y SUPABASE_SERVICE_KEY requeridos en .env (este script escribe en `ads`; la anon key ya no basta)")
+    return create_client(url, key)
+
+
 def main():
-    sb = create_client(os.environ["SUPABASE_URL"],
-                       os.environ.get("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_ANON_KEY"])
+    sb = _client()
     docmap = load_docmap()
     print(f"=== FAA canonical migration — {'DRY-RUN' if DRY_RUN else 'EXECUTE'} ===")
     print(f"MODS docnum->AD entries: {len(docmap)}")

@@ -9,6 +9,7 @@ Endpoint: https://www.federalregister.gov/api/v1/documents.json
 Docs:     https://www.federalregister.gov/developers/documentation/api/v1
 """
 
+import hashlib
 import os
 import re
 import threading
@@ -19,13 +20,14 @@ from datetime import datetime
 import requests
 
 import enrich
+from enrich import classify_product_type
 from utils import (
     ad_identity_from_docket_ids,
-    extract_make_model,
     normalize_ad_number,
 )
 
 from scrapers.common.cache import load_json_cache, save_json_cache
+from scrapers.common.fr_applicability import applicability_fields
 from scrapers.common.http import API_HEADERS, get_with_backoff
 
 from scrapers.common.log import get_logger
@@ -49,9 +51,10 @@ _FIELDS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Full-text enrichment (compliance_time + AMOC viven en el cuerpo del rule,
-# no en el abstract). Se baja raw_text_url una vez por documento y se cachean
-# SOLO los campos extraidos (no el texto completo) en outputs/.
+# Full text de GovInfo: el texto del AD en secciones (enrich.split_ad_sections)
+# y, del cuerpo, docket y supersession; compliance_time y AMOC se derivan de
+# las secciones al parsear. Se baja una vez por documento y se cachea en
+# outputs/ el resultado del intento (secciones incluidas), no el HTML.
 # ---------------------------------------------------------------------------
 FETCH_FULL_TEXT = True  # poner False para saltar el parseo del cuerpo (mas rapido)
 _FULLTEXT_CACHE_PATH = os.path.join(
@@ -66,6 +69,37 @@ _ft_local = threading.local()
 # backfill completo en minutos en vez de horas (13.5k granulos en serie).
 FULLTEXT_WORKERS = 8
 
+# Cache v2, una entrada por document_number:
+#   {v: 2, status, anchor, sections[], sha, detail, docket, supersedes[],
+#    ad_header}
+# `status` es el de enrich.split_ad_sections (extracted | unanchored | empty
+# | error), `sha` el sha256 del granulo bajado y `detail` por qué el intento no
+# dejó texto (None si lo dejó). `extracted` y `unanchored` son definitivos:
+# el mismo documento da el mismo resultado. `empty` y `error` se reintentan
+# en la corrida siguiente (una vez por corrida).
+#
+# Una entrada v1 (sin `v`: solo los campos del cuerpo) se sigue leyendo tal
+# cual y se re-pide una vez para obtener sus secciones. Si ese intento falla,
+# conserva sus campos del cuerpo (docket, supersedes): un intento fallido
+# nunca borra datos buenos. Sus compliance_time/amoc de v1 ya no se leen.
+_FT_CACHE_VERSION = 2
+_FT_FINAL_STATUSES = ("extracted", "unanchored")
+# Documentos ya pedidos en esta corrida: el prefetch y el parseo no repiten
+# el GET de un `error`/`empty` dentro de la misma corrida.
+_ft_attempted: set[str] = set()
+# Hubo intentos que cambiaron el cache desde el ultimo guardado.
+_fulltext_dirty = False
+
+# Por qué un intento no dejó texto, cuando no lo dice la respuesta HTTP. La
+# clave es (status, hubo bloque anclado). Viaja como `detail` del intento a
+# replace_ad_text_sections.
+_ATTEMPT_DETAIL = {
+    ("unanchored", False): "no identity header declares the expected AD and amendment",
+    ("empty", False): "empty GovInfo response or access page",
+    ("error", True): "anchored block without sections",
+    ("error", False): "GovInfo body could not be parsed",
+}
+
 
 def _load_fulltext_cache() -> dict:
     global _fulltext_cache
@@ -75,36 +109,23 @@ def _load_fulltext_cache() -> dict:
 
 
 def _save_fulltext_cache() -> None:
-    if _fulltext_cache is not None:
+    """Escribe el cache solo si algun intento lo cambio desde la ultima vez:
+    son ~90 MB y un anio sin documentos nuevos no tiene nada que guardar."""
+    global _fulltext_dirty
+    if _fulltext_cache is not None and _fulltext_dirty:
         save_json_cache(_FULLTEXT_CACHE_PATH, _fulltext_cache)
+        _fulltext_dirty = False
 
 
-_TAG_RE = re.compile(r"<[^>]+>")
+def _fulltext_is_final(entry: dict | None) -> bool:
+    return bool(entry) and entry.get("v") == _FT_CACHE_VERSION and entry.get("status") in _FT_FINAL_STATUSES
 
-# Identidad del AD: viene de `docket_ids` (ver utils.ad_identity_from_docket_ids).
-#
-# El full text SOLO se usa como respaldo para los ~100 docs (casi todos 1998)
-# cuyo docket_ids no trae el AD, y el match esta ANCLADO al amendment del
-# header regulatorio: "[Docket No. ...; Amendment 39-10410; AD 98-06-27]".
-# Buscar el primer "AD nnnn-nn-nn" suelto del cuerpo es lo que rompio la base:
-# el rule cita al AD que reemplaza antes de nombrarse.
-_FT_HEADER_AD_RE = re.compile(
-    r"Amendment\s*(?:No\.?\s*)?39[-–—]\d{3,6}\s*[;,]?\s*"
-    r"(?:AD|A\.D\.)?\s*((?:\d{4}|\d{2})[-–—]\d{2}[-–—]\d{2,4}(?:R\d+)?)\b",
-    re.I,
-)
-# Solo para el respaldo anclado por amendment conocido (docket_ids lo trae aun
-# cuando omite el AD).
-def _header_ad_for_amendment(txt: str, amendment: str) -> str | None:
-    if not amendment:
-        return None
-    pat = re.compile(
-        re.escape(amendment).replace(r"\-", "[-–—]")
-        + r"\s*[;,]?\s*(?:AD|A\.D\.)?\s*((?:\d{4}|\d{2})[-–—]\d{2}[-–—]\d{2,4}(?:R\d+)?)\b",
-        re.I,
-    )
-    m = pat.search(txt)
-    return normalize_ad_number(m.group(1)) if m else None
+
+def _fulltext_pending(doc_number: str) -> bool:
+    """El documento necesita un GET: sin entrada definitiva y sin intento en
+    esta corrida."""
+    return (bool(doc_number) and doc_number not in _ft_attempted
+            and not _fulltext_is_final(_load_fulltext_cache().get(doc_number)))
 
 
 _FT_DOCKET_RE = re.compile(
@@ -121,77 +142,130 @@ _FT_SUPERSEDE_RE = re.compile(
 )
 
 
+def _body_fields(html_text: str, ad: str | None, amendment: str | None) -> dict:
+    """Lo que sale de un granulo bajado: el intento de secciones y los campos
+    del cuerpo."""
+    txt = enrich.fr_document_text(html_text)
+    # Identidad: viene de `docket_ids` (utils.ad_identity_from_docket_ids). El
+    # cuerpo SOLO es respaldo para los ~100 docs (casi todos 1998) cuyo
+    # docket_ids no trae el AD, y el match va ANCLADO al amendment del corchete
+    # del preambulo. Buscar el primer "AD nnnn-nn-nn" suelto del cuerpo es lo
+    # que rompio la base: el rule cita al AD que reemplaza antes de nombrarse.
+    first = enrich.FT_HEADER_AD_RE.search(txt)
+    ad_header = (enrich.header_ad_for_amendment(txt, amendment or "")
+                 or (normalize_ad_number(first.group(1)) if first else None))
+    split = enrich.split_ad_sections(html_text, ad or ad_header, amendment)
+    out = {
+        "v": _FT_CACHE_VERSION,
+        "status": split["status"],
+        "anchor": split["anchor"],
+        "sections": split["sections"],
+        "sha": hashlib.sha256(html_text.encode("utf-8")).hexdigest(),
+        "docket": None, "supersedes": [], "ad_header": ad_header,
+    }
+    if split["status"] == "empty":
+        return out
+    m = _FT_DOCKET_RE.search(txt)
+    if m:
+        out["docket"] = normalize_ad_number(m.group(1)).replace(" ", "-").upper()
+    # Supersession: "This AD replaces AD 2020-06-14" /
+    # "The FAA is superseding AD 2018-23-51" en el cuerpo del rule.
+    out["supersedes"] = [
+        normalize_ad_number(n) for n in dict.fromkeys(_FT_SUPERSEDE_RE.findall(txt))
+    ]
+    return out
+
+
 def _fetch_fulltext_fields(doc_number: str, publication_date: str,
-                           amendment: str | None = None,
-                           want_ad: bool = False) -> dict:
+                           ad: str | None = None,
+                           amendment: str | None = None) -> dict:
     """
     Baja el cuerpo COMPLETO del rule desde GovInfo (FR-{date}/granules/{docnum}/htm)
-    y extrae {compliance_time, amoc, docket, supersedes}. GovInfo se usa porque
-    federalregister.gov bloquea (bot) los endpoints full_text. Cacheado por
-    document_number. Requiere GOVINFO_API_KEY (leida en runtime; load_dotenv
-    corre tras el import).
+    y devuelve la entrada de cache v2 del documento. GovInfo se usa porque
+    federalregister.gov bloquea (bot) los endpoints full_text. Requiere
+    GOVINFO_API_KEY (leida en runtime; load_dotenv corre tras el import): sin
+    ella no hay intento y el cache no se toca.
 
-    'ad' solo se puebla cuando want_ad=True (docket_ids no trajo el numero) y
-    el match va anclado al `amendment` del header regulatorio. El campo 'ad'
-    del cache viejo se ignora a proposito: venia del primer "AD nnnn-nn-nn"
-    del cuerpo, que suele ser el AD superseded.
+    `ad` y `amendment` (de docket_ids) anclan las secciones al encabezado de
+    identidad del AD; sin `ad` se ancla al AD que el preambulo empareja con el
+    amendment (`ad_header`, el mismo respaldo de identidad de _parse_document).
     """
     cache = _load_fulltext_cache()
     cached = cache.get(doc_number)
-    if cached is not None and "supersedes" in cached:
-        if not want_ad or cached.get("ad_header"):
-            return cached
-        # Entrada vieja sin el respaldo anclado: se re-pide una sola vez.
-
-    result = {"compliance_time": None, "amoc": False, "ad": None, "docket": None,
-              "supersedes": [], "ad_header": None}
     key = os.environ.get("GOVINFO_API_KEY", "").strip()
-    if doc_number and publication_date and key:
-        session = getattr(_ft_local, "session", None)
-        if session is None:
-            session = requests.Session()
-            session.headers.update({"User-Agent": "AD-Scraper/1.0"})
-            _ft_local.session = session
-        url = (
-            f"https://api.govinfo.gov/packages/FR-{publication_date}"
-            f"/granules/{doc_number}/htm?api_key={key}"
-        )
-        try:
-            resp = session.get(url, timeout=40)
-            if resp.ok and "request access" not in resp.text[:600].lower():
-                txt = _TAG_RE.sub(" ", resp.text)
-                low = txt.lower()
-                result["amoc"] = (
-                    "alternative method of compliance" in low
-                    or "alternative methods of compliance" in low
-                )
-                result["compliance_time"] = enrich.extract_compliance_from_fulltext(txt)
-                if want_ad:
-                    header_ad = (
-                        _header_ad_for_amendment(txt, amendment or "")
-                        or (lambda m: normalize_ad_number(m.group(1)) if m else None)(
-                            _FT_HEADER_AD_RE.search(txt)
-                        )
-                    )
-                    result["ad"] = header_ad
-                    result["ad_header"] = header_ad
-                m = _FT_DOCKET_RE.search(txt)
-                if m:
-                    result["docket"] = (
-                        normalize_ad_number(m.group(1)).replace(" ", "-").upper()
-                    )
-                # Supersession: "This AD replaces AD 2020-06-14" /
-                # "The FAA is superseding AD 2018-23-51" en el cuerpo del rule.
-                result["supersedes"] = [
-                    normalize_ad_number(n)
-                    for n in dict.fromkeys(_FT_SUPERSEDE_RE.findall(txt))
-                ]
-        except requests.RequestException:
-            pass
+    if not (_fulltext_pending(doc_number) and publication_date and key):
+        return cached or {}
 
-    if doc_number:
-        cache[doc_number] = result
-    return result
+    _ft_attempted.add(doc_number)
+    session = getattr(_ft_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        session.headers.update({"User-Agent": "AD-Scraper/1.0"})
+        _ft_local.session = session
+    url = (
+        f"https://api.govinfo.gov/packages/FR-{publication_date}"
+        f"/granules/{doc_number}/htm?api_key={key}"
+    )
+    detail = None
+    try:
+        resp = session.get(url, timeout=40)
+        result = _body_fields(resp.text, ad, amendment) if resp.ok else None
+        if result is None:
+            detail = f"GovInfo HTTP {resp.status_code}"
+    except requests.RequestException as e:
+        result, detail = None, f"GovInfo request failed: {type(e).__name__}"
+    if result is None:  # HTTP != 2xx o red
+        result = {"v": _FT_CACHE_VERSION, "status": "error", "anchor": None, "sections": []}
+    result["detail"] = detail or _ATTEMPT_DETAIL.get((result["status"], bool(result.get("anchor"))))
+
+    if result["status"] in _FT_FINAL_STATUSES or not cached:
+        cache[doc_number] = {"docket": None, "supersedes": [], "ad_header": None, **result}
+    else:
+        # Intento fallido sobre una entrada con datos: se registra el intento
+        # (para reintentarlo) sin perder lo que ya tenia.
+        cache[doc_number] = {**cached, "v": _FT_CACHE_VERSION, "status": result["status"],
+                             "detail": result["detail"]}
+    global _fulltext_dirty
+    _fulltext_dirty = True
+    return cache[doc_number]
+
+
+def fulltext_entry(doc_number: str) -> dict | None:
+    """Entrada del cache full-text de un documento FR, o None."""
+    return _load_fulltext_cache().get(doc_number) if doc_number else None
+
+
+def fulltext_attempted(doc_number: str) -> bool:
+    """El documento se pidió a GovInfo en esta corrida (su entrada es un
+    intento de hoy, no uno guardado de una corrida anterior)."""
+    return doc_number in _ft_attempted
+
+
+def govinfo_source_url(publication_date: str, doc_number: str) -> str:
+    """URL pública del granulo en GovInfo: la del texto, sin la API key con
+    la que se bajó."""
+    return f"https://www.govinfo.gov/content/pkg/FR-{publication_date}/html/{doc_number}.htm"
+
+
+def rule_effective_date(ft: dict, effective_on: str | None) -> tuple[str | None, str]:
+    """(fecha efectiva, de donde sale): la que declara la seccion Effective
+    Date del texto anclado ("section"), si no el `effective_on` de la FR API
+    ("effective_on"), si no ninguna ("none"). Nunca la fecha de publicacion.
+    La usan el parseo y scripts/backfill_effective_date.py."""
+    sections = ft.get("sections") if ft.get("status") == "extracted" else None
+    from_rule = enrich.effective_date_from_sections(sections)
+    if from_rule:
+        return from_rule, "section"
+    if (effective_on or "").strip():
+        return effective_on.strip(), "effective_on"
+    return None, "none"
+
+
+def _applicability_section(ft: dict) -> str:
+    """Cuerpo de la seccion Applicability del texto anclado, o ""."""
+    if ft.get("status") != "extracted":
+        return ""
+    return next((s["body"] for s in ft.get("sections") or [] if s.get("kind") == "applicability"), "")
 
 
 def _prefetch_fulltext(docs: list[dict]) -> None:
@@ -205,18 +279,13 @@ def _prefetch_fulltext(docs: list[dict]) -> None:
     """
     if not FETCH_FULL_TEXT:
         return
-    cache = _load_fulltext_cache()
     pending = []
     for d in docs:
         num = (d.get("document_number") or "").strip()
-        if not num:
+        if not _fulltext_pending(num):
             continue
         ident = ad_identity_from_docket_ids(d.get("docket_ids"))
-        want_ad = not ident["ad"]
-        cached = cache.get(num)
-        if cached is not None and "supersedes" in cached and (not want_ad or cached.get("ad_header")):
-            continue
-        pending.append((num, d.get("publication_date") or "", ident.get("amendment"), want_ad))
+        pending.append((num, d.get("publication_date") or "", ident["ad"], ident.get("amendment")))
 
     if not pending:
         return
@@ -224,7 +293,7 @@ def _prefetch_fulltext(docs: list[dict]) -> None:
              f"({FULLTEXT_WORKERS} hilos)")
     with ThreadPoolExecutor(max_workers=FULLTEXT_WORKERS) as pool:
         list(pool.map(
-            lambda a: _fetch_fulltext_fields(a[0], a[1], amendment=a[2], want_ad=a[3]),
+            lambda a: _fetch_fulltext_fields(a[0], a[1], ad=a[2], amendment=a[3]),
             pending,
         ))
 
@@ -389,70 +458,6 @@ def search_ads(keyword=None, make=None, model=None, product_type=None,
     return _collapse_by_ad_number(all_results)
 
 
-# Sustantivo de producto con el que la FAA cierra el título del AD ("The Boeing
-# Company Airplanes", "CFM International S.A. Turbofan Engines", "Hamilton
-# Sundstrand Propellers"). Plurales incluidos: `\bengine\b` no casa "Engines".
-_TITLE_PRODUCT_NOUNS = re.compile(
-    r"\b(?P<aircraft>airplanes?|aircraft|helicopters?|rotorcraft|gliders?|sailplanes?"
-    r"|airships?|balloons?|gyroplanes?)\b"
-    r"|\b(?P<engine>engines?|turbofans?|turbojets?|turboprops?|turboshafts?)\b"
-    r"|\b(?P<propeller>propellers?)\b"
-    r"|\b(?P<appliance>appliances?)\b",
-    re.I,
-)
-
-# "... Airplanes Equipped With General Electric CF6-80C2 Series Engines" es un
-# AD de avión: el motor viene DESPUÉS del producto, como calificativo. Se corta
-# el título en esa frase antes de leer el último sustantivo. Misma regla que la
-# migración 20260923180000_fr_product_type_from_title.sql de ad-scrapper.
-_AIRCRAFT_QUALIFIER = re.compile(
-    r"(\b(?:airplanes?|helicopters?|rotorcraft|aircraft|gliders?|sailplanes?)\b)"
-    r"\s+(?:equipped|powered|fitted|having|with)\b.*$",
-    re.I,
-)
-
-
-def classify_product_type(subject: str, abstract: str = "", cfr_refs=()) -> str:
-    """
-    Tipo de producto de un AD de la FAA a partir de su título.
-
-    El título es el campo que declara el producto; el abstract sólo lo
-    describe. Antes se buscaba "engine" en título + abstract, y el resumen de
-    un AD de avión casi siempre menciona un motor ("...engine fuel pump...",
-    "...an engine fire..."): 1.138 ADs cuyo título termina en "Airplanes" o
-    "Helicopters" quedaron como Engine, y filtrar por Product type = Aircraft
-    los escondía.
-
-    Gana el ÚLTIMO sustantivo de producto del título, porque la FAA lo pone al
-    final y el nombre del titular puede llevar otro antes ("Airbus Helicopters
-    Model EC135 Helicopters", "Rolls-Royce Deutschland Ltd & Co KG Turbofan
-    Engines"). Sin sustantivo en el título se cae a la regla vieja sobre el
-    abstract, y luego a CFR parte 39.
-    """
-    last = None
-    title = _AIRCRAFT_QUALIFIER.sub(r"\1", subject or "", count=1)
-    for m in _TITLE_PRODUCT_NOUNS.finditer(title):
-        last = m.lastgroup
-    if last:
-        return {"aircraft": "Aircraft", "engine": "Engine",
-                "propeller": "Propeller", "appliance": "Appliance"}[last]
-
-    text = (abstract or "").lower()
-    if re.search(r"\bengines?\b", text):
-        return "Engine"
-    if re.search(r"\bpropellers?\b", text):
-        return "Propeller"
-    if re.search(r"\bappliances?\b", text):
-        return "Appliance"
-    if re.search(r"\baircraft\b|\bairplanes?\b|\bhelicopters?\b|\bairships?\b|\bgliders?\b", text):
-        return "Aircraft"
-    for ref in cfr_refs or ():
-        part = str(ref.get("part", "") if isinstance(ref, dict) else "")
-        if part == "39":
-            return "Aircraft"
-    return ""
-
-
 def _parse_document(doc) -> dict | None:
     """Parsea un documento del Federal Register a formato estandar."""
     try:
@@ -466,17 +471,20 @@ def _parse_document(doc) -> dict | None:
         ident = ad_identity_from_docket_ids(doc.get("docket_ids"))
         ad_number = ident["ad"] or ""
 
-        # Full text: compliance/AMOC/supersession y — solo si docket_ids no
-        # trajo el numero — el respaldo anclado al amendment del header.
+        # Full text: secciones, compliance/AMOC/supersession y — solo si
+        # docket_ids no trajo el numero — el respaldo anclado al amendment del
+        # corchete del preambulo (`ad_header`). El campo 'ad' de las entradas
+        # v1 se ignora a proposito: venia del primer "AD nnnn-nn-nn" del
+        # cuerpo, que suele ser el AD superseded.
         ft = {}
         if FETCH_FULL_TEXT:
             ft = _fetch_fulltext_fields(
                 doc_number, pub_date,
+                ad=ad_number or None,
                 amendment=ident.get("amendment"),
-                want_ad=not ad_number,
             )
-            if not ad_number and ft.get("ad"):
-                ad_number = ft["ad"]
+            if not ad_number and ft.get("ad_header"):
+                ad_number = ft["ad_header"]
 
         ad_number = normalize_ad_number(ad_number)
         if not ad_number:
@@ -486,17 +494,16 @@ def _parse_document(doc) -> dict | None:
             return None
 
         docket = ident.get("docket") or ft.get("docket") or doc_number
-        make, model = extract_make_model(title, abstract)
 
         subject = re.sub(r"^Airworthiness Directives[;:]\s*", "", title, flags=re.I)
 
-        effective_date = doc.get("effective_on", "") or doc.get("publication_date", "")
+        effective_on = (doc.get("effective_on") or "").strip()
+        effective_date, _ = rule_effective_date(ft, effective_on)
         pdf_link = doc.get("pdf_url", "") or doc.get("html_url", "")
 
         doc_type = (doc.get("type") or "").upper()
         action_field = (doc.get("action") or "").lower()
         title_lower = title.lower()
-        abstract_lower = abstract.lower()
 
         if doc_type == "PROPOSED_RULE" or "proposed" in title_lower or "nprm" in title_lower or "proposed" in action_field:
             status = "NPRM"
@@ -511,8 +518,10 @@ def _parse_document(doc) -> dict | None:
         else:
             status = "Final Rule"
 
+        # El abstract va con sus mayusculas: el titular se identifica sobre el
+        # (classify_product_type lo pasa a minusculas para el respaldo).
         product_type = classify_product_type(
-            subject, abstract_lower, doc.get("cfr_references") or []
+            subject, abstract, doc.get("cfr_references") or []
         )
 
         out = {
@@ -522,10 +531,12 @@ def _parse_document(doc) -> dict | None:
             # Abstract = FAA AD summary; enrich.py mines it for unsafe_condition,
             # corrective_action and Service Bulletin refs.
             "Abstract": abstract.strip(),
-            "Make": make.strip(),
-            "Model": model.strip(),
             "Publication_Date": pub_date,
+            # None si ni el rule ni la FR API la declaran: la fecha de
+            # publicacion no es la efectiva (un AD entra en vigor semanas
+            # despues, o antes si fue de emergencia).
             "Effective_Date": effective_date,
+            "Effective_On": effective_on,
             "Status": status,
             "Product_Type": product_type,
             "Docket": docket,
@@ -548,10 +559,23 @@ def _parse_document(doc) -> dict | None:
             ) or "",
         }
 
-        # compliance_time + AMOC ya vienen del full text bajado arriba (ft).
-        if ft.get("compliance_time"):
-            out["Compliance_Time"] = ft["compliance_time"]
-        out["AMOC_Available"] = bool(ft.get("amoc"))
+        # Titular y modelos: Make/Model escalares (ads.make/ads.model) y
+        # Applicability [{make, models[]}] para ad_applicability, de una sola
+        # extraccion sobre titulo + abstract y, si el texto del rule quedo
+        # anclado, su seccion Applicability (los modelos salen de ahi antes
+        # que del abstract). Sin titular inequivoco no hay Applicability ni
+        # Make y el AD viaja `failed` (docs/applicability-contract.md).
+        out.update(applicability_fields(title, abstract, _applicability_section(ft)))
+
+        # compliance_time y AMOC salen de las secciones clasificadas del texto
+        # anclado, nunca del documento FR entero: su preambulo discute AMOCs
+        # y plazos de otros ADs y de los comentarios. Sin texto anclado no hay
+        # valor del cuerpo y normalize() cae al abstract.
+        sections = ft.get("sections") if ft.get("status") == "extracted" else None
+        compliance_time = enrich.compliance_time_from_sections(sections)
+        if compliance_time:
+            out["Compliance_Time"] = compliance_time
+        out["AMOC_Available"] = enrich.amoc_from_sections(sections)
 
         # Supersession: el rule nuevo declara a cuales ADs reemplaza. El resolver
         # de populate_relations() marca esos ADs viejos como Superseded -> este.

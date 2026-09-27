@@ -1,0 +1,127 @@
+{
+ "summary": {
+  "doctypeName": "ADFREAD",
+  "drsDoctypeName": "Emergency ADs (EAD)",
+  "count": 291,
+  "hasMoreItems": false,
+  "totalItems": 291,
+  "offset": 0,
+  "sortBy": "drs:adfreadIssueDate",
+  "sortByOrder": "DESC"
+ },
+ "documents": [
+  {
+   "drs:documentNumber": "2026-18-51",
+   "drs:status": "Current",
+   "drs:adfreadDocketNo": null,
+   "drs:adfreadAmendment": null,
+   "drs:adfreadSubject": "Turbine Engine Oil System",
+   "drs:adfreadMake": [
+    "Rolls-Royce Deutschland Ltd & Co KG"
+   ],
+   "drs:adfreadModel": [
+    "RB211 Trent 768-60",
+    "RB211 Trent 772-60",
+    "RB211 Trent 772B-60"
+   ],
+   "drs:adfreadProductTypes": [
+    "Engine"
+   ],
+   "drs:adfreadProductSubTypes": [
+    "Large Airplane"
+   ],
+   "drs:adfreadCitation": null,
+   "drs:adfreadPageNumber": null,
+   "drs:title": null,
+   "drs:adfreadAffectedAD": null,
+   "drs:adfreadSupersededAD": null,
+   "drs:adfreadAffectedBy": null,
+   "drs:adfreadSupersededBy": null,
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": [
+    "_EMPTY_"
+   ],
+   "drs:sectionNumber": [
+    "_EMPTY_"
+   ],
+   "drs:adfreadCitationPublishDate": null,
+   "drs:adfreadIssueDate": "2026-09-05",
+   "drs:effectiveDate": null,
+   "drs:comments": null,
+   "drs:documentOwner": [
+    "AIR-500 Integrated Certificate Management Division"
+   ],
+   "drs:primaryRespOffice": [
+    "AIR-520: Continued Operational Safety Branch"
+   ],
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "docLastModifiedDate": "2026-09-05T15:13:20.747Z",
+   "documentGuid": "DRSDOCID186470260720260905150841",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/DRSDOCID186470260720260905150841.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/d17c8b5d-d01f-4fbf-ba37-44a05203e3e8",
+   "mainDocumentFileName": "2026-18-51_Emergency.pdf",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "2026-18-52",
+   "drs:status": "Current",
+   "drs:adfreadDocketNo": null,
+   "drs:adfreadAmendment": null,
+   "drs:adfreadSubject": "Turbine Engine Oil System",
+   "drs:adfreadMake": [
+    "Rolls-Royce Deutschland Ltd & Co KG"
+   ],
+   "drs:adfreadModel": [
+    "RB211-Trent 875-17",
+    "RB211-Trent 877-17",
+    "RB211-Trent 884-17",
+    "RB211-Trent 884B-17",
+    "RB211-Trent 892-17",
+    "RB211-Trent 892B-17"
+   ],
+   "drs:adfreadProductTypes": [
+    "Engine"
+   ],
+   "drs:adfreadProductSubTypes": [
+    "Large Airplane"
+   ],
+   "drs:adfreadCitation": null,
+   "drs:adfreadPageNumber": null,
+   "drs:title": null,
+   "drs:adfreadAffectedAD": null,
+   "drs:adfreadSupersededAD": null,
+   "drs:adfreadAffectedBy": null,
+   "drs:adfreadSupersededBy": null,
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": [
+    "_EMPTY_"
+   ],
+   "drs:sectionNumber": [
+    "_EMPTY_"
+   ],
+   "drs:adfreadCitationPublishDate": null,
+   "drs:adfreadIssueDate": "2026-09-05",
+   "drs:effectiveDate": null,
+   "drs:comments": null,
+   "drs:documentOwner": [
+    "AIR-500 Integrated Certificate Management Division"
+   ],
+   "drs:primaryRespOffice": [
+    "AIR-520: Continued Operational Safety Branch"
+   ],
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "docLastModifiedDate": "2026-09-05T15:18:57.077Z",
+   "documentGuid": "DRSDOCID121401346420260905151544",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/DRSDOCID121401346420260905151544.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/e45ee67d-0f3a-47c9-b372-85fe98ed8753",
+   "mainDocumentFileName": "2026-18-52_Emergency.pdf",
+   "hasMoreAttachments": false
+  }
+ ]
+}

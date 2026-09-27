@@ -2,48 +2,37 @@
 Fabrica de la app web de Zephr (Fase 3b).
 
 app.py (el entry point que Vercel construye) solo hace
-`app = create_app()`; toda la composicion vive aqui: configuracion, CORS,
-ProxyFix y el registro de los seis blueprints. La suite de contrato HTTP
-(tests/test_http_contract.py) es el criterio de que este ensamblaje se
-comporta identico al app.py monolitico que reemplaza.
+`app = create_app()`; toda la composicion vive aqui: configuracion,
+ProxyFix y el registro de los blueprints. La app es solo la API que llama el
+proxy de Next.js (busqueda) mas el health check: no sirve HTML, ni
+plantillas, ni archivos estaticos. La suite de contrato HTTP
+(tests/test_http_contract.py) fija el comportamiento observable.
 """
 
-import os
-
-from flask import Flask, render_template
-from flask_cors import CORS
+from flask import Flask, jsonify
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from webapp import auth, billing, core, export, pages, search, status
-
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from webapp import core, search
 
 
 def create_app() -> Flask:
-    # templates/ y static/ viven en la raiz del repo, no dentro de webapp/.
-    app = Flask(
-        "app",
-        template_folder=os.path.join(_ROOT, "templates"),
-        static_folder=os.path.join(_ROOT, "static"),
-    )
+    # static_folder=None: sin la ruta implicita /static/<path>.
+    app = Flask("app", static_folder=None)
     app.config["JSON_SORT_KEYS"] = False
-    app.secret_key = core.FLASK_SECRET
 
     # Trust one hop of X-Forwarded-* (Vercel/Next proxy) so request.remote_addr
     # is the real client IP, not the proxy IP (BUG-2).
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 
-    # CORS (SEC-5): never combine wildcard origins with credentials.
-    if core.ALLOWED_ORIGINS == "*":
-        CORS(app, origins="*", supports_credentials=False)
-    else:
-        CORS(app, origins=core.ALLOWED_ORIGINS, supports_credentials=True)
+    # Sin CORS: el unico cliente es el proxy de Next.js, que llama servidor a
+    # servidor. Ningun navegador debe poder leer esta API desde otro origen.
 
-    for module in (pages, auth, billing, search, export, status):
-        app.register_blueprint(module.bp)
+    app.register_blueprint(search.bp)
+    core.log_proxy_guard_state()
+    core.log_admin_key_state()
 
     @app.errorhandler(404)
-    def page_not_found(e):
-        return render_template("404.html"), 404
+    def not_found(e):
+        return jsonify({"error": "Not found"}), 404
 
     return app

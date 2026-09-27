@@ -1,0 +1,319 @@
+{
+ "summary_asc": {
+  "doctypeName": "ADFRAWD",
+  "drsDoctypeName": "AD Final Rules",
+  "count": 750,
+  "hasMoreItems": true,
+  "totalItems": 20154,
+  "offset": 0,
+  "sortBy": "docLastModifiedDate",
+  "sortByOrder": "ASC"
+ },
+ "documents": [
+  {
+   "drs:documentNumber": "2026-18-52",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "FAA-2026-8815",
+   "drs:adfrawdAmendment": "39-23468",
+   "drs:adfrawdMake": [
+    "Rolls-Royce Deutschland Ltd & Co KG"
+   ],
+   "drs:adfrawdModel": [
+    "RB211-Trent 875-17",
+    "RB211-Trent 877-17",
+    "RB211-Trent 884-17",
+    "RB211-Trent 884B-17",
+    "RB211-Trent 892-17",
+    "RB211-Trent 892B-17"
+   ],
+   "drs:adfrawdProductType": [
+    "Engine"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Large Airplane"
+   ],
+   "drs:adfrawdSubject": "Turbine Engine Oil System",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "Federal Register, Volume 91 Number 180 (Friday, September 18, 2026)",
+   "drs:adfrawdPageNumber": "(Pages 59048-59051)",
+   "drs:title": "Airworthiness Directives; Rolls-Royce Deutschland Ltd. & Co. KG Engines",
+   "drs:adfrawdAction": "Final rule; request for comments.",
+   "drs:adfrawdSummary": "The FAA is adopting a new airworthiness directive (AD) for all Rolls-Royce Deutschland Ltd. & Co. KG (RRD) Model RB211-Trent 875-17, 877-17, 884-17, 884B-17, 892-17, 892B-17, and 895-17 engines. The FAA previously sent this AD as an emergency AD to all known U.S. owners and operators of these engine",
+   "drs:adfrawdAddresses": "You may send comments, using the procedures found in 14 CFR 11.43 and 11.45, by any of the following methods: - Federal eRulemaking Portal: Go to regulations.gov. Follow the instructions for submittin",
+   "drs:adfrawdFurtherInfoContact": "Alexis Whitaker, Aviation Safety Engineer, FAA, 2200 South 216th Street, Des Moines, WA 98198; phone: (516) 228-7309; email: alexis.j.whitaker@faa.gov .",
+   "drs:adfrawdRegulatoryText": "1. The authority citation for part 39 continues to read as follows: Authority: 49 U.S.C. 106(g), 40113, 44701. 2. The FAA amends § 39.13 by adding the following new airworthiness directive: 2026-18-52 Rolls-Royce Deutschland Ltd. & Co. KG: Amendment 39-23468; Docket No. FAA-2026-8815; Project Identifier MCAI-2026-00951-E. (a) Effective Date The FAA issued Emergency Airworthiness Directive (AD) 2026-18-52 on September 5, 2026 (also referred to as the emergency AD), directly to affected owners and operators. As a result of such actual notice, the emergency AD was effective for those owners and o",
+   "drs:adfrawdFooter": "Issued on September 15, 2026. Brian Knaup, Acting Deputy Director, Integrated Certificate Management Division, Aircraft Certification Service. [FR Doc. 2026-19171 Filed 9-16-26; 4:15 pm]",
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": [
+    "_EMPTY_"
+   ],
+   "drs:sectionNumber": [
+    "_EMPTY_"
+   ],
+   "drs:adfrawdCitationPublishDate": "2026-09-18",
+   "drs:adfrawdIssueDate": "2026-09-15",
+   "drs:effectiveDate": "2026-09-21",
+   "drs:comments": null,
+   "drs:documentOwner": [
+    "AIR-500 Integrated Certificate Management Division"
+   ],
+   "drs:primaryRespOffice": [
+    "AIR-520: Continued Operational Safety Branch"
+   ],
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2026-09-18T14:28:27.520Z",
+   "documentGuid": "FR-ADFRAWD-2026-19171-0000000000",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/FR-ADFRAWD-2026-19171-0000000000.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/0b66db95-d226-4961-a864-52562de01840",
+   "mainDocumentFileName": "2026-18-52.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "2026-13-02",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "FAA-2026-4659",
+   "drs:adfrawdAmendment": "39-23384",
+   "drs:adfrawdMake": [
+    "Airbus Canada Limited Partnership",
+    "Airbus SAS",
+    "ATR – GIE Avions de Transport Régional",
+    "BAE Systems (Operations) Limited",
+    "Bombardier Inc.",
+    "Dassault Aviation",
+    "De Havilland Aircraft of Canada Limited",
+    "Embraer S.A.",
+    "Fokker Services B.V.",
+    "Gulfstream American Corporation",
+    "Gulfstream Aerospace LP",
+    "Lockheed Martin Corporation",
+    "Lockheed Martin Aeronautics Company",
+    "MHI RJ Aviation ULC",
+    "Pilatus Aircraft Limited",
+    "Saab AB",
+    "Saab AB Support and Services",
+    "Textron Aviation Inc.",
+    "The Boeing Company",
+    "Viking Air Limited"
+   ],
+   "drs:adfrawdModel": [
+    "18",
+    "49-46",
+    "80-A",
+    "80-A1",
+    "149-46",
+    "188A"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft",
+    "Appliance"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Large Airplane"
+   ],
+   "drs:adfrawdSubject": "Navigation",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "Federal Register, Volume 91 Number 124 (Tuesday, June 30, 2026)",
+   "drs:adfrawdPageNumber": "(Pages 39399-39405)",
+   "drs:title": "Airworthiness Directives; Transport and Commuter Category Airplanes",
+   "drs:adfrawdAction": "Final rule; request for comments.",
+   "drs:adfrawdSummary": "The FAA is adopting a new airworthiness directive (AD) for all transport and commuter category airplanes equipped with a radio (also known as radar) altimeter. This AD was prompted by the determination that radio altimeters cannot be relied upon to perform their intended function if they experience ",
+   "drs:adfrawdAddresses": "You may send comments, using the procedures found in 14 CFR 11.43 and 11.45, by any of the following methods: - Federal eRulemaking Portal: Go to regulations.gov. Follow the instructions for submittin",
+   "drs:adfrawdFurtherInfoContact": "Ken Fairhurst, Continued Operational Safety Technical Advisor, FAA, 2200 South 216th St., Des Moines, WA 98198; phone: 817-222-5390; email: operationalsafety@faa.gov.",
+   "drs:adfrawdRegulatoryText": "1. The authority citation for part 39 continues to read as follows: Authority: 49 U.S.C. 106(g), 40113, 44701. § 39.13 [Amended] 2. The FAA amends § 39.13 by adding the following new airworthiness directive: 2026-13-02 Transport and Commuter Category Airplanes: Amendment 39-23384; Docket No. FAA-2026-4659; Project Identifier MCAI-2025-00826-A,T. (a) Effective Date This airworthiness directive (AD) is effective July 1, 2026. (b) Affected ADs None. (c) Applicability This AD applies to all transport and commuter category airplanes equipped with a radio (also known as radar) altimeter. These radio",
+   "drs:adfrawdFooter": "Issued on June 23, 2026. Christopher R. Parker, Acting Deputy Director, Compliance & Airworthiness Division, Aircraft Certification Service. [FR Doc. 2026-13162 Filed 6-26-26; 4:15 pm]",
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": [
+    "_EMPTY_"
+   ],
+   "drs:sectionNumber": [
+    "_EMPTY_"
+   ],
+   "drs:adfrawdCitationPublishDate": "2026-06-30",
+   "drs:adfrawdIssueDate": "2026-06-23",
+   "drs:effectiveDate": "2026-07-01",
+   "drs:comments": null,
+   "drs:documentOwner": [
+    "AIR-700: Compliance & Airworthiness Division"
+   ],
+   "drs:primaryRespOffice": [
+    "AIR-720: Operational Safety Branch"
+   ],
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2026-07-06T13:06:13.380Z",
+   "documentGuid": "FR-ADFRAWD-2026-13162-0000000000",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/FR-ADFRAWD-2026-13162-0000000000.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/e112eb74-312d-4037-a6e6-d3971419afef",
+   "mainDocumentFileName": "2026-13-02.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "2026-01-51 R1",
+   "drs:status": "Current",
+   "drs:adfrawdDocketNo": "FAA-2026-0732",
+   "drs:adfrawdAmendment": "39-23249",
+   "drs:adfrawdMake": [
+    "Airbus Helicopters"
+   ],
+   "drs:adfrawdModel": [
+    "H160-B"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Rotorcraft"
+   ],
+   "drs:adfrawdSubject": "Main Rotor System",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": [
+    "2026-01-51"
+   ],
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdCitation": "Federal Register, Volume 91 Number 71 (Tuesday, April 14, 2026)",
+   "drs:adfrawdPageNumber": "(Pages 19076-19078)",
+   "drs:title": "Airworthiness Directives; Airbus Helicopters",
+   "drs:adfrawdAction": "Final rule; removal.",
+   "drs:adfrawdSummary": "The FAA is removing Emergency Airworthiness Directive (AD) 2026-01-51, which applied to all Airbus Helicopters Model H160-B helicopters. Emergency AD 2026-01-51 required replacing the upper and lower pitch rod end bearings on the pitch rods of the main rotor with new pitch rod end bearings and repor",
+   "drs:adfrawdAddresses": "You may send comments, using the procedures found in 14 CFR 11.43 and 11.45, by any of the following methods: - Federal eRulemaking Portal: Go to regulations.gov . Follow the instructions for submitti",
+   "drs:adfrawdFurtherInfoContact": "Jacob Fitch, Aviation Safety Engineer, FAA, 1600 Stewart Avenue, Suite 410, Westbury, NY 11590; phone: (817) 222-4130; email: jacob.fitch@faa.gov.",
+   "drs:adfrawdRegulatoryText": "1. The authority citation for part 39 continues to read as follows: Authority: 49 U.S.C. 106(g), 40113, 44701. 2. The FAA amends § 39.13 by: a. Removing Airworthiness Directive 2026-01-51, Amendment 39-23249 (91 FR 4431, February 2, 2026), and b. Adding the following new airworthiness directive: 2026-01-51 R1 Airbus Helicopters: Amendment 39-23249; Docket No. FAA-2026-0732; Project Identifier MCAI-2026-00008-R. (a) Effective Date This airworthiness directive (AD) is effective April 14, 2026. (b) Affected AD This AD replaces Emergency AD 2026-01-51, Amendment 39-23249 (91 FR 4431, February 2, 2",
+   "drs:adfrawdFooter": "Issued on April 9, 2026. Steven W. Thompson, Acting Deputy Director, Compliance & Airworthiness Division, Aircraft Certification Service. [FR Doc. 2026-07170 Filed 4-13-26; 8:45 am]",
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": [
+    "_EMPTY_"
+   ],
+   "drs:sectionNumber": [
+    "_EMPTY_"
+   ],
+   "drs:adfrawdCitationPublishDate": "2026-04-14",
+   "drs:adfrawdIssueDate": "2026-04-09",
+   "drs:effectiveDate": "2026-04-14",
+   "drs:comments": null,
+   "drs:documentOwner": [
+    "AIR-700: Compliance & Airworthiness Division"
+   ],
+   "drs:primaryRespOffice": [
+    "AIR-730: International Validation Branch"
+   ],
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2026-04-14T14:19:52.313Z",
+   "documentGuid": "FR-ADFRAWD-2026-07170-0000000000",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/FR-ADFRAWD-2026-07170-0000000000.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/f441de3a-3d30-43b1-bcf7-7dfc2ace37ab",
+   "mainDocumentFileName": "2026-01-51_R1.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "drs:documentNumber": "2025-05-14",
+   "drs:status": "Historical",
+   "drs:adfrawdDocketNo": "FAA-2024-1701",
+   "drs:adfrawdAmendment": "39-22986",
+   "drs:adfrawdMake": [
+    "Airbus SAS"
+   ],
+   "drs:adfrawdModel": [
+    "A350-941",
+    "A350-1041"
+   ],
+   "drs:adfrawdProductType": [
+    "Aircraft"
+   ],
+   "drs:adfrawdProductSubType": [
+    "Large Airplane"
+   ],
+   "drs:adfrawdSubject": "Pneumatic",
+   "drs:adfrawdAffectedAD": null,
+   "drs:adfrawdSupersededAD": null,
+   "drs:adfrawdAffectedBy": null,
+   "drs:adfrawdSupersededBy": [
+    "2025-05-14R1"
+   ],
+   "drs:adfrawdCitation": "Federal Register, Volume 90 Number 61 (Tuesday, April 1, 2025)",
+   "drs:adfrawdPageNumber": "(Pages 14331-14334)",
+   "drs:title": "Airworthiness Directives; Airbus SAS Airplanes",
+   "drs:adfrawdAction": "Final rule.",
+   "drs:adfrawdSummary": "The FAA is adopting a new airworthiness directive (AD) for all Airbus SAS Model A350-941 and A350-1041 airplanes. This AD was prompted by a report indicating that the thrust reverser and pylon thermal blankets were found damaged due to air leaking from the pre-cooler exchanger (PCE). This AD require",
+   "drs:adfrawdAddresses": "AD Docket: You may examine the AD docket at regulations.gov under Docket No. FAA-2024-1701; or in person at Docket Operations between 9 a.m. and 5 p.m., Monday through Friday, except Federal holidays.",
+   "drs:adfrawdFurtherInfoContact": "Dan Rodina, Aviation Safety Engineer, FAA, 2200 South 216th St., Des Moines, WA 98198; phone: 206-231-3225; email: dan.rodina@faa.gov.",
+   "drs:adfrawdRegulatoryText": "1. The authority citation for part 39 continues to read as follows: Authority: 49 U.S.C. 106(f), 40113, 44701. 2. The FAA amends § 39.13 by adding the following new airworthiness directive: 2025-05-14 Airbus SAS: Amendment 39-22986; Docket No. FAA-2024-1701; Project Identifier MCAI-2024-00153-T. (a) Effective Date This airworthiness directive (AD) is effective April 22, 2025. (b) Affected ADs None. (c) Applicability This AD applies to all Airbus SAS Model A350-941 and A350-1041 airplanes, certificated in any category. (d) Subject Air Transport Association (ATA) of America Code 36, Pneumatic. (",
+   "drs:adfrawdFooter": "Issued on March 6, 2025. Peter A. White, Deputy Director, Integrated Certificate Management Division, Aircraft Certification Service. [FR Doc. R1-2025-04334 Filed 3-31-25; 8:45 am]",
+   "drs:partNumber": [
+    "Part 39"
+   ],
+   "drs:subPart": [
+    "_EMPTY_"
+   ],
+   "drs:sectionNumber": [
+    "_EMPTY_"
+   ],
+   "drs:adfrawdCitationPublishDate": "2025-04-01",
+   "drs:adfrawdIssueDate": "2025-03-06",
+   "drs:effectiveDate": "2025-04-22",
+   "drs:comments": null,
+   "drs:documentOwner": [
+    "AIR-500 Integrated Certificate Management Division"
+   ],
+   "drs:primaryRespOffice": [
+    "AIR-520: Continued Operational Safety Branch"
+   ],
+   "drs:ACReference": null,
+   "drs:airPolicyReference": null,
+   "drs:additionalReference": null,
+   "docLastModifiedDate": "2025-11-22T09:30:30.793Z",
+   "documentGuid": "FR-ADFRAWD-R1-2025-04334-0000000",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/FR-ADFRAWD-R1-2025-04334-0000000.0001",
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/9c744dc5-a893-493a-b6d8-aa749f351224",
+   "mainDocumentFileName": "2025-05-14.html",
+   "hasMoreAttachments": false
+  },
+  {
+   "documentGuid": "32367EAE9D7A95B4862581E6004E4163",
+   "docLastModifiedDate": "2024-05-30T19:48:53.441Z",
+   "drs:documentNumber": "2017-24-03",
+   "drs:status": "Current",
+   "documentURL": "https://drs.faa.gov/browse/excelExternalWindow/32367EAE9D7A95B4862581E6004E4163.0001",
+   "drs:adfrawdCitationPublishDate": "2017-11-28",
+   "drs:adfrawdFooter": "Issued in Renton, Washington, on November 15, 2017.\nJeffrey E. Duven,\nDirector, System Oversight Division, Aircraft Certification Service.\n[FR Doc. 2017-25253 Filed 11-27-17; 8:45 am]\nBILLING CODE 4910-13-P",
+   "drs:adfrawdAmendment": "39-19107",
+   "drs:adfrawdAction": "Final rule.",
+   "drs:adfrawdMake": [
+    "Airbus SAS"
+   ],
+   "drs:adfrawdModel": [
+    "A319-115",
+    "A319-132",
+    "A320-214",
+    "A320-232",
+    "A321-111",
+    "A321-213",
+    "A321-231"
+   ],
+   "mainDocumentDownloadURL": "https://drs.faa.gov/api/drs/data-pull/download/6e8d442f-9f72-43b8-ad72-9d05a39cb9a2",
+   "mainDocumentFileName": "2017-24-03.pdf",
+   "hasMoreAttachments": true,
+   "otherAttachmentDetailsUrl": "https://drs.faa.gov/api/drs/data-pull/get-other-attachment-details/6e8d442f-9f72-43b8-ad72-9d05a39cb9a2",
+   "drs:adfrawdCitation": "Federal Register Volume 82, Number 227 (Tuesday, November 28, 2017)",
+   "drs:adfrawdSupersededBy": null,
+   "drs:adfrawdRegulatoryText": "Adoption of the Amendment \n\n\n\tAccordingly, under the authority delegated to me by the Administrator, the FAA amends 14 CFR part 39 as follows: \n\nPART 39--AIRWORTHINESS DIRECTIVES \n\n0 1. The authority citation for part 39 continues to read as follows: \n\n\n\tAuthority:  49 U.S.C. 106(g), 40113, 44701. \n"
+  }
+ ]
+}

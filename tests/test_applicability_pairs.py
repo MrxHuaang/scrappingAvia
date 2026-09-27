@@ -1,5 +1,6 @@
-"""D-21: lo que se le manda a Postgres no puede tumbar el lote entero, y lo que
-entra en `ad_applicability` no puede ser un fabricante inventado.
+"""D-21 + refactor 2026-09 (PR 1/2, applicability v2): lo que se le manda a
+Postgres no puede tumbar el lote entero, y lo que entra en `ad_applicability`
+no puede ser un fabricante inventado NI un modelo partido a mitad de camino.
 
 D-21 aparecio el 2026-08-04, la primera vez en 19 dias que EASA y Transport
 Canada llegaron a la fase de escritura de relaciones. El timeout lo habia estado
@@ -23,37 +24,50 @@ solo uno es correcto:
     listado de EASA anida sus propios `li.type`, asi que el scraper puede emitir
     `raw_data["Applicability"] = [{make, models[]}]` y cada holder mantiene sus
     modelos, en `high`, sin cruzarlos con los de otro fabricante.
+
+Refactor 2026-09: el paso siguiente aplico la misma logica al MODELO. Antes,
+`_applicability_pairs` partia el string de modelos por coma y emitia una fila
+por modelo ("737-600, -700, -800" -> 3 filas). Eso pierde la forma "-700"
+(subserie sin el prefijo) en cuanto se separa de su hermano, y no gana nada:
+Postgres ya tokeniza el texto completo del modelo para el matching de flota
+(`ad_model_index`/`ad_model_family`, migracion `20260923160000`). El contrato
+nuevo es: **un approval holder = una fila**, con todo su texto de modelos
+unido por ", " en el orden de la fuente, y la RPC v2 (`20260926130000`) reserva
+un limite de 2000 chars para `model` justo para esto (256 para `make`).
 """
+
+import pytest
 
 import populate_db
 
 
-def _pairs(make, model, applicability=None):
+def _pairs(make, model, applicability=None, extra_raw=None):
     row = {"make": make, "model": model}
+    raw = dict(extra_raw or {})
     if applicability is not None:
-        row["raw_data"] = {"Applicability": applicability}
+        raw["Applicability"] = applicability
+    if raw:
+        row["raw_data"] = raw
     return populate_db._applicability_pairs(row)
 
 
 # ------------------------------------------------- estructura por approval holder
 
-def test_each_holder_keeps_its_own_models():
-    """La atribucion que el producto cartesiano habria falseado.
-
-    El AD 15-117 lista 9 titulares de TC y 60 modelos; cruzarlos pondria el R44
+def test_each_holder_is_one_row_with_all_its_models_joined():
+    """El AD 15-117 lista 9 titulares de TC y 60 modelos; cruzarlos pondria el R44
     de Robinson bajo Airbus Helicopters. Con la estructura del origen no hay que
-    elegir entre inventar y perder el modelo.
+    elegir entre inventar y perder el modelo — y ahora tampoco se parte por holder.
     """
     pairs = _pairs(
         "AIRBUS HELICOPTERS", "AS 350 B, 407, R44",
         applicability=[
-            {"make": "AIRBUS HELICOPTERS", "models": ["AS 350 B"]},
+            {"make": "AIRBUS HELICOPTERS", "models": ["AS 350 B", "AS 355"]},
             {"make": "BELL TEXTRON INC.", "models": ["407"]},
             {"make": "ROBINSON", "models": ["R44"]},
         ],
     )
     assert pairs == [
-        ("AIRBUS HELICOPTERS", "AS 350 B"),
+        ("AIRBUS HELICOPTERS", "AS 350 B, AS 355"),
         ("BELL TEXTRON INC.", "407"),
         ("ROBINSON", "R44"),
     ]
@@ -80,22 +94,70 @@ def test_commas_inside_a_holder_name_survive():
     ]
 
 
-def test_malformed_entries_are_skipped():
+@pytest.mark.parametrize("bad_holder", [
+    "no soy un dict",
+    {"models": ["737-800"]},
+    {"make": "", "models": ["737-800"]},
+    {"make": "  ", "models": ["737-800"]},
+    {"make": 737, "models": ["737-800"]},
+    {"make": "BOEING", "models": "737-800"},
+    {"make": "BOEING", "models": ["737-800", None]},
+    {"make": "BOEING", "models": ["737-800", 800]},
+], ids=["not-object", "no-make", "empty-make", "blank-make", "make-not-string",
+        "models-string", "model-none", "model-not-string"])
+def test_one_malformed_holder_fails_the_whole_ad(bad_holder):
+    """Un holder que no se puede interpretar no se salta: los pares validos que
+    quedan no son la applicability completa del AD, y declararlos
+    `success_with_rows` haria que la RPC podara las filas del holder perdido.
+    Un `models` string tampoco se recorre como caracteres."""
+    with pytest.raises(populate_db.ApplicabilityError):
+        _pairs("AIRBUS", "A320", applicability=[
+            {"make": "AIRBUS", "models": ["A320"]},
+            bad_holder,
+        ])
+
+
+def test_an_applicability_that_is_not_a_list_fails_the_ad():
+    with pytest.raises(populate_db.ApplicabilityError):
+        _pairs("AIRBUS", "A320", applicability={"make": "AIRBUS", "models": ["A320"]})
+
+
+def test_blank_model_strings_are_not_models():
     pairs = _pairs("BOEING", "737-800", applicability=[
-        {"make": "  ", "models": ["X"]},
-        "no soy un dict",
-        {"make": "BOEING", "models": ["737-800", "  ", None]},
+        {"make": "BOEING", "models": ["737-800", "  "]},
     ])
     assert pairs == [("BOEING", "737-800")]
 
 
+def test_a_subseries_list_is_not_split_it_travels_as_one_row():
+    """El caso que motivo el refactor: "-700" solo tiene sentido junto a "737-600"."""
+    pairs = _pairs(
+        "BOEING", "",
+        applicability=[{"make": "BOEING", "models": ["737-600, -700, -800, -900"]}],
+    )
+    assert pairs == [("BOEING", "737-600, -700, -800, -900")]
+
+
+# ------------------------------------------------ ApplicabilityError (enganche)
+
+def test_applicability_error_is_raised_when_the_scraper_flags_it():
+    """Enganche para extractores futuros que procesen detalle por-AD: una
+    extraccion que fallo a medias debe poder marcar el AD como `failed` sin
+    fingir un `success_empty` ni un `success_with_rows` parcial.
+    """
+    row = {"make": "", "model": "", "raw_data": {"Applicability_Error": "PDF illegible"}}
+    try:
+        populate_db._applicability_pairs(row)
+        assert False, "debia lanzar ApplicabilityError"
+    except populate_db.ApplicabilityError as e:
+        assert "PDF illegible" in str(e)
+
+
 # --------------------------------------------------------------- camino escalar
 
-def test_one_make_with_several_models_pairs_each_model():
+def test_one_make_with_several_models_travels_as_one_row_not_split():
     assert _pairs("AIRBUS", "A320, A321, A330") == [
-        ("AIRBUS", "A320"),
-        ("AIRBUS", "A321"),
-        ("AIRBUS", "A330"),
+        ("AIRBUS", "A320, A321, A330"),
     ]
 
 
@@ -109,8 +171,8 @@ def test_a_joined_make_is_never_split_into_fabricated_manufacturers():
 
     La fila resultante no matcheara ninguna aeronave, pero eso es visible y
     corregible; un fabricante inventado en el desplegable Make no lo es. Si
-    ademas pasa el limite de la RPC, lo corta el guard de APPLICABILITY_TEXT_MAX
-    en populate_relations, que lo reporta.
+    ademas pasa el limite de la RPC, lo corta el guard de
+    APPLICABILITY_MAKE_MAX en populate_relations, que lo reporta.
     """
     joined = "AIRBUS HELICOPTERS, BELL TEXTRON INC., ROBINSON"
     assert _pairs(joined, "") == [(joined, None)]
@@ -123,24 +185,22 @@ def test_empty_structure_falls_back_to_the_scalar_fields():
 # ------------------------------------------------------------------ degenerados
 
 def test_no_make_declares_nothing():
-    # Sin fabricante no hay fila valida; el AD queda success_empty, no con una
-    # fila que la RPC rechazaria.
+    # Sin fabricante no hay fila valida; el AD queda success_empty (con
+    # evidencia) o failed mas abajo, no con una fila invalida.
     assert _pairs("", "A320") == []
     assert _pairs(None, None) == []
 
 
-def test_blank_model_segments_are_dropped_not_emitted_as_empty_strings():
-    assert _pairs("AIRBUS", "A320, , A321") == [("AIRBUS", "A320"), ("AIRBUS", "A321")]
-
-
-def test_the_client_bound_matches_the_rpc_bound():
+def test_the_client_bounds_match_the_rpc_bounds():
     """Guarda de deriva.
 
-    `replace_ad_applicability` valida `length(...) > 256` por campo. Si la RPC
-    sube o baja ese numero y esta constante no lo sigue, se vuelve a mandar un
-    campo que aborta el lote entero — que es exactamente D-21.
+    `replace_ad_applicability` v2 valida `length(make) > 256` y
+    `length(model) > 2000` por campo, por separado. Si la RPC cambia
+    cualquiera de los dos y estas constantes no lo siguen, se vuelve a mandar
+    un campo que aborta el lote entero — que es exactamente D-21.
     """
-    assert populate_db.APPLICABILITY_TEXT_MAX == 256
+    assert populate_db.APPLICABILITY_MAKE_MAX == 256
+    assert populate_db.APPLICABILITY_MODEL_MAX == 2000
     assert populate_db.APPLICABILITY_BATCH_ADS <= 500
     assert populate_db.APPLICABILITY_BATCH_ROWS * 2 <= 20000, \
         "margen 2x bajo max_total_rows de la RPC"
@@ -190,3 +250,60 @@ def test_batches_preserve_every_ad_and_the_order():
     batches = populate_db._applicability_batches(payload)
     flat = [ad for b in batches for ad in b]
     assert flat == payload
+
+
+# ------------------------------------------------ identidad del texto de modelo
+#
+# El contrato nuevo es "no tokenizar en Python": cualquiera de estas formas
+# reales debe sobrevivir intacta (solo btrim), sea cual sea su puntuacion —
+# listas con coma, "and", "/", parentesis, subseries sin prefijo. Postgres
+# hace la tokenizacion real para el matching de flota.
+
+_REAL_MODEL_STRINGS = [
+    "737-600, -700, -800, -900",
+    "A320-211, A320-212, A320-214, A320-231, A320-232, A320-233",
+    "PA-28-140, PA-28-150, PA-28-151, PA-28-160, PA-28-161",
+    "206B, 206B3, 206L, 206L-1, 206L-3, 206L-4",
+    "DHC-8-102, DHC-8-103, DHC-8-106",
+    "SA 315B, SA 316B, SA 316C, SA 319B",
+    "Model 172 and Model 172RG",
+    "Cessna 172 and 172S (Skyhawk SP)",
+    "PA-31-310, PA-31-325, PA-31-350 (Navajo/Chieftain series)",
+    "EC120 B / EC130 B4 / EC130 T2",
+    "AS 350 B, B1, B2, B3, BA and BB",
+    "R22 Beta, R22 Beta II",
+    "R44, R44 II, R44 Cadet",
+    "MD 900 / MD 902 (Explorer)",
+    "S-76A, S-76B, S-76C, S-76C+, S-76C++",
+    "Bell 407, 407GX, 407GXi, 407GXP",
+    "King Air 200, 200C, 200T, B200, B200C",
+    "Learjet 35, 35A, 36, 36A",
+    "Gulfstream G-IV, G-IV-X, G-IV-SP",
+    "Falcon 900, 900B, 900C, 900DX, 900EX",
+    "ATR 42-300, 42-320, 42-500",
+    "ATR 72-101, 72-102, 72-201, 72-202, 72-212, 72-212A",
+    "Dash 8-Q400 (all series)",
+    "737 MAX 7, MAX 8, MAX 9, MAX 10",
+    "A330-200, A330-200F, A330-300, A330-800, A330-900",
+    "PC-12/45, PC-12/47, PC-12/47E",
+    "TBM 700, TBM 850, TBM 900, TBM 910, TBM 940",
+    "Robinson R66 (all serial numbers)",
+    "AW109E, AW109S, AW109SP (Grand New)",
+    "Bell 429, 429 WLG",
+    "EMB-110P1, EMB-110P2 (Bandeirante)",
+    "Saab 340A, 340B, 340B+ (Plus)",
+    "Model 1900C, 1900D (Beechcraft)",
+    "Airbus A350-941, A350-1041",
+]
+
+
+def test_model_text_identity_preserved_across_real_world_strings():
+    """>=30 cadenas reales, cada una debe sobrevivir intacta al helper (solo
+    strip), sea cual sea su puntuacion interna."""
+    assert len(_REAL_MODEL_STRINGS) >= 30
+    for s in _REAL_MODEL_STRINGS:
+        assert _pairs("SOME MAKE", s) == [("SOME MAKE", s)]
+        # Y el mismo texto sobrevive igual dentro de un holder estructurado.
+        assert _pairs("SOME MAKE", "", applicability=[
+            {"make": "SOME MAKE", "models": [s]}
+        ]) == [("SOME MAKE", s)]

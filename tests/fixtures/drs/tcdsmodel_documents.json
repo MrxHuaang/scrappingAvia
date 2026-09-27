@@ -1,0 +1,89 @@
+{
+ "source": "GET TCDSMODEL (ASC by docLastModifiedDate), 2026-09-26; fields used by the report, lists trimmed to 5",
+ "documents": [
+  {
+   "documentGuid": "DRSDOCID125846673320251119192930",
+   "drs:documentNumber": "H2SW",
+   "drs:status": "Current",
+   "drs:tcdsmodelTCHolder": "Bell Textron Canada Limited",
+   "drs:tcdsmodelTCHolderShortName": null,
+   "drs:tcdsmodelFormerHolders": [
+    "Bell Helicopter Textron (Canada)\\Bell Helicopter Textron Canada Limited",
+    "Bell Helicopter Textron (Canada)\\Bell Helicopter Textron Canada Limited",
+    "Bell Helicopter Textron (Canada)\\Bell Helicopter Textron Canada Limited",
+    "Bell Helicopter Textron (Canada)\\Bell Helicopter Textron Canada Limited",
+    "Bell Helicopter Textron (Canada)\\Bell Helicopter Textron Canada Limited"
+   ],
+   "drs:tcdsmodelModel": [
+    "206L",
+    "206B",
+    "407",
+    "206L-1",
+    "206L-4"
+   ],
+   "drs:tcdsmodelProductType": "Aircraft",
+   "drs:tcdsmodelRevisionDate": "2025-11-19"
+  },
+  {
+   "documentGuid": "958B10612FCD574F86258211006D4706",
+   "drs:documentNumber": "TE1CH",
+   "drs:status": "Current",
+   "drs:tcdsmodelTCHolder": "Rolls-Royce Corporation",
+   "drs:tcdsmodelTCHolderShortName": null,
+   "drs:tcdsmodelFormerHolders": [
+    "Rolls-Royce Corporation (Indiana)",
+    "Rolls-Royce Corporation (Indiana)",
+    "Allison Gas Turbine Division of General Motors\\Rolls-Royce Corporation (Indiana)",
+    "Allison Gas Turbine Division of General Motors\\Rolls-Royce Corporation (Indiana)",
+    "Rolls-Royce Corporation (Indiana)"
+   ],
+   "drs:tcdsmodelModel": [
+    "AE 2100P",
+    "AE 2100D2A",
+    "AE 2100D3",
+    "AE 2100C",
+    "AE 2100J"
+   ],
+   "drs:tcdsmodelProductType": "Engine",
+   "drs:tcdsmodelRevisionDate": "2017-12-29"
+  },
+  {
+   "documentGuid": "FCC56160AFD91510852567210054B605",
+   "drs:documentNumber": "H5SW",
+   "drs:status": "Historical",
+   "drs:tcdsmodelTCHolder": "Continental Copters Inc.",
+   "drs:tcdsmodelTCHolderShortName": null,
+   "drs:tcdsmodelFormerHolders": [
+    "Tom Cat Helicopter, Inc."
+   ],
+   "drs:tcdsmodelModel": [
+    "OH-13H"
+   ],
+   "drs:tcdsmodelProductType": "Aircraft",
+   "drs:tcdsmodelRevisionDate": "1985-03-15"
+  },
+  {
+   "documentGuid": "F36C73D58F7181CF8525670B0058DFE4",
+   "drs:documentNumber": "TE6CH",
+   "drs:status": "Historical",
+   "drs:tcdsmodelTCHolder": "Allison Engine Company Inc.",
+   "drs:tcdsmodelTCHolderShortName": null,
+   "drs:tcdsmodelFormerHolders": [
+    "Allison Gas Turbine Division of General Motors",
+    "Allison Gas Turbine Division of General Motors",
+    "Allison Gas Turbine Division of General Motors",
+    "Allison Gas Turbine Division of General Motors",
+    "Allison Gas Turbine Division of General Motors"
+   ],
+   "drs:tcdsmodelModel": [
+    "AE 3007A1",
+    "AE 3007C",
+    "AE 3007A",
+    "AE 3007A1/1",
+    "AE 3007A1/2"
+   ],
+   "drs:tcdsmodelProductType": "Engine",
+   "drs:tcdsmodelRevisionDate": "1998-11-06"
+  }
+ ]
+}

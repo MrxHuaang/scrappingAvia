@@ -50,10 +50,18 @@ RESET  = "\033[0m"
 # Helpers
 # ---------------------------------------------------------------------------
 def get_client():
+    """
+    Cliente de SOLO LECTURA: este script unicamente hace SELECT sobre `ads`
+    para el reporte de calidad (el CSV de salida se escribe en disco, no en
+    la BD). La anon key alcanza para eso y es la preferencia si no hay
+    service key a mano; ningun llamador de este cliente debe usar insert/
+    update/delete/upsert — con los privilegios de escritura de anon/
+    authenticated revocados en la BD, esos writes fallarian igual.
+    """
     url = os.environ.get("SUPABASE_URL", "").strip()
     key = (os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_ANON_KEY", "")).strip()
     if not url or not key:
-        sys.exit("ERROR: Define SUPABASE_URL y SUPABASE_SERVICE_KEY en .env")
+        sys.exit("ERROR: define SUPABASE_URL y (SUPABASE_SERVICE_KEY o SUPABASE_ANON_KEY) en .env")
     return create_client(url, key)
 
 

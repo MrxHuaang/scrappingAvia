@@ -5,6 +5,23 @@ El cron es `.github/workflows/populate_db.yml` (diario, 06:00 UTC, timeout
 y marca `scrape_runs.status='error'` — un job verde significa de verdad que
 todo se escribió.
 
+## 0. Pendiente: el cron depende de los minutos de GitHub Actions
+
+Desde el 2026-09-26 `populate_db.yml` está **deshabilitado** (`gh workflow
+disable`): la cuenta se quedó sin minutos de Actions y los runs programados
+fallaban a los 4 s sin ejecutar nada. Mientras siga así no entran ADs nuevas ni
+corre la sincronización de DRS, aunque `DRS_API_ENABLED` esté encendido.
+
+Pendiente: buscar una forma de correr el scraper que no dependa de esos
+minutos (por ejemplo un runner propio o un scheduler fuera de GitHub), con los
+mismos secrets y el mismo `python populate_db.py` / `--drs`. Hasta
+entonces, al recuperar minutos:
+
+```
+gh workflow enable populate_db.yml -R MrxHuaang/scrappingAvia
+gh workflow run populate_db.yml -R MrxHuaang/scrappingAvia
+```
+
 ## 1. Diagnóstico rápido
 
 1. **Actions → Populate DB — Daily Scrape → run fallido → logs.** Cada línea
@@ -27,11 +44,14 @@ todo se escribió.
 
 | Síntoma | Causa probable | Acción |
 |---|---|---|
-| FAA sin `compliance_time`/AMOC/supersession | Falta `GOVINFO_API_KEY` en secrets | Crear el secret (gratis: api.govinfo.gov/signup) |
+| FAA sin `compliance_time`/AMOC/supersession | Falta `GOVINFO_API_KEY` en secrets, o el texto del AD no quedó anclado (`unanchored`) | Crear el secret (gratis: api.govinfo.gov/signup); un `unanchored` es definitivo y esos campos salen del abstract (docs/fr-text.md) |
+| `text: RPC replace_ad_text_sections fallo` o `fallos seguidos de la RPC` | La migración de `ad_text_*` no está aplicada, o un payload fuera de contrato (22023) | Aplicar la migración en ad-scrapper; si es 22023, revisar el payload contra docs/fr-text.md. El texto ya guardado no se pierde: la RPC nunca lo borra con un intento fallido |
 | `429` sostenido de una fuente | Rate limit del sitio | Nada — `get_with_backoff` reintenta con backoff; si persiste días, bajar frecuencia |
 | Una fuente devuelve 0 ADs varios días | Cambio de HTML o WAF nuevo | Correr local `python populate_db.py --source <x> --dry-run` y comparar con el sitio |
 | `22023` desde `replace_ad_applicability` | El extractor declara mal el tri-estado o duplica clave natural | Revisar contra `docs/applicability-contract.md` |
 | `23514` con hint `plan_*` | Cuota/billing del workspace (no aplica al catálogo) | No es del scraper — revisar el trigger en el repo frontend |
+| Job `faa_drs`: `DRS rejected the API key (HTTP 403)` | Key de DRS vencida (12 meses) o revocada | Renovar en drs.faa.gov/drs-api y actualizar el secret `DRS_API_KEY` |
+| Job `faa_drs`: `page N failed, cursor not advanced` | 429/5xx o timeout sostenido de DRS | Nada: la corrida siguiente repite desde el mismo cursor (docs/drs-sync.md) |
 | Job cancelado a los 180 min | Run frío re-descargando ~18k PDFs | Verificar que el paso "Restore scraper caches" encontró un cache previo |
 
 ## 3. Los caches de `outputs/`

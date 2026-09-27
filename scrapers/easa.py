@@ -263,15 +263,18 @@ def _parse_results_table(soup):
                             holder_models.append(type_text)
                             models_list.append(type_text)
 
-                    if holder_name:
-                        applicability.append({"make": holder_name, "models": holder_models})
+                    # Un holder cuyo nombre no se lee (envuelto en otro
+                    # elemento, seccion cortada) viaja con `make` vacio en vez
+                    # de saltarse: los demas no son la applicability completa
+                    # del AD, y populate_db lo declara `failed` entero.
+                    applicability.append({"make": holder_name, "models": holder_models})
 
                 # `Make` es el holder PRIMARIO, no la lista unida: el string
                 # unido llegaba a 494 chars y aparecia tal cual como opcion en
                 # el filtro Make de la UI. Los N holders viven en
                 # `Applicability` -> ad_applicability (misma convencion que
                 # Model, cuyo listado completo tambien vive alli).
-                make = applicability[0]["make"] if applicability else ""
+                make = next((h["make"] for h in applicability if h["make"]), "")
                 # Model se mantiene como el join de TODOS los types del AD: es
                 # lo que filtra `search_ads` sobre ads.model, y recortarlo al
                 # holder primario perderia recall en la busqueda por modelo.

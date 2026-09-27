@@ -1,0 +1,4 @@
+[{"input":"AD 2023-12-03","norm":"2023-12-03","kind":"ad_number"},{"input":"2023-12-03","norm":"2023-12-03","kind":"ad_number"},
+    {"input":"2023–12–03","norm":"2023-12-03","kind":"ad_number"},{"input":"98-21-09","norm":"98-21-09","kind":"ad_number"},
+    {"input":"FAA-2023-0927","norm":"FAA-2023-0927","kind":"docket"},{"input":"Docket No. FAA-2023-0927","norm":"FAA-2023-0927","kind":"docket"},
+    {"input":"fuel pump","norm":"fuel pump","kind":"text"}]

@@ -29,10 +29,11 @@ from datetime import date, timedelta, datetime
 
 import requests
 
-from utils import extract_make_model, normalize_ad_number
-from scrapers.federal_register import classify_product_type
+from utils import normalize_ad_number
+from enrich import classify_product_type
 from scrapers.common.http import get_with_backoff
 from scrapers.common.cache import load_json_cache, save_json_cache
+from scrapers.common.fr_applicability import applicability_fields
 
 from scrapers.common.log import get_logger
 
@@ -316,8 +317,6 @@ def _parse_granule(g: dict, pkg_id: str, mods: dict | None = None) -> dict | Non
         if not ad_number:
             return None  # sin numero AD real: descartar (nunca granuleId)
 
-        make, model = extract_make_model(title, "")
-
         # Quitar prefijo estandar del titulo
         subject = re.sub(r"^Airworthiness Directives[;:]\s*", "", title, flags=re.I).strip()
         if not subject:
@@ -340,8 +339,9 @@ def _parse_granule(g: dict, pkg_id: str, mods: dict | None = None) -> dict | Non
             "Source": "FAA (GovInfo)",
             "AD_Number": ad_number,
             "Subject": subject,
-            "Make": make.strip(),
-            "Model": model.strip(),
+            # Misma extraccion que el Federal Register; el granulo no trae
+            # abstract, asi que los modelos salen solo del titulo.
+            **applicability_fields(title),
             "Effective_Date": date_issued,
             "Status": status,
             "Product_Type": product_type,
