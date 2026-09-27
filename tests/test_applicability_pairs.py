@@ -36,6 +36,8 @@ unido por ", " en el orden de la fuente, y la RPC v2 (`20260926130000`) reserva
 un limite de 2000 chars para `model` justo para esto (256 para `make`).
 """
 
+import pytest
+
 import populate_db
 
 
@@ -92,11 +94,37 @@ def test_commas_inside_a_holder_name_survive():
     ]
 
 
-def test_malformed_entries_are_skipped():
+@pytest.mark.parametrize("bad_holder", [
+    "no soy un dict",
+    {"models": ["737-800"]},
+    {"make": "", "models": ["737-800"]},
+    {"make": "  ", "models": ["737-800"]},
+    {"make": 737, "models": ["737-800"]},
+    {"make": "BOEING", "models": "737-800"},
+    {"make": "BOEING", "models": ["737-800", None]},
+    {"make": "BOEING", "models": ["737-800", 800]},
+], ids=["not-object", "no-make", "empty-make", "blank-make", "make-not-string",
+        "models-string", "model-none", "model-not-string"])
+def test_one_malformed_holder_fails_the_whole_ad(bad_holder):
+    """Un holder que no se puede interpretar no se salta: los pares validos que
+    quedan no son la applicability completa del AD, y declararlos
+    `success_with_rows` haria que la RPC podara las filas del holder perdido.
+    Un `models` string tampoco se recorre como caracteres."""
+    with pytest.raises(populate_db.ApplicabilityError):
+        _pairs("AIRBUS", "A320", applicability=[
+            {"make": "AIRBUS", "models": ["A320"]},
+            bad_holder,
+        ])
+
+
+def test_an_applicability_that_is_not_a_list_fails_the_ad():
+    with pytest.raises(populate_db.ApplicabilityError):
+        _pairs("AIRBUS", "A320", applicability={"make": "AIRBUS", "models": ["A320"]})
+
+
+def test_blank_model_strings_are_not_models():
     pairs = _pairs("BOEING", "737-800", applicability=[
-        {"make": "  ", "models": ["X"]},
-        "no soy un dict",
-        {"make": "BOEING", "models": ["737-800", "  ", None]},
+        {"make": "BOEING", "models": ["737-800", "  "]},
     ])
     assert pairs == [("BOEING", "737-800")]
 

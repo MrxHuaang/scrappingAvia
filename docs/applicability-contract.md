@@ -74,8 +74,13 @@ como `'explicit'` para siempre.
 `ApplicabilityError`: excepción que un scraper puede levantar (vía
 `raw_data["Applicability_Error"]`) para señalar que la extracción de
 applicability de un AD puntual falló a medias (ej. PDF ilegible en un detalle
-por-AD). Ningún scraper la usa hoy — es el enganche para cuando alguno procese
-detalle por-AD y pueda fallar parcialmente.
+por-AD). `_applicability_pairs` la levanta también si `raw_data["Applicability"]`
+no se puede interpretar **entero**: no es una lista, o alguno de sus holders no
+es un objeto, no trae `make` (string no vacío), trae `models` que no es una
+lista (un string se recorrería como caracteres) o un modelo que no es string.
+Un holder ilegible nunca se salta: los pares que quedan no son la applicability
+completa, y declararlos `success_with_rows` haría que la RPC podara las filas
+del holder perdido. Todo el AD viaja `failed`, sin filas.
 
 ## Evidencia por fuente activa (`empty_evidence` / `_empty_evidence()`)
 

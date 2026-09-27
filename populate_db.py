@@ -444,8 +444,25 @@ class ApplicabilityError(Exception):
     reconocida pero corrupta). No es "no hay datos" (eso es success_empty)
     sino "no se pudo leer" (failed): la AD entera queda `failed` y sus filas
     guardadas no se tocan; nunca se declara un subconjunto parcial como si
-    fuera la verdad completa. Ningun scraper la lanza hoy — es el enganche
-    para cuando alguno procese detalle por-AD."""
+    fuera la verdad completa. `_applicability_pairs` la lanza tambien cuando
+    `raw_data["Applicability"]` trae un holder que no se puede interpretar."""
+
+
+def _holder_pair(holder) -> tuple[str, str | None]:
+    """El par (make, model) de un elemento de `raw_data["Applicability"]`, o
+    ApplicabilityError si el elemento no se puede interpretar entero: sin
+    make, `models` que no es lista (un string se recorreria como caracteres)
+    o un modelo que no es string. Un modelo en blanco no es un modelo."""
+    if not isinstance(holder, dict):
+        raise ApplicabilityError(f"holder que no es objeto: {holder!r:.80}")
+    make = holder.get("make")
+    if not isinstance(make, str) or not make.strip():
+        raise ApplicabilityError(f"holder sin make: {holder!r:.80}")
+    models = holder.get("models", [])
+    if not isinstance(models, list) or not all(isinstance(m, str) for m in models):
+        raise ApplicabilityError(f"models no es una lista de strings: {holder!r:.80}")
+    models = [m.strip() for m in models if m.strip()]
+    return make.strip(), ", ".join(models) if models else None
 
 
 def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
@@ -483,20 +500,13 @@ def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
         raise ApplicabilityError(str(raw["Applicability_Error"]))
 
     holders = raw.get("Applicability") if isinstance(raw, dict) else None
-    if isinstance(holders, list) and holders:
-        pairs: list[tuple[str, str | None]] = []
-        for holder in holders:
-            if not isinstance(holder, dict):
-                continue
-            h_make = (holder.get("make") or "").strip()
-            if not h_make:
-                continue
-            models = [
-                m.strip() for m in (holder.get("models") or []) if isinstance(m, str) and m.strip()
-            ]
-            pairs.append((h_make, ", ".join(models) if models else None))
-        if pairs:
-            return pairs
+    if holders is not None and not isinstance(holders, list):
+        raise ApplicabilityError(f"Applicability no es una lista: {holders!r:.80}")
+    if holders:
+        # Toda la estructura o nada: saltar un holder ilegible y declarar los
+        # demas como `success_with_rows` le haria podar a la RPC las filas del
+        # holder perdido.
+        return [_holder_pair(holder) for holder in holders]
 
     make_field = (row.get("make") or "").strip()
     if not make_field:

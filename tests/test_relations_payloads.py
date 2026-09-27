@@ -262,6 +262,23 @@ def test_applicability_error_marks_the_whole_ad_failed_with_no_rows(fake):
     assert any("extraccion fallo" in e for e in populate_db._write_errors)
 
 
+def test_a_malformed_holder_next_to_a_valid_one_sends_failed_without_rows(fake):
+    """AIRBUS/A320 valido y un segundo holder sin make
+    con 737-800. Mandar solo AIRBUS como `success_with_rows` hacia que la RPC
+    podara la fila BOEING/737-800 guardada; `failed` las conserva las dos."""
+    rows = [{
+        "ad_number": "EASA-15", "make": "AIRBUS", "model": "A320, 737-800",
+        "product_type": "Aircraft", "raw_data": {"Applicability": [
+            {"make": "AIRBUS", "models": ["A320"]},
+            {"make": "", "models": ["737-800"]},
+        ]},
+    }]
+    populate_db.populate_relations(fake, "easa", rows)
+
+    assert _applic_elements(fake) == [{"ad_id": "id-EASA-15", "status": "failed", "rows": []}]
+    assert any("extraccion fallo" in e for e in populate_db._write_errors)
+
+
 # ------------------------------------------------------- model_status invariantes
 
 def test_model_status_is_listed_iff_model_text_is_present(fake):
