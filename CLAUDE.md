@@ -139,14 +139,20 @@ cuerpo en POST). Otro valor de `v` -> 400.
   `product_types`, `product_subtypes`, `statuses`, `min_confidence`, `has_pdf`,
   `date_from`, `date_to`, `term`, `sources`).
 
-Eventos SSE v2 (HTTP 200 siempre, terminan en `done`):
+Eventos SSE v2 (HTTP 200, terminan en `done`):
 
 ```
 data: {"v":2,"event":"page","total":5108,"source_counts":{"easa":5108},"limit":100,"offset":0,"has_more":true,"results":[...]}
 data: {"v":2,"event":"done","total":5108}
 data: {"v":2,"event":"error","code":"filter_gate","message":"..."}   # gate o parametro invalido (tambien 22023 de la BD)
-data: {"v":2,"event":"error","code":"upstream","message":"..."}      # fallo de BD
 ```
+
+Un **fallo de BD no abre el stream**: responde HTTP 502 con el mismo cuerpo
+JSON que el POST, `{"v":2,"code":"upstream","message":"Search is temporarily
+unavailable."}`. La pagina se resuelve antes de escribir el primer byte, asi
+que no hay error de BD con el stream ya empezado. El proxy de Next devuelve la
+cuota consumida solo ante un 5xx o un fallo de transporte; con un evento
+`upstream` en un 200 una busqueda fallida se descontaba igual.
 
 `has_more = offset + len(results) < total`. POST v2 devuelve el mismo objeto
 `page` sin `event`; los errores son `{"v":2,"code":...,"message":...}` con 400

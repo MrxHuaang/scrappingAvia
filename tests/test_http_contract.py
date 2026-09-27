@@ -524,18 +524,22 @@ def test_v2_ad_number_passes_the_gate_alone(client, monkeypatch):
     assert db.calls[0][1]["p_filters"]["term"] == "AD 2023-12-03"
 
 
-def test_v2_upstream_error(client, monkeypatch):
+def test_v2_upstream_error_is_a_502_on_both_routes(client, monkeypatch):
+    """Un fallo de BD no abre el stream: el proxy de Next solo devuelve la
+    cuota consumida ante HTTP 5xx, y un evento `upstream` con 200 la gastaba.
+    El stream responde lo mismo que el POST, byte a byte."""
     _v2_db(monkeypatch, _FakeDb(error=RuntimeError("connection reset by peer")))
-    r = client.get(f"/api/search/stream?{_V2_QUERY}", headers=_EASA)
-    assert r.status_code == 200
-    error, done = _sse_events(r)
-    assert error["event"] == "error" and error["code"] == "upstream"
-    assert "reset" not in error["message"]          # el detalle queda en el log
-    assert done["event"] == "done"
+    expected = {"v": 2, "code": "upstream", "message": "Search is temporarily unavailable."}
 
-    r = client.post("/api/search", json=_V2_BODY, headers=_EASA)
+    r = client.get(f"/api/search/stream?{_V2_QUERY}", headers=_EASA)
     assert r.status_code == 502
-    assert r.get_json()["code"] == "upstream"
+    assert r.mimetype == "application/json"
+    assert r.get_json() == expected                 # el detalle queda en el log
+
+    post = client.post("/api/search", json=_V2_BODY, headers=_EASA)
+    assert post.status_code == 502
+    assert post.get_json() == expected
+    assert r.data == post.data
 
 
 # ------------------------------------------------ v2: fuentes del proxy --

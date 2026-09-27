@@ -161,7 +161,9 @@ the Next.js proxy (`X-Internal-Secret`). Both speak two contracts:
 - **v2** (`v=2` query / `{"v": 2}` body, `webapp/search_v2.py`): one
   `search_ads_v2` call per page, global `offset` (<= 100000), `limit` <= 100,
   `total` and `source_counts` computed before paging. Events: `page`, `done`,
-  `error` (`code`: `filter_gate` | `upstream`). Sources come from the proxy's
+  `error` (`code: filter_gate`). A database failure is HTTP 502 with the POST's
+  JSON body (`code: upstream`) on both routes, never a 200 stream, so the proxy
+  refunds the search. Sources come from the proxy's
   `X-Effective-Sources` header (`*` or a comma list), trusted only after the
   secret check: bad secret -> 401, missing/invalid header -> 400.
 

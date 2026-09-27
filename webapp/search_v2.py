@@ -48,7 +48,7 @@ class FilterError(ValueError):
 
 
 class UpstreamError(RuntimeError):
-    """La BD fallo o devolvio algo inesperado: evento `upstream` / HTTP 502."""
+    """La BD fallo o devolvio algo inesperado: HTTP 502 `upstream` (stream y POST)."""
 
 
 # ---------------------------------------------------------------- version --
@@ -282,15 +282,14 @@ def _done(total: int) -> dict:
 
 def stream_events(params: Params, sources: list[str] | None) -> list[dict]:
     """
-    Eventos SSE de una busqueda v2: `page` + `done`, o `error` + `done`.
-    Siempre terminan en `done`, como en v1, para que el cliente cierre.
+    Eventos SSE de una busqueda v2: `page` + `done`, o `error` + `done` si
+    los filtros no pasan. Siempre terminan en `done`, como en v1, para que
+    el cliente cierre. UpstreamError no es un evento: sube al llamador.
     """
     try:
         page = _search(params, sources)
     except FilterError as e:
         return [{"v": VERSION, "event": "error", "code": "filter_gate", "message": str(e)}, _done(0)]
-    except UpstreamError as e:
-        return [{"v": VERSION, "event": "error", "code": "upstream", "message": str(e)}, _done(0)]
     event = {"v": VERSION, "event": "page"}
     event.update((k, v) for k, v in page.items() if k != "v")
     return [event, _done(page["total"])]
@@ -305,9 +304,16 @@ def handle_stream() -> RouteResult:
     if rl:
         return rl
     # Una sola llamada: se resuelve antes de abrir el stream (el generador
-    # correria fuera del contexto de la request). Errores de filtros o de BD
-    # viajan como evento con HTTP 200, igual que en v1.
-    events = stream_events(Params.from_args(request.args), sources)
+    # correria fuera del contexto de la request), asi que ningun error puede
+    # llegar con el stream ya empezado. Un error de filtros viaja como evento
+    # con HTTP 200, igual que en v1. Un fallo de BD responde 502 con el mismo
+    # cuerpo que el POST: el proxy de Next devuelve la cuota consumida solo
+    # ante un 5xx, y con un evento `upstream` en un 200 la busqueda fallida
+    # se descontaba igual.
+    try:
+        events = stream_events(Params.from_args(request.args), sources)
+    except UpstreamError as e:
+        return jsonify(_error("upstream", str(e))), 502
     body = "".join(f"data: {json.dumps(e, ensure_ascii=False)}\n\n" for e in events)
     return Response(body, mimetype="text/event-stream", headers=_SSE_HEADERS)
 
