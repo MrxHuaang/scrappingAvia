@@ -510,9 +510,8 @@ def _applicability_pairs(row: dict) -> list[tuple[str, str | None]]:
 
     make_field = (row.get("make") or "").strip()
     if not make_field:
-        # Sin fabricante no hay fila que declarar. El AD queda con
-        # `success_empty` (con evidencia) o `failed` mas abajo, no con una
-        # fila invalida.
+        # Sin fabricante no hay fila que declarar: el AD queda `failed` mas
+        # abajo, no con una fila invalida.
         return []
     if "," in make_field:
         # Una fuente que empaqueta fabricantes sin atribucion es una regresion
@@ -574,10 +573,11 @@ def _send_applicability_batches(supabase, payload: list[dict]) -> dict[str, int]
     """Envia cada lote de `_applicability_batches(payload)` a la RPC y lee la
     respuesta real (`ad_id, status, rows_now` por AD, en orden de payload).
 
-    El status devuelto es la autoridad, no el declarado: la RPC degrada a
-    `failed` un `success_empty` sin `empty_evidence` (la migracion v2 lo hace
-    en silencio para no romper llamadores viejos). Sin leer `resp.data` ese
-    degradado pasaria desapercibido — se cuenta y se loguea aqui.
+    El status devuelto es la autoridad, no el declarado: la RPC puede
+    degradar un elemento a `failed` en silencio (la migracion v2 lo hace con
+    un `success_empty` sin `empty_evidence`, para no romper llamadores
+    viejos). Sin leer `resp.data` ese degradado pasaria desapercibido — se
+    cuenta y se loguea aqui.
     """
     counts: dict[str, int] = {"success_with_rows": 0, "success_empty": 0, "failed": 0}
     db_failed: list[str] = []
@@ -595,8 +595,7 @@ def _send_applicability_batches(supabase, payload: list[dict]) -> dict[str, int]
         shown = db_failed[:20]
         suffix = f" (+{len(db_failed) - 20} mas)" if len(db_failed) > 20 else ""
         logger.warning(
-            f"  applicability: la BD reporto {len(db_failed)} AD(s) failed "
-            f"(incluye success_empty sin empty_evidence, degradado por la RPC): "
+            f"  applicability: la BD reporto {len(db_failed)} AD(s) failed: "
             f"{shown}{suffix}"
         )
     return counts
@@ -618,38 +617,13 @@ _PRODUCT_TYPE_CODE = {
 }
 
 
-# Evidencia de success_empty por fuente (docs/applicability-contract.md,
-# ajustado 2026-09-25). El criterio es estricto a proposito: `empty_evidence`
-# exige que la FUENTE declare explicitamente "no hay pares" — "el parser/
-# listado no trajo make" nunca es esa evidencia, es simplemente un dato
-# ausente, y un dato ausente no autoriza a la RPC a borrar lo que ya tenia
-# guardado. Ausente de este dict o condicion no cumplida => el AD viaja
-# `failed` (nada se toca) en vez de `success_empty`.
-def _empty_evidence(source: str, row: dict) -> str | None:
-    if source == "easa":
-        # `easa.py` construye `Applicability` recorriendo `li.tc_holder` del
-        # listado/detalle: una lista VACIA (no ausente) significa que esa
-        # seccion se recorrio y no habia ningun holder — es la unica fuente
-        # cuyo scraper distingue "recorri y no habia nada" de "no llegue a
-        # verlo". `Applicability` ausente (make vacio por otra via) no cuenta.
-        holders = (row.get("raw_data") or {}).get("Applicability")
-        if isinstance(holders, list) and len(holders) == 0:
-            return "EASA: listado sin ningun approval/type-certificate holder para este AD"
-        return None
-    # transport_canada: el scraper NUNCA emite `raw_data["Applicability"]`
-    # (solo EASA lo hace hoy, ver CLAUDE.md/docs/applicability-contract.md), asi
-    # que no hay forma de distinguir "recorri la seccion y no habia holders" de
-    # "no pude leerla" — ambiguo, no se emite evidencia.
-    #
-    # federal_register: un AD de tipo Appliance SI tiene applicability (el
-    # fabricante/pieza del appliance) — declararlo vacio borraria filas reales.
-    # Ni el tipo de producto ni un titulo generico son la fuente diciendo
-    # "no hay pares", asi que nunca se emite evidencia para esta fuente.
-    #
-    # anac_brazil / dgac_chile / anac_argentina / uk_caa: un listado sin make
-    # es ausencia de dato (el scraper no lo extrajo), no la fuente afirmando
-    # que el AD no aplica a nada. Tampoco se emite evidencia.
-    return None
+# `success_empty` no lo declara ningun extractor (docs/applicability-contract.md).
+# Le ordena a la RPC borrar las filas guardadas del AD, asi que exige que la
+# FUENTE declare explicitamente "no hay pares", y ninguna fuente activa lo
+# hace: un listado sin make, un titulo generico o una lista de holders vacia
+# son datos ausentes, no evidencia. En EASA, `Applicability == []` es que el
+# selector `li.tc_holder` no encontro nada, y un cambio de markup da
+# exactamente lo mismo que un AD sin holders. Sin pares, el AD viaja `failed`.
 
 
 def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
@@ -661,8 +635,8 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     Applicability va por la RPC transaccional `replace_ad_applicability` con el
     estado triestado por AD del contrato (docs/applicability-contract.md):
     un AD presente en la salida del scraper con pares validos -> success_with_rows;
-    sin pares pero con evidencia de ausencia real (`_empty_evidence`) -> success_empty;
-    sin pares y sin evidencia, o con una fila descartada, o con extraccion
+    sin pares (ninguna fuente da evidencia de ausencia real), o con una fila
+    descartada, o con extraccion
     fallida (`ApplicabilityError`) -> failed (no se toca lo guardado);
     ausente de `normalized` -> tampoco se toca (failed implicito, ni siquiera
     viaja en el payload). SBs por upsert (ad_id, sb_number).
@@ -676,9 +650,6 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
     # ad_id -> filas de applicability deduplicadas por clave natural.
     applic_by_ad: dict[str, list[dict]] = {}
     applic_seen: dict[str, set] = {}
-    # ad_id -> fila normalizada, para poder pedirle evidencia de ausencia por
-    # fuente una vez que se sabe que no aporto ningun par.
-    applic_row_by_ad: dict[str, dict] = {}
     sb_rows: list[dict] = []
     sb_seen: set[tuple[str, str]] = set()
     # ADs con >=1 fila de applicability descartada por tamano de campo, o cuya
@@ -695,7 +666,6 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
             continue
         applic_by_ad.setdefault(ad_id, [])
         applic_seen.setdefault(ad_id, set())
-        applic_row_by_ad[ad_id] = r
 
         raw = r.get("raw_data") or {}
 
@@ -788,16 +758,8 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
             return {"ad_id": aid, "status": "failed", "rows": []}
         if rows:
             return {"ad_id": aid, "status": "success_with_rows", "rows": rows}
-        evidence = _empty_evidence(source, applic_row_by_ad[aid])
-        if evidence:
-            return {
-                "ad_id": aid,
-                "status": "success_empty",
-                "rows": [],
-                "empty_evidence": evidence[:APPLICABILITY_MAKE_MAX],
-            }
-        # Sin pares y sin evidencia de ausencia real: no hay base para pedirle
-        # a la RPC que borre lo que ya tenia guardado.
+        # Sin pares no hay base para pedirle a la RPC que borre lo que ya
+        # tenia guardado (ver el comentario sobre `success_empty`).
         return {"ad_id": aid, "status": "failed", "rows": []}
 
     applic_payload = [_applic_element(aid, rows) for aid, rows in applic_by_ad.items()]
@@ -855,14 +817,13 @@ def populate_relations(supabase, source: str, normalized: list[dict]) -> None:
                     _record_write_error(f"  supersede: update fallo target {tgt}: {e}")
 
     # Declarado por el cliente (lo que se mando) vs. leido de la RPC (lo que
-    # la BD de verdad aplico — puede degradar success_empty sin evidencia a
-    # failed; ver _send_applicability_batches). Se loguean ambos porque
-    # difieren cuando eso pasa.
-    n_declared_empty = sum(1 for e in applic_payload if e["status"] == "success_empty")
+    # la BD de verdad aplico, que puede degradar a failed; ver
+    # _send_applicability_batches). Se loguean ambos porque difieren cuando
+    # eso pasa.
     n_declared_failed = sum(1 for e in applic_payload if e["status"] == "failed")
     logger.info(
         f"[{source}] relaciones: {sum(len(v) for v in applic_by_ad.values())} applicability "
-        f"({n_declared_empty} declarados success_empty, {n_declared_failed} declarados failed; "
+        f"({n_declared_failed} declarados failed; "
         f"BD: {applic_counts.get('success_with_rows', 0)} success_with_rows, "
         f"{applic_counts.get('success_empty', 0)} success_empty, "
         f"{applic_counts.get('failed', 0)} failed), "

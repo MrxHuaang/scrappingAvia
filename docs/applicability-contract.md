@@ -40,14 +40,15 @@ normalizada:
 
 Por AD:
 - **Pares válidos** (≥1 tras deduplicar y validar límites) → `success_with_rows`.
-- **Sin pares**, pero la fuente autoriza `_empty_evidence()` (tabla más abajo) →
-  `success_empty` con ese texto. El criterio es estricto adrede: `empty_evidence`
-  exige que la fuente **declare explícitamente** "no hay pares" — "el parser/
-  listado no trajo make" nunca es esa evidencia, es un dato ausente, y un dato
-  ausente no autoriza a borrar lo ya guardado.
-- **Sin pares y sin evidencia** (que hoy es el caso general: make vacío por
-  cualquier motivo — título genérico como "Various Aircraft", AD de Appliance sin
-  fabricante declarado, listado sin esa columna, etc.), **o** con ≥1 fila
+- **`success_empty` no lo declara ningún extractor** (tabla más abajo). Exige que
+  la fuente **declare explícitamente** "no hay pares", y ninguna fuente activa
+  lo hace: "el parser/listado no trajo make" o "el selector no encontró holders"
+  nunca es esa evidencia, es un dato ausente, y un dato ausente no autoriza a
+  borrar lo ya guardado. Nunca se infiere del número de coincidencias de un
+  selector.
+- **Sin pares** (make vacío por cualquier motivo — título genérico como
+  "Various Aircraft", AD de Appliance sin fabricante declarado, listado sin esa
+  columna, lista de holders vacía, etc.), **o** con ≥1 fila
   descartada por límite de tamaño, **o** con `ApplicabilityError` (extracción que
   falló a medias) → `failed`: nunca se declara un subconjunto parcial como si
   fuera la verdad completa, ni se infiere ausencia de un dato simplemente
@@ -82,21 +83,24 @@ Un holder ilegible nunca se salta: los pares que quedan no son la applicability
 completa, y declararlos `success_with_rows` haría que la RPC podara las filas
 del holder perdido. Todo el AD viaja `failed`, sin filas.
 
-## Evidencia por fuente activa (`empty_evidence` / `_empty_evidence()`)
+## Evidencia de ausencia por fuente activa (`empty_evidence`)
+
+Ninguna fuente activa da hoy una señal explícita y verificable de "este AD no
+aplica a ningún producto", así que `populate_db` nunca envía `success_empty`.
+Una fuente que la dé (una declaración de la fuente, distinta de que un
+selector no encuentre nada) se documenta aquí, con un fixture del caso real,
+antes de emitirla.
 
 | Fuente | Qué autoriza `success_empty` | Qué es `failed` |
 |---|---|---|
-| `easa` | `raw_data["Applicability"]` es una lista **vacía**: `easa.py` recorrió la sección de holders (`li.tc_holder`) del listado/detalle y no encontró ninguno — es la única fuente cuyo scraper distingue "recorrí y no había nada" de "no llegué a verlo" | `Applicability` ausente (make vacío por otra vía); ≥1 fila descartada por tamaño; timeout/HTTP ≠ 200; parse error; AD ausente de la salida |
+| `easa` | Nunca — `raw_data["Applicability"] == []` solo dice que `li.tc_holder` no coincidió con nada en la celda de holders: un cambio de clase o de estructura da la misma lista vacía que un AD sin holders, y el listado no trae ninguna declaración explícita de ausencia | Lista de holders vacía o ausente; un holder cuyo nombre no se lee (envuelto en otro elemento, sección cortada: `easa.py` lo emite con `make` vacío y el AD entero falla); ≥1 fila descartada por tamaño; timeout/HTTP ≠ 200; parse error; AD ausente de la salida |
 | `transport_canada` | Nunca — el scraper **no emite** `raw_data["Applicability"]` (solo EASA lo hace), así que no hay forma de distinguir "sin holders" de "no pude leerlo": ambiguo, no se emite evidencia | Cualquier make vacío; timeout/HTTP ≠ 200; layout de tabla no reconocido; AD ausente de la salida |
 | `federal_register` | Nunca — un AD de tipo `Appliance` **sí** tiene applicability (el fabricante/pieza del propio appliance); declararlo `success_empty` borraría filas reales. Ni el tipo de producto ni un título genérico son la fuente afirmando "no hay pares" | Cualquier make vacío (Appliance incluido); HTTP ≠ 200 de la API, JSON malformado, documento descartado por identidad (sin AD en `docket_ids` ni amendment); AD ausente de la salida |
 | `anac_brazil`, `dgac_chile`, `anac_argentina`, `uk_caa` | Nunca — un listado sin make es el scraper **no extrayendo** el dato, no la fuente declarando que el AD no aplica a nada | Cualquier fila sin make; timeout/HTTP ≠ 200 del listado; layout no reconocido; AD ausente de la salida |
 
-Para estas cuatro fuentes de solo-listado, y para Transport Canada y Federal
-Register, **todo make vacío viaja `failed`**: las filas de `ad_applicability`
-que ya existían para ese AD quedan intactas hasta que una corrida futura
-consiga extraer el dato o hasta una limpieza manual explícita. Ningún
-extractor activo hoy declara `success_empty` salvo EASA en el caso descrito
-arriba.
+En todas las fuentes **todo make vacío viaja `failed`**: las filas de
+`ad_applicability` que ya existían para ese AD quedan intactas hasta que una
+corrida futura consiga extraer el dato o hasta una limpieza manual explícita.
 
 Reglas transversales:
 - Ningún extractor emite filas con `make` vacío (la RPC lo rechaza con 22023).

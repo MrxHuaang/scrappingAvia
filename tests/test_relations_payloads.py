@@ -7,8 +7,11 @@ respuesta de la RPC).
 """
 
 import pytest
+from bs4 import BeautifulSoup
 
 import populate_db
+import test_easa_row_parse
+from scrapers.easa import _parse_results_table
 
 
 class FakeQuery:
@@ -322,17 +325,35 @@ def test_product_type_is_mapped_to_the_catalog_code_or_omitted(fake):
 
 # ------------------------------------------------------------ empty_evidence
 
-def test_easa_empty_holder_list_is_success_empty_with_evidence(fake):
-    """`Applicability` vacia (el scraper recorrio la seccion y no encontro
-    holders) SI autoriza a la RPC a borrar lo guardado."""
-    rows = [{"ad_number": "EASA-13", "make": "", "model": "", "product_type": None,
+@pytest.mark.parametrize("source", [
+    "easa", "federal_register", "transport_canada", "anac_brazil",
+    "dgac_chile", "anac_argentina", "uk_caa",
+])
+def test_no_source_declares_success_empty(fake, source):
+    """Ninguna fuente activa da una senal explicita de "el AD no aplica a
+    nada": una lista de holders vacia es un selector que no encontro nada
+    (EASA con otro markup da lo mismo), no la fuente declarando ausencia.
+    Sin esa senal, `success_empty` borraria filas reales."""
+    rows = [{"ad_number": "X-1", "make": "", "model": "", "product_type": None,
              "raw_data": {"Applicability": []}}]
-    populate_db.populate_relations(fake, "easa", rows)
+    populate_db.populate_relations(fake, source, rows)
 
-    elements = [p for (n, params) in fake.rpcs if n == "replace_ad_applicability"
-                for p in params["p_ads"]]
-    assert elements[0]["status"] == "success_empty"
-    assert elements[0]["empty_evidence"].strip()
+    assert _applic_elements(fake) == [{"ad_id": "id-X-1", "status": "failed", "rows": []}]
+
+
+@pytest.mark.parametrize("html", [
+    test_easa_row_parse.HOLDER_CLASS_RENAMED,
+    test_easa_row_parse.HOLDER_NAME_WRAPPED,
+    test_easa_row_parse.HOLDER_SECTION_TRUNCATED,
+], ids=["class-renamed", "name-wrapped", "section-truncated"])
+def test_easa_markup_the_parser_does_not_recognize_keeps_the_stored_rows(fake, html):
+    """Del HTML al payload: la fuente sigue listando sus holders, el parser no
+    los ve enteros, y el AD viaja `failed` sin filas (la RPC no toca lo
+    guardado) en vez de `success_empty` o de un `success_with_rows` parcial."""
+    [scraped] = _parse_results_table(BeautifulSoup(html, "html.parser"))
+    populate_db.populate_relations(fake, "easa", [populate_db.normalize(scraped, "easa")])
+
+    assert _applic_elements(fake) == [{"ad_id": "id-2024-0195", "status": "failed", "rows": []}]
 
 
 def test_easa_bare_empty_make_without_applicability_key_is_failed_not_empty(fake):
@@ -382,14 +403,6 @@ def test_listing_only_source_with_blank_make_is_failed_not_empty(fake):
     elements = [p for (n, params) in fake.rpcs if n == "replace_ad_applicability"
                 for p in params["p_ads"]]
     assert elements[0]["status"] == "failed"
-
-
-def test_transport_canada_never_emits_empty_evidence():
-    """El scraper de TC nunca emite `raw_data['Applicability']` (solo EASA lo
-    hace) -- no hay forma de distinguir "recorri y no habia holders" de "no
-    pude leerlo", asi que es ambiguo y no se emite evidencia nunca."""
-    assert populate_db._empty_evidence("transport_canada", {"raw_data": {}}) is None
-    assert populate_db._empty_evidence("transport_canada", {"raw_data": {"Applicability": []}}) is None
 
 
 # ------------------------------------------------------- lectura de la RPC
