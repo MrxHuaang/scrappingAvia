@@ -38,6 +38,7 @@ def test_fields_absent_from_a_legacy_row_are_null_or_false():
     assert out["Match_Confidence"] is None
     assert out["Applicability_Unknown"] is False
     assert out["Has_Text"] is False
+    assert out["Document_Class"] is None
 
 
 def test_v2_row_carries_the_new_fields():
@@ -45,13 +46,19 @@ def test_v2_row_carries_the_new_fields():
         **_LEGACY_ROW,
         "source": "easa", "issuing_authority": "federal_register",
         "superseded_by": "2025-0100", "match_confidence": "high",
-        "applicability_unknown": True, "has_text": True,
+        "applicability_unknown": True, "has_text": True, "document_class": "SIB",
     })
     assert out["Issuing_Authority"] == "federal_register"
     assert out["Superseded_By"] == "2025-0100"
     assert out["Match_Confidence"] == "high"
     assert out["Applicability_Unknown"] is True
     assert out["Has_Text"] is True
+    assert out["Document_Class"] == "SIB"
+
+
+def test_a_null_document_class_is_null_not_empty():
+    assert row_to_result({**_LEGACY_ROW, "document_class": None})["Document_Class"] is None
+    assert row_to_result({**_LEGACY_ROW, "document_class": ""})["Document_Class"] is None
 
 
 def test_source_label_is_the_human_one_the_proxy_filters_on():

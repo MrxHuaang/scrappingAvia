@@ -196,7 +196,10 @@ cuota consumida solo ante un 5xx o un fallo de transporte; con un evento
 (`filter_gate`) o 502 (`upstream`). Las filas salen por
 `webapp.search_rows.row_to_result()`, el unico adaptador (mismas claves
 `ADResult` que v1 + `Issuing_Authority`, `Match_Confidence`,
-`Applicability_Unknown`, `Has_Text`, `Superseded_By`).
+`Applicability_Unknown`, `Has_Text`, `Superseded_By`, `Document_Class`).
+`Document_Class` es `ads.document_class` tal cual (AD, EAD, PAD, SIB, SD, ADR;
+null fuera de EASA o si no se conoce): la RPC tiene que devolver la columna
+`document_class` en cada fila para que llegue.
 
 **Fuentes en v2: las decide el proxy, no el query.** El proxy de Next calcula
 plan ∩ seleccion y lo manda en `X-Effective-Sources`. Flask solo la cree

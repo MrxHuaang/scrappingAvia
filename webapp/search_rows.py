@@ -29,8 +29,9 @@ def row_to_result(row: dict) -> dict:
     Es el unico adaptador: los dos contratos de busqueda pasan por aqui para
     que una fila tenga la misma forma venga por donde venga. Los campos que
     solo trae el contrato nuevo (`match_confidence`, `applicability_unknown`,
-    `has_text`) salen en null/false cuando la fila no los tiene, que es lo que
-    significan: sin confianza calculada, applicability conocida, sin texto.
+    `has_text`, `document_class`) salen en null/false cuando la fila no los
+    tiene, que es lo que significan: sin confianza calculada, applicability
+    conocida, sin texto, clase de documento desconocida.
     """
     source = row.get("source", "") or ""
     return {
@@ -52,4 +53,7 @@ def row_to_result(row: dict) -> dict:
         "Match_Confidence": row.get("match_confidence") or None,
         "Applicability_Unknown": bool(row.get("applicability_unknown")),
         "Has_Text": bool(row.get("has_text")),
+        # Clase del documento EASA (AD, EAD, PAD, SIB, SD, ADR): la UI marca
+        # un SIB para que no se lea como AD. Null fuera de EASA o si no se sabe.
+        "Document_Class": row.get("document_class") or None,
     }
