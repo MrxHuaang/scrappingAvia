@@ -10,6 +10,7 @@ import re
 import os
 from scrapers.common.http import browser_headers, get_with_backoff
 from scrapers.common.cache import load_json_cache, save_json_cache
+from scrapers.common.easa_document_class import document_class
 
 from scrapers.common.log import get_logger
 
@@ -285,17 +286,26 @@ def _parse_results_table(soup):
 
             # Columna 6: Attachments (PDF links)
             pdf_link = ""
+            attachment_links = []
             if len(cells) > 6:
                 for link in cells[6].find_all("a"):
                     href = link.get("href", "")
                     if href:
                         if not href.startswith("http"):
                             href = f"{EASA_BASE_URL}{href}"
+                        attachment_links.append(href)
                         if ".pdf" in href.lower() or "blob" in href.lower():
                             pdf_link = href
                             break
                         if not pdf_link:
                             pdf_link = href
+
+            # Clase de la publicacion (AD, EAD, PAD, SIB, SD, ADR): el listado
+            # mezcla todas. La cola del link del adjunto la declara; el icono
+            # de clase del Subject es el respaldo. None si ninguna la dice.
+            doc_class = document_class(
+                [pdf_link, *attachment_links], icon_alt=_class_icon_alt(cells[3]),
+            )
 
             # FIXED: extraer product_type desde keywords del subject
             subject_lower = subject.lower()
@@ -324,6 +334,7 @@ def _parse_results_table(soup):
                 "Product_Type": product_type,  # FIXED: ya no hardcodeado a ""
                 "Docket": "",
                 "PDF_Link": pdf_link,
+                "Document_Class": doc_class,
             })
 
         except Exception as e:
@@ -333,6 +344,14 @@ def _parse_results_table(soup):
             continue
 
     return results
+
+
+def _class_icon_alt(subject_cell):
+    """`alt` del icono de clase del Subject (`adclass_*.gif`), o None."""
+    for img in subject_cell.find_all("img"):
+        if "adclass_" in (img.get("src") or ""):
+            return img.get("alt")
+    return None
 
 
 def _parse_total_results(soup):

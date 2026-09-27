@@ -102,3 +102,88 @@ def test_a_holder_whose_name_cannot_be_read_is_kept_without_make():
 def test_a_truncated_holder_section_keeps_the_nameless_holder():
     [ad] = _parse(HOLDER_SECTION_TRUNCATED)
     assert [h["make"] for h in ad["Applicability"]] == ["AIRBUS HELICOPTERS", ""]
+
+
+# ------------------------------------------------------ filas reales del listado
+#
+# Formas tomadas del listado real de ad.easa.europa.eu (el HTML completo trae
+# ademas bandera, fecha efectiva y peso del adjunto). `_row` arma una fila con
+# el mismo markup: icono de clase en el Subject, `li.tc_holder > ul > li.type`
+# en el arbol y los links `blob` en los adjuntos.
+
+_BLOB = "https://ad.easa.europa.eu/blob"
+_SEND_COMMENT = (
+    '<br/><a href="#" onclick="return false;"><img alt="send comment" '
+    'src="https://ad.easa.europa.eu/static/img/icon/email-orange.gif"/> send comment</a>'
+)
+
+
+def _icon(cls, title):
+    return (f'<img alt="{cls}" src="https://ad.easa.europa.eu/static/img/icon/'
+            f'adclass_{cls.lower()}.gif" title="{title}"/>')
+
+
+def _row(number, subject, holders, links=(), icon=""):
+    tree = "".join(
+        f'<li class="tc_holder" title="TC Holder">{name}<ul>'
+        + "".join(f'<li class="type" title="Type">{t}</li>' for t in types)
+        + "</ul></li>"
+        for name, types in holders
+    )
+    attachments = "".join(f'<li class="file_pdf"><a href="{h}">297 kb</a></li>' for h in links)
+    return f"""
+    <table class="ad-list"><tr>
+      <td class="cell-date"><a class="easa_cd" href="https://ad.easa.europa.eu/ad/{number}">{number}</a></td>
+      <td class="cell-default"></td>
+      <td class="cell-date">2026-09-25</td>
+      <td class="cell-default">{icon}{subject}</td>
+      <td class="cell-tree"><ul class="aircraft-tree">{tree}</ul></td>
+      <td class="cell-date"></td>
+      <td class="cell-default"><ul class="attachments-small">{attachments}</ul></td>
+    </tr></table>
+    """
+
+
+# 2026-0052R2: AD final sin icono; su segundo adjunto es el ZIP del PAD.
+AD_ROW = _row(
+    "2026-0052R2", "Instruments – Fuse Cover Attachment – Modification",
+    [("AIRBUS HELICOPTERS", ["AS 350 / EC 130"])],
+    links=[f"{_BLOB}/EASA_AD_2026_0052_R2.pdf/AD_2026-0052R2_1",
+           f"{_BLOB}/EASA_PAD_26_031.zip/AD_2026-0052R2_2"],
+)
+# 26-116: PAD vigente, con icono PAD y el link "send comment" en el Subject.
+PAD_ROW = _row(
+    "26-116", "Equipment / Furnishings – System Interface Unit – Replacement" + _SEND_COMMENT,
+    [("AIRBUS HELICOPTERS", ["H160"])],
+    links=[f"{_BLOB}/EASA_PAD_26_116.pdf/PAD_26-116_1"],
+    icon=_icon("PAD", "Proposed AD"),
+)
+# 2026-07R2: SIB cuyo unico "holder" es la etiqueta de su clase.
+SOLO_SIB_ROW = _row(
+    "2026-07R2", "EASA Safety Publication Tool – Log of Revisions",
+    [("Safety Information Bulletin", ["Airworthiness"])],
+    links=[f"{_BLOB}/EASA_SIB_2026_07R2.pdf/SIB_2026-07R2_1"],
+    icon=_icon("SIB", "Safety Information Bulletin"),
+)
+
+
+def test_document_class_comes_from_the_attachment_link():
+    [ad] = _parse(AD_ROW)
+    assert ad["Document_Class"] == "AD"
+    [pad] = _parse(PAD_ROW)
+    assert pad["Document_Class"] == "PAD"
+    [sib] = _parse(SOLO_SIB_ROW)
+    assert sib["Document_Class"] == "SIB"
+
+
+def test_document_class_falls_back_to_the_class_icon():
+    html = _row("2026-10", "SZD-50-3 - Notification of uncertified parts installed",
+                [("ALLSTAR PZL GLIDER", ["SZD-50"])],
+                icon=_icon("SIB", "Safety Information Bulletin"))
+    [ad] = _parse(html)
+    assert ad["Document_Class"] == "SIB"
+
+
+def test_document_class_is_unknown_without_link_or_icon():
+    [ad] = _parse(_MULTI_HOLDER_ROW)   # adjunto sin cola de clase, sin icono
+    assert ad["Document_Class"] is None
