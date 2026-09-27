@@ -321,6 +321,22 @@ Luego: `python populate_db.py --source transport_canada`
 - `Docket` no está en el listado HTML — solo en página de detalle (`DA_DetailE.asp?Emd=`)
 - Se guarda `Emd:{id}` como proxy de docket
 
+### EASA — el listado es de publicaciones, no solo de ADs
+- `search/advanced/result` sin filtros lista todas las clases: AD, EAD, PAD,
+  SIB, SD, ADR. La clase sale de la cola del link del adjunto
+  (`.../SIB_2007-12_1`, `.../AD_2024-0109-CN_1`) y, si no, del icono
+  `adclass_*.gif` del Subject: `scrapers/common/easa_document_class.py`, que
+  el extractor emite como `Document_Class` (None si ninguna senal es una de
+  las seis clases).
+- **Avisos de cancelacion** (numero terminado en `-CN`): un AD cancelado y
+  cualquier otro aviso `-CN` se guardan con status `Cancelled`; un **PAD
+  cancelado no se ingiere** (`easa.drop_cancelled_proposals`). El fin del
+  listado se decide por lo leido, no por lo guardado, asi que una pagina de
+  solo PADs cancelados no corta el recorrido.
+- Los SIB se quedan en el catalogo, marcados por su clase.
+- Nodos de la taxonomia que no son fabricantes (`APPLIANCES`, `ORPHANED (No
+  TC Holder)`, ...) nunca son `make`: ver docs/applicability-contract.md.
+
 ### FAA Federal Register — API
 - Usa la API REST de federalregister.gov (no scraping HTML)
 - Trae hasta 5000 ADs (paginado de 100 en 100)

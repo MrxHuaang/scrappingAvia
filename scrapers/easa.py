@@ -71,6 +71,7 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
         params["fi_date_end"] = date_to
 
     all_results = []
+    seen = 0  # filas leidas del listado, incluidas las que no se ingieren
     page = 1
     total_available = None  # FIXED: se lee del HTML en page 1
 
@@ -95,12 +96,17 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
                 effective_max = min(max_pages, max_page_calc)
                 log.info(f"[EASA] Total disponible: {total_available} ADs ({effective_max} paginas)")
 
-            results = _parse_results_table(soup)
+            parsed = _parse_results_table(soup)
 
-            if not results:
+            if not parsed:
                 log.info(f"[EASA] Pagina {page}: sin resultados, deteniendo.")
                 break
 
+            # Una pagina puede traer solo PADs cancelados: se filtran DESPUES
+            # de decidir si el listado se acabo, y el total se compara contra
+            # lo leido, no contra lo que se guarda.
+            seen += len(parsed)
+            results = drop_cancelled_proposals(parsed)
             all_results.extend(results)
 
             # Log detallado cada 100 paginas, resumen breve el resto
@@ -110,7 +116,7 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
                 log.info(f"[EASA] Pagina {page}/{effective_max}: {len(results)} ADs | acumulado: {len(all_results)}")
 
             # FIXED: parar cuando ya tenemos todos o llegamos al limite
-            if len(all_results) >= (total_available or 0) or page >= effective_max:
+            if seen >= (total_available or 0) or page >= effective_max:
                 break
 
             # Parada incremental: quien llama sabe que hay en la BD y decide.
@@ -165,12 +171,13 @@ def search_main_page(model_keyword=None, max_pages=5):
                 total_available = _parse_total_results(soup)
                 log.info(f"[EASA] Total disponible: {total_available} ADs")
 
-            results = _parse_results_table(soup)
+            parsed = _parse_results_table(soup)
 
-            if not results:
+            if not parsed:
                 log.info(f"[EASA] Pagina principal {page}: sin resultados, deteniendo.")
                 break
 
+            results = drop_cancelled_proposals(parsed)
             all_results.extend(results)
             log.info(f"[EASA] Pagina principal {page}: {len(results)} ADs | acumulado: {len(all_results)}")
             time.sleep(0.8)
@@ -370,7 +377,9 @@ def _parse_results_table(soup):
                 # usa para escribir una fila de ad_applicability por par real.
                 "Applicability": applicability,
                 "Effective_Date": effective_date or issue_date,
-                "Status": "Current",
+                # Un aviso de cancelacion (numero terminado en -CN) se guarda
+                # Cancelled; el resto de lo que lista EASA esta vigente.
+                "Status": "Cancelled" if _is_cancellation_notice(ad_number) else "Current",
                 "Product_Type": product_type,  # FIXED: ya no hardcodeado a ""
                 "Docket": "",
                 "PDF_Link": pdf_link,
@@ -384,6 +393,27 @@ def _parse_results_table(soup):
             continue
 
     return results
+
+
+# Aviso de cancelacion: EASA le agrega "-CN" al numero de lo que cancela
+# (2024-0109-CN cancela el AD 2024-0109; 26-098-CN, el PAD 26-098).
+_CANCELLATION_RE = re.compile(r"-CN$", re.I)
+
+
+def _is_cancellation_notice(ad_number: str) -> bool:
+    return bool(_CANCELLATION_RE.search((ad_number or "").strip()))
+
+
+def drop_cancelled_proposals(rows: list[dict]) -> list[dict]:
+    """
+    Quita los PADs cancelados (clase PAD y numero -CN): la cancelacion de una
+    propuesta que nunca fue directiva no entra al catalogo. Los ADs cancelados
+    y los demas avisos -CN se quedan, con status Cancelled.
+    """
+    return [
+        r for r in rows
+        if not (r.get("Document_Class") == "PAD" and _is_cancellation_notice(r.get("AD_Number", "")))
+    ]
 
 
 def _class_icon_alt(subject_cell):

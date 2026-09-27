@@ -9,6 +9,8 @@ un `Make` de hasta 494 chars que aparecia como opcion del filtro Make en la UI.
 
 from bs4 import BeautifulSoup
 
+import populate_db
+import scrapers.easa as easa
 from scrapers.easa import _parse_results_table
 
 _MULTI_HOLDER_ROW = """
@@ -306,3 +308,89 @@ def test_an_unreadable_holder_next_to_a_placeholder_still_fails_the_ad():
     html = _row("2026-0003", "x", [("<span>REAL CO</span>", ["A"]), ("APPLIANCES", ["ATA 25"])])
     [ad] = _parse(html)
     assert ad["Applicability"] == [{"make": "", "models": ["A"]}]
+
+
+# ------------------------------------------------------ avisos de cancelacion
+#
+# EASA le agrega "-CN" al numero de lo que cancela. Un AD cancelado (y
+# cualquier otro aviso -CN) se queda en el catalogo con status Cancelled; la
+# cancelacion de un PAD, una propuesta que nunca fue directiva, no entra.
+
+AD_CANCELLATION_ROW = _row(
+    "2024-0109-CN", "Landing Gear – Inspection – Cancellation",
+    [("AIRBUS S.A.S.", ["A320-214"])],
+    links=[f"{_BLOB}/EASA_AD_2024_0109_CN.pdf/AD_2024-0109-CN_1"],
+)
+# 26-098-CN: PAD cancelado (holder APPLIANCES, como en el listado real).
+PAD_CANCELLATION_ROW = _row(
+    "26-098-CN", "Equipment / Furnishings – Safety Belts – Inspection" + _SEND_COMMENT,
+    [("APPLIANCES", ["ATA 25 EQUIPMENT / FURNISHINGS"])],
+    links=[f"{_BLOB}/EASA_PAD_26_098_CN.pdf/PAD_26-098-CN_1"],
+    icon=_icon("PAD", "Proposed AD"),
+)
+
+
+def test_an_ad_cancellation_notice_is_written_cancelled():
+    [ad] = _parse(AD_CANCELLATION_ROW)
+    assert ad["Status"] == "Cancelled"
+    assert ad["Document_Class"] == "AD"
+    assert populate_db.normalize(ad, "easa")["status"] == "Cancelled"
+
+
+def test_a_current_publication_is_still_new():
+    for html in (AD_ROW, PAD_ROW):
+        [ad] = _parse(html)
+        assert ad["Status"] == "Current"
+        assert populate_db.normalize(ad, "easa")["status"] == "New"
+
+
+def test_a_cancelled_pad_is_dropped_and_everything_else_kept():
+    rows = [_parse(h)[0] for h in (AD_ROW, PAD_ROW, PAD_CANCELLATION_ROW, AD_CANCELLATION_ROW)]
+    kept = easa.drop_cancelled_proposals(rows)
+    assert [r["AD_Number"] for r in kept] == ["2026-0052R2", "26-116", "2024-0109-CN"]
+
+
+def test_a_cancellation_notice_of_unknown_class_is_kept():
+    """Sin clase no se sabe si era un PAD: se guarda (Cancelled) en vez de perderlo."""
+    [ad] = _parse(_row("2024-0110-CN", "Cancellation", [("AIRBUS S.A.S.", ["A320"])]))
+    assert ad["Document_Class"] is None
+    assert easa.drop_cancelled_proposals([ad]) == [ad]
+
+
+class _Resp:
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        pass
+
+
+def _listing(total, *rows_html):
+    body = "".join(h.split("<table class=\"ad-list\">", 1)[1].rsplit("</table>", 1)[0] for h in rows_html)
+    return f"<p>Displaying records 1 to 20 out of a total of {total} publications.</p>" \
+           f"<table class=\"ad-list\">{body}</table>"
+
+
+def test_a_page_of_only_cancelled_pads_does_not_end_the_walk(monkeypatch):
+    """El fin del listado lo decide lo leido, no lo que se guarda: una pagina
+    que solo trae PADs cancelados no puede cortar el recorrido."""
+    pages = [
+        _listing(3, PAD_CANCELLATION_ROW),
+        _listing(3, AD_ROW),
+        _listing(3, AD_CANCELLATION_ROW),
+    ]
+    asked = []
+
+    def fake_get(url, session=None, params=None, headers=None, timeout=None, tag=None):
+        asked.append(url)
+        return _Resp(pages[len(asked) - 1])
+
+    monkeypatch.setattr(easa, "get_with_backoff", fake_get)
+    monkeypatch.setattr(easa.requests.Session, "get", lambda *a, **k: None)
+    monkeypatch.setattr(easa.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(easa, "_PAGE_SIZE", 1)
+
+    out = easa.search_ads(max_pages=10)
+
+    assert len(asked) == 3, "recorre las tres paginas: el total cuenta lo leido"
+    assert [r["AD_Number"] for r in out] == ["2026-0052R2", "2024-0109-CN"]
