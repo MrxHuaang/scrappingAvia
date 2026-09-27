@@ -66,6 +66,7 @@ amoc_available    BOOL   -- true si el texto menciona AMOC; FAA: seccion amoc o 
 superseded_to_ad_id UUID -- FK a ads.id del AD que lo reemplaza (si status=Superseded)
 docket            TEXT
 pdf_link          TEXT   -- NULL en ~867 TC ADs superseded (esperado, no es bug)
+document_class    TEXT   -- solo EASA: AD|EAD|PAD|SIB|SD|ADR; NULL si no se conoce o en otras fuentes
 raw_data          JSONB  -- dict crudo del scraper (preserva valores originales)
 first_seen_at     TIMESTAMPTZ
 last_updated_at   TIMESTAMPTZ
@@ -327,7 +328,10 @@ Luego: `python populate_db.py --source transport_canada`
   (`.../SIB_2007-12_1`, `.../AD_2024-0109-CN_1`) y, si no, del icono
   `adclass_*.gif` del Subject: `scrapers/common/easa_document_class.py`, que
   el extractor emite como `Document_Class` (None si ninguna senal es una de
-  las seis clases).
+  las seis clases). `normalize()` la escribe en `ads.document_class` solo
+  para EASA y solo si se conoce; la columna la crea una migracion de
+  ad-scrapper, que tiene que estar aplicada antes de desplegar esto (sin ella
+  el upsert de EASA falla con PGRST204).
 - **Avisos de cancelacion** (numero terminado en `-CN`): un AD cancelado y
   cualquier otro aviso `-CN` se guardan con status `Cancelled`; un **PAD
   cancelado no se ingiere** (`easa.drop_cancelled_proposals`). El fin del

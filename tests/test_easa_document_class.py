@@ -7,6 +7,7 @@ nombra la clase de la publicacion, aunque el archivo sea el ZIP de otra.
 
 import pytest
 
+import populate_db
 from scrapers.common.easa_document_class import (
     DOCUMENT_CLASSES,
     class_from_icon,
@@ -68,3 +69,69 @@ def test_no_signal_is_unknown_not_a_guess():
 
 def test_the_contract_set_is_exactly_the_six_classes():
     assert DOCUMENT_CLASSES == {"AD", "EAD", "PAD", "SIB", "SD", "ADR"}
+
+
+# ----------------------------------------------------- escritura en ads
+
+
+def _easa_row(**extra):
+    return {"AD_Number": "2026-10", "Subject": "x", "Make": "ALLSTAR PZL GLIDER",
+            "Status": "Current", "PDF_Link": f"{_BLOB}/a.pdf/SIB_2026-10_1", **extra}
+
+
+def test_an_easa_row_writes_its_known_class():
+    assert populate_db.normalize(_easa_row(Document_Class="SIB"), "easa")["document_class"] == "SIB"
+
+
+def test_an_unknown_class_does_not_mention_the_column():
+    assert "document_class" not in populate_db.normalize(_easa_row(Document_Class=None), "easa")
+    assert "document_class" not in populate_db.normalize(_easa_row(Document_Class="PSD"), "easa")
+    assert "document_class" not in populate_db.normalize(_easa_row(), "easa")
+
+
+def test_other_sources_never_write_the_column():
+    row = {"AD_Number": "2023-12-03", "Subject": "x", "Document_Class": "AD"}
+    assert "document_class" not in populate_db.normalize(row, "federal_register")
+
+
+class _FakeAds:
+    def __init__(self):
+        self.upserts = []
+
+    def table(self, _name):
+        return self
+
+    def select(self, *_a, **_k):
+        return self
+
+    def in_(self, *_a, **_k):
+        return self
+
+    @property
+    def not_(self):
+        return self
+
+    def is_(self, *_a, **_k):
+        return self
+
+    def order(self, *_a, **_k):
+        return self
+
+    def range(self, *_a, **_k):
+        return self
+
+    def upsert(self, payload, on_conflict=None):
+        self.upserts.append(payload)
+        return self
+
+    def execute(self):
+        return type("Resp", (), {"data": []})()
+
+
+def test_upsert_ads_sends_the_class_to_the_ads_table():
+    sb = _FakeAds()
+    rows = [populate_db.normalize(_easa_row(Document_Class="SIB"), "easa")]
+    populate_db.upsert_ads(sb, rows)
+    [payload] = sb.upserts
+    assert payload[0]["document_class"] == "SIB"
+    assert payload[0]["raw_data"]["Document_Class"] == "SIB"

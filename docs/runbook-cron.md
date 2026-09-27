@@ -48,6 +48,7 @@ gh workflow run populate_db.yml -R MrxHuaang/scrappingAvia
 | `text: RPC replace_ad_text_sections fallo` o `fallos seguidos de la RPC` | La migración de `ad_text_*` no está aplicada, o un payload fuera de contrato (22023) | Aplicar la migración en ad-scrapper; si es 22023, revisar el payload contra docs/fr-text.md. El texto ya guardado no se pierde: la RPC nunca lo borra con un intento fallido |
 | `429` sostenido de una fuente | Rate limit del sitio | Nada — `get_with_backoff` reintenta con backoff; si persiste días, bajar frecuencia |
 | Una fuente devuelve 0 ADs varios días | Cambio de HTML o WAF nuevo | Correr local `python populate_db.py --source <x> --dry-run` y comparar con el sitio |
+| `easa`: upsert de `ads` falla con `PGRST204` / `Could not find the 'document_class' column` | La migracion de ad-scrapper que agrega `ads.document_class` no esta aplicada | Aplicarla y re-correr `--source easa`; nada se escribio a medias (el lote entero se rechaza) |
 | `22023` desde `replace_ad_applicability` | El extractor declara mal el tri-estado o duplica clave natural | Revisar contra `docs/applicability-contract.md` |
 | `23514` con hint `plan_*` | Cuota/billing del workspace (no aplica al catálogo) | No es del scraper — revisar el trigger en el repo frontend |
 | Job `faa_drs`: `DRS rejected the API key (HTTP 403)` | Key de DRS vencida (12 meses) o revocada | Renovar en drs.faa.gov/drs-api y actualizar el secret `DRS_API_KEY` |

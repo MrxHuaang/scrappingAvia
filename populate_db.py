@@ -29,6 +29,7 @@ import enrich
 # Agregar directorio raiz al path
 
 from scrapers import faa_drs_ads, faa_drs_api, faa_drs_sync, federal_register
+from scrapers.common.easa_document_class import DOCUMENT_CLASSES
 from scrapers.federal_register import search_ads as fr_search
 from scrapers.faa_govinfo import search_ads as govinfo_search
 from scrapers.easa import (
@@ -222,7 +223,7 @@ def normalize(row: dict, source_key: str) -> dict | None:
         ad_number, source_key, (row.get("PDF_Link") or "").strip() or None
     )
 
-    return {
+    record = {
         "source": source_key,
         "source_label": SOURCE_LABELS.get(source_key, source_key),
         "ad_number": ad_number,
@@ -244,6 +245,15 @@ def normalize(row: dict, source_key: str) -> dict | None:
         "pdf_link": (row.get("PDF_Link") or "").strip() or None,
         "raw_data": row,
     }
+
+    # ads.document_class: solo EASA la declara, y solo se manda cuando se
+    # conoce. Una fila sin la clave no menciona la columna; ojo que en un lote
+    # donde otra fila si la trae, PostgREST la completa con NULL (columns =
+    # union de claves, missing=null), que es lo mismo que "desconocida".
+    doc_class = row.get("Document_Class")
+    if source_key == "easa" and doc_class in DOCUMENT_CLASSES:
+        record["document_class"] = doc_class
+    return record
 
 
 # ---------------------------------------------------------------------------
