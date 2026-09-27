@@ -196,6 +196,36 @@ def search_main_page(model_keyword=None, max_pages=5):
 
 _PARSE_FAILURES = 0
 
+# Nodos del arbol "TC holder" de EASA que no son un fabricante: la clase del
+# documento ("Safety Information Bulletin", "Safety Directives"), el cajon de
+# appliances por capitulo ATA ("APPLIANCES", el titular real va en la prosa del
+# Subject) y la declaracion de que el tipo no tiene titular ("ORPHANED (No TC
+# Holder)"). Salen de https://ad.easa.europa.eu/json/ con la misma clase CSS
+# que cualquier empresa real; nada en el markup los distingue.
+_TAXONOMY_PLACEHOLDERS = frozenset(
+    name.casefold() for name in (
+        "Safety Information Bulletin",
+        "APPLIANCES",
+        "ORPHANED (No TC Holder)",
+        "Safety Directives",
+        "Preliminary Safety Directives",
+    )
+)
+
+
+# De todos los placeholders, solo ORPHANED cuelga tipos de aeronave reales
+# ("SLINGSBY", "BRANTLY"); bajo los demas los "tipos" son categorias de EASA
+# ("Airworthiness", "ATA 25 EQUIPMENT / FURNISHINGS"), no modelos.
+_PLACEHOLDERS_WITH_REAL_TYPES = frozenset({"orphaned (no tc holder)"})
+
+
+def _placeholder_key(holder_name: str) -> str:
+    return " ".join(holder_name.split()).casefold()
+
+
+def _is_taxonomy_placeholder(holder_name: str) -> bool:
+    return _placeholder_key(holder_name) in _TAXONOMY_PLACEHOLDERS
+
 
 def _parse_results_table(soup):
     """
@@ -255,14 +285,24 @@ def _parse_results_table(soup):
                 for holder in tc_holders:
                     holder_name = holder.find(string=True, recursive=False)
                     holder_name = holder_name.strip() if holder_name else ""
+                    holder_models = [
+                        text for text in (t.get_text(strip=True) for t in holder.find_all("li", class_="type"))
+                        if text
+                    ]
 
-                    holder_models = []
-                    types = holder.find_all("li", class_="type")
-                    for t in types:
-                        type_text = t.get_text(strip=True)
-                        if type_text:
-                            holder_models.append(type_text)
-                            models_list.append(type_text)
+                    # Un placeholder de la taxonomia declara que en ese lugar
+                    # NO hay empresa: no es un holder ilegible, asi que sale de
+                    # la lista de holders (ni Applicability ni Make). Solo los
+                    # tipos de ORPHANED son modelos reales ("SLINGSBY") y quedan
+                    # en Model; los de los demas son categorias y se descartan.
+                    # Si solo habia placeholders la lista queda vacia y el AD
+                    # viaja `failed`, como cualquier lista vacia.
+                    if _is_taxonomy_placeholder(holder_name):
+                        if _placeholder_key(holder_name) in _PLACEHOLDERS_WITH_REAL_TYPES:
+                            models_list.extend(holder_models)
+                        continue
+
+                    models_list.extend(holder_models)
 
                     # Un holder cuyo nombre no se lee (envuelto en otro
                     # elemento, seccion cortada) viaja con `make` vacio en vez

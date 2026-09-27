@@ -248,10 +248,36 @@ antes de emitirla.
 
 | Fuente | Qué autoriza `success_empty` | Qué es `failed` |
 |---|---|---|
-| `easa` | Nunca — `raw_data["Applicability"] == []` solo dice que `li.tc_holder` no coincidió con nada en la celda de holders: un cambio de clase o de estructura da la misma lista vacía que un AD sin holders, y el listado no trae ninguna declaración explícita de ausencia | Lista de holders vacía o ausente; un holder cuyo nombre no se lee (envuelto en otro elemento, sección cortada: `easa.py` lo emite con `make` vacío y el AD entero falla); ≥1 fila descartada por tamaño; timeout/HTTP ≠ 200; parse error; AD ausente de la salida |
+| `easa` | Nunca — `raw_data["Applicability"] == []` solo dice que `li.tc_holder` no coincidió con nada en la celda de holders: un cambio de clase o de estructura da la misma lista vacía que un AD sin holders, y el listado no trae ninguna declaración explícita de ausencia | Lista de holders vacía o ausente; un holder cuyo nombre no se lee (envuelto en otro elemento, sección cortada: `easa.py` lo emite con `make` vacío y el AD entero falla); un AD cuyos holders son todos placeholders de la taxonomía de EASA (`Safety Information Bulletin`, `APPLIANCES`, `ORPHANED (No TC Holder)`, `Safety Directives`, `Preliminary Safety Directives`: se descartan y la lista queda vacía, ver abajo); ≥1 fila descartada por tamaño; timeout/HTTP ≠ 200; parse error; AD ausente de la salida |
 | `transport_canada` | Nunca — el scraper **no emite** `raw_data["Applicability"]`, así que no hay forma de distinguir "sin holders" de "no pude leerlo": ambiguo, no se emite evidencia | Cualquier make vacío; timeout/HTTP ≠ 200; layout de tabla no reconocido; AD ausente de la salida |
 | `federal_register` | Nunca — un AD de tipo `Appliance` **sí** tiene applicability (el fabricante/pieza del propio appliance); declararlo `success_empty` borraría filas reales. Ni el tipo de producto ni un título genérico son la fuente afirmando "no hay pares" | Cualquier make vacío (Appliance incluido), o sea título sin titular inequívoco ("Various ..."); HTTP ≠ 200 de la API, JSON malformado, documento descartado por identidad (sin AD en `docket_ids` ni amendment); AD ausente de la salida |
 | `anac_brazil`, `dgac_chile`, `anac_argentina`, `uk_caa` | Nunca — un listado sin make es el scraper **no extrayendo** el dato, no la fuente declarando que el AD no aplica a nada | Cualquier fila sin make; timeout/HTTP ≠ 200 del listado; layout no reconocido; AD ausente de la salida |
+
+**Placeholders de la taxonomía EASA.** El árbol de holders de EASA
+(`https://ad.easa.europa.eu/json/`) tiene nodos que no son empresas y llevan
+la misma clase CSS que una: la clase del documento (`Safety Information
+Bulletin`, `Safety Directives`, `Preliminary Safety Directives`), el cajón de
+appliances por capítulo ATA (`APPLIANCES`; el titular real solo está en la
+prosa del Subject) y la declaración de que el tipo no tiene titular
+(`ORPHANED (No TC Holder)`). No son un holder ilegible: declaran que en ese
+lugar **no hay empresa**. `easa.py` (`_TAXONOMY_PLACEHOLDERS`, comparación
+exacta sin distinguir mayúsculas ni espacios) los **saca de la lista de
+holders** antes de armar la applicability: no llegan a `Applicability` ni a
+`ads.make`. Solo los tipos de `ORPHANED` son modelos reales (`SLINGSBY`,
+`BRANTLY`) y se quedan en `ads.model`, que es lo que filtra la búsqueda por
+modelo; los de los demás placeholders son categorías de EASA
+(`Airworthiness`, `ATA 25 EQUIPMENT / FURNISHINGS`) y se descartan.
+
+- **Con ≥1 holder real** el AD sigue el camino normal: `success_with_rows`
+  con las filas de los holders reales, y la RPC poda las filas del
+  placeholder que hubiera guardadas. `Make` es el primer holder real.
+- **Solo placeholders**: la lista de holders queda vacía y el AD viaja
+  `failed` (EASA nunca declara `success_empty`, I-02); lo guardado queda
+  intacto y `Make` queda vacío (`ads.make` NULL). Las filas guardadas con un
+  placeholder como make en esos ADs las borra una vez una migración de
+  ad-scrapper.
+- Un holder ilegible junto a un placeholder sigue haciendo fallar el AD: el
+  descarte es solo para los nombres de la lista.
 
 En todas las fuentes **todo make vacío viaja `failed`**: las filas de
 `ad_applicability` que ya existían para ese AD quedan intactas hasta que una

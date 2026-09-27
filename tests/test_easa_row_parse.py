@@ -187,3 +187,122 @@ def test_document_class_falls_back_to_the_class_icon():
 def test_document_class_is_unknown_without_link_or_icon():
     [ad] = _parse(_MULTI_HOLDER_ROW)   # adjunto sin cola de clase, sin icono
     assert ad["Document_Class"] is None
+
+
+# ------------------------------------------- placeholders de la taxonomia EASA
+#
+# "Safety Information Bulletin", "APPLIANCES", "ORPHANED (No TC Holder)" y
+# "Safety Directives" son nodos del arbol de holders de EASA que declaran que
+# en ese lugar no hay empresa. No son un holder ilegible: salen de la lista de
+# holders (ni Applicability ni Make). Solo los tipos de ORPHANED son modelos
+# reales y quedan en Model; los de los demas son categorias de EASA. Con un
+# holder real el AD queda con ese; si solo habia placeholders la lista queda
+# vacia y el AD viaja `failed`.
+
+SIB_PAIR_ROW = _row(
+    # 2026-10: ALLSTAR PZL GLIDER + la etiqueta de clase como segundo holder.
+    "2026-10", "SZD-50-3 - Notification of uncertified parts installed",
+    [("ALLSTAR PZL GLIDER", ["SZD-50"]),
+     ("Safety Information Bulletin", ["Airworthiness"])],
+    links=[f"{_BLOB}/EASA_SIB_2026_10.pdf/SIB_2026-10_1"],
+    icon=_icon("SIB", "Safety Information Bulletin"),
+)
+ORPHANED_PAIR_ROW = _row(
+    # US-2021-26-09: BRANTLY + el tipo huerfano del mismo fabricante.
+    "US-2021-26-09", "Tail Rotor Hub - Inspections / Removal",
+    [("BRANTLY HELICOPTERS INDUSTRIES U.S.A. Co., Ltd.", ["305"]),
+     ("ORPHANED (No TC Holder)", ["BRANTLY"])],
+    links=[f"{_BLOB}/2021-26-09.pdf/AD_US-2021-26-09_1"],
+)
+APPLIANCES_PAIR_ROW = _row(
+    # Appliance con un holder real ademas del cajon ATA.
+    "2025-0100", "Equipment / Furnishings – Oxygen Mask – Inspection",
+    [("APPLIANCES", ["ATA 35 OXYGEN"]),
+     ("BAE SYSTEMS (OPERATIONS) LTD", ["BAe 146"])],
+    links=[f"{_BLOB}/EASA_AD_2025_0100.pdf/AD_2025-0100_1"],
+)
+APPLIANCES_ONLY_ROW = _row(
+    # G-2026-0004: appliance sin TC; EASA lo cuelga del capitulo ATA.
+    "G-2026-0004", "TECHTEST - HR SMITH GROUP - Equipment / Furnishings – Inspection",
+    [("APPLIANCES", ["ATA 25 EQUIPMENT / FURNISHINGS"])],
+    links=[f"{_BLOB}/G-2026-0004.pdf/AD_G-2026-0004_1"],
+)
+ORPHANED_ONLY_ROW = _row(
+    # 2016-0214: AD real sobre un tipo sin titular de TC.
+    "2016-0214", "Rudder Pivot Pins – Inspection / Replacement",
+    [("ORPHANED (No TC Holder)", ["SLINGSBY"])],
+    links=[f"{_BLOB}/EASA_AD_2016_0214.pdf/AD_2016-0214_1"],
+)
+
+
+def test_a_solo_sib_placeholder_leaves_no_holder():
+    [ad] = _parse(SOLO_SIB_ROW)
+    assert ad["Make"] == ""
+    assert ad["Applicability"] == []
+
+
+def test_a_sib_placeholder_next_to_a_real_holder_is_dropped():
+    [ad] = _parse(SIB_PAIR_ROW)
+    assert ad["Make"] == "ALLSTAR PZL GLIDER"
+    assert ad["Applicability"] == [{"make": "ALLSTAR PZL GLIDER", "models": ["SZD-50"]}]
+    assert ad["Model"] == "SZD-50"
+
+
+def test_an_orphaned_placeholder_next_to_a_real_holder_is_dropped():
+    [ad] = _parse(ORPHANED_PAIR_ROW)
+    assert ad["Make"] == "BRANTLY HELICOPTERS INDUSTRIES U.S.A. Co., Ltd."
+    assert ad["Applicability"] == [
+        {"make": "BRANTLY HELICOPTERS INDUSTRIES U.S.A. Co., Ltd.", "models": ["305"]}]
+    assert ad["Model"] == "305, BRANTLY"
+
+
+def test_an_appliances_placeholder_before_a_real_holder_does_not_take_the_make():
+    [ad] = _parse(APPLIANCES_PAIR_ROW)
+    assert ad["Make"] == "BAE SYSTEMS (OPERATIONS) LTD"
+    assert ad["Applicability"] == [{"make": "BAE SYSTEMS (OPERATIONS) LTD", "models": ["BAe 146"]}]
+
+
+def test_an_appliances_only_holder_leaves_no_holder():
+    [ad] = _parse(APPLIANCES_ONLY_ROW)
+    assert ad["Make"] == ""
+    assert ad["Applicability"] == []
+    assert ad["Model"] == ""
+
+
+def test_an_orphaned_only_holder_leaves_no_holder():
+    [ad] = _parse(ORPHANED_ONLY_ROW)
+    assert ad["Make"] == ""
+    assert ad["Applicability"] == []
+    # El tipo es dato real: sigue en ads.model para la busqueda por modelo.
+    assert ad["Model"] == "SLINGSBY"
+
+
+def test_safety_directive_placeholders_leave_no_holder():
+    html = _row("SD-2019-01", "Safety Directive",
+                [("Safety Directives", ["Airworthiness"]),
+                 ("  preliminary  safety directives ", ["Airworthiness"])],
+                links=[f"{_BLOB}/SD-2019-01.pdf/SD_SD-2019-01_1"])
+    [ad] = _parse(html)
+    assert ad["Make"] == ""
+    assert ad["Applicability"] == []
+    assert ad["Model"] == ""
+
+
+def test_a_solo_sib_placeholder_leaves_no_model():
+    [ad] = _parse(SOLO_SIB_ROW)
+    assert ad["Model"] == ""
+
+
+def test_a_company_that_only_contains_a_placeholder_word_is_kept():
+    html = _row("2026-0001", "Seats – Inspection",
+                [("AERO SEATS AND SYSTEMS", ["S-1"]), ("APPLIANCES LTD", ["X"])])
+    [ad] = _parse(html)
+    assert [h["make"] for h in ad["Applicability"]] == ["AERO SEATS AND SYSTEMS", "APPLIANCES LTD"]
+
+
+def test_an_unreadable_holder_next_to_a_placeholder_still_fails_the_ad():
+    """Descartar placeholders no tapa un holder ilegible: ese sigue viajando
+    con make vacio y el AD entero falla."""
+    html = _row("2026-0003", "x", [("<span>REAL CO</span>", ["A"]), ("APPLIANCES", ["ATA 25"])])
+    [ad] = _parse(html)
+    assert ad["Applicability"] == [{"make": "", "models": ["A"]}]
