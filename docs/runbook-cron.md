@@ -5,6 +5,23 @@ El cron es `.github/workflows/populate_db.yml` (diario, 06:00 UTC, timeout
 y marca `scrape_runs.status='error'` — un job verde significa de verdad que
 todo se escribió.
 
+## 0. Pendiente: el cron depende de los minutos de GitHub Actions
+
+Desde el 2026-09-26 `populate_db.yml` está **deshabilitado** (`gh workflow
+disable`): la cuenta se quedó sin minutos de Actions y los runs programados
+fallaban a los 4 s sin ejecutar nada. Mientras siga así no entran ADs nuevas ni
+corre la sincronización de DRS, aunque `DRS_API_ENABLED` esté encendido.
+
+Pendiente: buscar una forma de correr el scraper que no dependa de esos
+minutos (por ejemplo un runner propio o un scheduler fuera de GitHub), con los
+mismos secrets y el mismo `python populate_db.py` / `--drs`. Hasta
+entonces, al recuperar minutos:
+
+```
+gh workflow enable populate_db.yml -R MrxHuaang/scrappingAvia
+gh workflow run populate_db.yml -R MrxHuaang/scrappingAvia
+```
+
 ## 1. Diagnóstico rápido
 
 1. **Actions → Populate DB — Daily Scrape → run fallido → logs.** Cada línea
