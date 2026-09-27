@@ -382,6 +382,42 @@ def test_easa_markup_the_parser_does_not_recognize_keeps_the_stored_rows(fake, h
     assert _applic_elements(fake) == [{"ad_id": "id-2024-0195", "status": "failed", "rows": []}]
 
 
+@pytest.mark.parametrize("html, ad_number, make, model", [
+    (test_easa_row_parse.SIB_PAIR_ROW, "2026-10", "ALLSTAR PZL GLIDER", "SZD-50"),
+    (test_easa_row_parse.ORPHANED_PAIR_ROW, "US-2021-26-09",
+     "BRANTLY HELICOPTERS INDUSTRIES U.S.A. Co., Ltd.", "305"),
+    (test_easa_row_parse.APPLIANCES_PAIR_ROW, "2025-0100", "BAE SYSTEMS (OPERATIONS) LTD", "BAe 146"),
+], ids=["sib-pair", "orphaned-pair", "appliances-pair"])
+def test_an_easa_placeholder_next_to_a_real_holder_sends_only_the_real_rows(fake, html, ad_number, make, model):
+    """Del HTML al payload: el placeholder se descarta y el AD es
+    `success_with_rows` con las filas del holder real, como cualquier AD; la
+    RPC poda las filas del placeholder que hubiera guardadas."""
+    [scraped] = _parse_results_table(BeautifulSoup(html, "html.parser"))
+    populate_db.populate_relations(fake, "easa", [populate_db.normalize(scraped, "easa")])
+
+    [element] = _applic_elements(fake)
+    assert element["ad_id"] == f"id-{ad_number}"
+    assert element["status"] == "success_with_rows"
+    assert [(r["make"], r["model"]) for r in element["rows"]] == [(make, model)]
+
+
+@pytest.mark.parametrize("html, ad_number", [
+    (test_easa_row_parse.SOLO_SIB_ROW, "2026-07R2"),
+    (test_easa_row_parse.APPLIANCES_ONLY_ROW, "G-2026-0004"),
+    (test_easa_row_parse.ORPHANED_ONLY_ROW, "2016-0214"),
+], ids=["solo-sib", "appliances-only", "orphaned-only"])
+def test_an_easa_ad_with_only_placeholders_is_failed(fake, html, ad_number):
+    """Solo placeholders: la lista de holders queda vacia, y EASA nunca
+    declara `success_empty` (I-02), asi que el AD viaja `failed` y lo
+    guardado queda intacto."""
+    [scraped] = _parse_results_table(BeautifulSoup(html, "html.parser"))
+    row = populate_db.normalize(scraped, "easa")
+    assert row["make"] is None                  # ads.make nunca es un placeholder
+    populate_db.populate_relations(fake, "easa", [row])
+
+    assert _applic_elements(fake) == [{"ad_id": f"id-{ad_number}", "status": "failed", "rows": []}]
+
+
 def test_easa_bare_empty_make_without_applicability_key_is_failed_not_empty(fake):
     """Sin la clave `Applicability` (no se llego a esa seccion), un make vacio
     por si solo NO es evidencia de ausencia real -- viaja `failed`."""

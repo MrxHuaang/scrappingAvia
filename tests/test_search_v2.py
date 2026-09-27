@@ -139,7 +139,7 @@ _V2_ROW = {
     "model": "A320-214", "product_type": "Aircraft", "effective_date": "2024-01-15",
     "status": "New", "docket": None, "pdf_link": "https://example.test/a.pdf",
     "superseded_by": None, "match_confidence": "high",
-    "applicability_unknown": False, "has_text": False,
+    "applicability_unknown": False, "has_text": False, "document_class": "SIB",
 }
 
 
@@ -153,6 +153,7 @@ def test_one_rpc_per_page_and_rows_through_the_adapter(monkeypatch):
     assert page["has_more"] is True
     assert page["results"][0]["AD_Number"] == "2024-0001"
     assert page["results"][0]["Match_Confidence"] == "high"
+    assert page["results"][0]["Document_Class"] == "SIB"
 
 
 def test_offset_past_the_total_keeps_the_total(monkeypatch):

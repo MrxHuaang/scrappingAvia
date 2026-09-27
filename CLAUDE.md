@@ -66,6 +66,7 @@ amoc_available    BOOL   -- true si el texto menciona AMOC; FAA: seccion amoc o 
 superseded_to_ad_id UUID -- FK a ads.id del AD que lo reemplaza (si status=Superseded)
 docket            TEXT
 pdf_link          TEXT   -- NULL en ~867 TC ADs superseded (esperado, no es bug)
+document_class    TEXT   -- solo EASA: AD|EAD|PAD|SIB|SD|ADR; NULL si no se conoce o en otras fuentes
 raw_data          JSONB  -- dict crudo del scraper (preserva valores originales)
 first_seen_at     TIMESTAMPTZ
 last_updated_at   TIMESTAMPTZ
@@ -195,7 +196,10 @@ cuota consumida solo ante un 5xx o un fallo de transporte; con un evento
 (`filter_gate`) o 502 (`upstream`). Las filas salen por
 `webapp.search_rows.row_to_result()`, el unico adaptador (mismas claves
 `ADResult` que v1 + `Issuing_Authority`, `Match_Confidence`,
-`Applicability_Unknown`, `Has_Text`, `Superseded_By`).
+`Applicability_Unknown`, `Has_Text`, `Superseded_By`, `Document_Class`).
+`Document_Class` es `ads.document_class` tal cual (AD, EAD, PAD, SIB, SD, ADR;
+null fuera de EASA o si no se conoce): la RPC tiene que devolver la columna
+`document_class` en cada fila para que llegue.
 
 **Fuentes en v2: las decide el proxy, no el query.** El proxy de Next calcula
 plan ∩ seleccion y lo manda en `X-Effective-Sources`. Flask solo la cree
@@ -320,6 +324,25 @@ Luego: `python populate_db.py --source transport_canada`
 - La columna `Action` tiene códigos: F=Current, E=Emergency, C=Cancelled, R/S=Superseded
 - `Docket` no está en el listado HTML — solo en página de detalle (`DA_DetailE.asp?Emd=`)
 - Se guarda `Emd:{id}` como proxy de docket
+
+### EASA — el listado es de publicaciones, no solo de ADs
+- `search/advanced/result` sin filtros lista todas las clases: AD, EAD, PAD,
+  SIB, SD, ADR. La clase sale de la cola del link del adjunto
+  (`.../SIB_2007-12_1`, `.../AD_2024-0109-CN_1`) y, si no, del icono
+  `adclass_*.gif` del Subject: `scrapers/common/easa_document_class.py`, que
+  el extractor emite como `Document_Class` (None si ninguna senal es una de
+  las seis clases). `normalize()` la escribe en `ads.document_class` solo
+  para EASA y solo si se conoce; la columna la crea una migracion de
+  ad-scrapper, que tiene que estar aplicada antes de desplegar esto (sin ella
+  el upsert de EASA falla con PGRST204).
+- **Avisos de cancelacion** (numero terminado en `-CN`): un AD cancelado y
+  cualquier otro aviso `-CN` se guardan con status `Cancelled`; un **PAD
+  cancelado no se ingiere** (`easa.drop_cancelled_proposals`). El fin del
+  listado se decide por lo leido, no por lo guardado, asi que una pagina de
+  solo PADs cancelados no corta el recorrido.
+- Los SIB se quedan en el catalogo, marcados por su clase.
+- Nodos de la taxonomia que no son fabricantes (`APPLIANCES`, `ORPHANED (No
+  TC Holder)`, ...) nunca son `make`: ver docs/applicability-contract.md.
 
 ### FAA Federal Register — API
 - Usa la API REST de federalregister.gov (no scraping HTML)

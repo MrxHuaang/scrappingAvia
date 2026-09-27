@@ -10,6 +10,7 @@ import re
 import os
 from scrapers.common.http import browser_headers, get_with_backoff
 from scrapers.common.cache import load_json_cache, save_json_cache
+from scrapers.common.easa_document_class import document_class
 
 from scrapers.common.log import get_logger
 
@@ -70,6 +71,7 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
         params["fi_date_end"] = date_to
 
     all_results = []
+    seen = 0  # filas leidas del listado, incluidas las que no se ingieren
     page = 1
     total_available = None  # FIXED: se lee del HTML en page 1
 
@@ -94,12 +96,17 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
                 effective_max = min(max_pages, max_page_calc)
                 log.info(f"[EASA] Total disponible: {total_available} ADs ({effective_max} paginas)")
 
-            results = _parse_results_table(soup)
+            parsed = _parse_results_table(soup)
 
-            if not results:
+            if not parsed:
                 log.info(f"[EASA] Pagina {page}: sin resultados, deteniendo.")
                 break
 
+            # Una pagina puede traer solo PADs cancelados: se filtran DESPUES
+            # de decidir si el listado se acabo, y el total se compara contra
+            # lo leido, no contra lo que se guarda.
+            seen += len(parsed)
+            results = drop_cancelled_proposals(parsed)
             all_results.extend(results)
 
             # Log detallado cada 100 paginas, resumen breve el resto
@@ -109,7 +116,7 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
                 log.info(f"[EASA] Pagina {page}/{effective_max}: {len(results)} ADs | acumulado: {len(all_results)}")
 
             # FIXED: parar cuando ya tenemos todos o llegamos al limite
-            if len(all_results) >= (total_available or 0) or page >= effective_max:
+            if seen >= (total_available or 0) or page >= effective_max:
                 break
 
             # Parada incremental: quien llama sabe que hay en la BD y decide.
@@ -164,12 +171,13 @@ def search_main_page(model_keyword=None, max_pages=5):
                 total_available = _parse_total_results(soup)
                 log.info(f"[EASA] Total disponible: {total_available} ADs")
 
-            results = _parse_results_table(soup)
+            parsed = _parse_results_table(soup)
 
-            if not results:
+            if not parsed:
                 log.info(f"[EASA] Pagina principal {page}: sin resultados, deteniendo.")
                 break
 
+            results = drop_cancelled_proposals(parsed)
             all_results.extend(results)
             log.info(f"[EASA] Pagina principal {page}: {len(results)} ADs | acumulado: {len(all_results)}")
             time.sleep(0.8)
@@ -194,6 +202,36 @@ def search_main_page(model_keyword=None, max_pages=5):
 
 
 _PARSE_FAILURES = 0
+
+# Nodos del arbol "TC holder" de EASA que no son un fabricante: la clase del
+# documento ("Safety Information Bulletin", "Safety Directives"), el cajon de
+# appliances por capitulo ATA ("APPLIANCES", el titular real va en la prosa del
+# Subject) y la declaracion de que el tipo no tiene titular ("ORPHANED (No TC
+# Holder)"). Salen de https://ad.easa.europa.eu/json/ con la misma clase CSS
+# que cualquier empresa real; nada en el markup los distingue.
+_TAXONOMY_PLACEHOLDERS = frozenset(
+    name.casefold() for name in (
+        "Safety Information Bulletin",
+        "APPLIANCES",
+        "ORPHANED (No TC Holder)",
+        "Safety Directives",
+        "Preliminary Safety Directives",
+    )
+)
+
+
+# De todos los placeholders, solo ORPHANED cuelga tipos de aeronave reales
+# ("SLINGSBY", "BRANTLY"); bajo los demas los "tipos" son categorias de EASA
+# ("Airworthiness", "ATA 25 EQUIPMENT / FURNISHINGS"), no modelos.
+_PLACEHOLDERS_WITH_REAL_TYPES = frozenset({"orphaned (no tc holder)"})
+
+
+def _placeholder_key(holder_name: str) -> str:
+    return " ".join(holder_name.split()).casefold()
+
+
+def _is_taxonomy_placeholder(holder_name: str) -> bool:
+    return _placeholder_key(holder_name) in _TAXONOMY_PLACEHOLDERS
 
 
 def _parse_results_table(soup):
@@ -232,7 +270,7 @@ def _parse_results_table(soup):
             issue_date = cells[2].get_text(strip=True) if len(cells) > 2 else ""
 
             # Columna 3: Subject
-            subject = cells[3].get_text(strip=True) if len(cells) > 3 else ""
+            subject = _subject_text(cells[3]) if len(cells) > 3 else ""
 
             # Columna 4: Approval Holder / Type Designation.
             #
@@ -254,14 +292,24 @@ def _parse_results_table(soup):
                 for holder in tc_holders:
                     holder_name = holder.find(string=True, recursive=False)
                     holder_name = holder_name.strip() if holder_name else ""
+                    holder_models = [
+                        text for text in (t.get_text(strip=True) for t in holder.find_all("li", class_="type"))
+                        if text
+                    ]
 
-                    holder_models = []
-                    types = holder.find_all("li", class_="type")
-                    for t in types:
-                        type_text = t.get_text(strip=True)
-                        if type_text:
-                            holder_models.append(type_text)
-                            models_list.append(type_text)
+                    # Un placeholder de la taxonomia declara que en ese lugar
+                    # NO hay empresa: no es un holder ilegible, asi que sale de
+                    # la lista de holders (ni Applicability ni Make). Solo los
+                    # tipos de ORPHANED son modelos reales ("SLINGSBY") y quedan
+                    # en Model; los de los demas son categorias y se descartan.
+                    # Si solo habia placeholders la lista queda vacia y el AD
+                    # viaja `failed`, como cualquier lista vacia.
+                    if _is_taxonomy_placeholder(holder_name):
+                        if _placeholder_key(holder_name) in _PLACEHOLDERS_WITH_REAL_TYPES:
+                            models_list.extend(holder_models)
+                        continue
+
+                    models_list.extend(holder_models)
 
                     # Un holder cuyo nombre no se lee (envuelto en otro
                     # elemento, seccion cortada) viaja con `make` vacio en vez
@@ -285,17 +333,26 @@ def _parse_results_table(soup):
 
             # Columna 6: Attachments (PDF links)
             pdf_link = ""
+            attachment_links = []
             if len(cells) > 6:
                 for link in cells[6].find_all("a"):
                     href = link.get("href", "")
                     if href:
                         if not href.startswith("http"):
                             href = f"{EASA_BASE_URL}{href}"
+                        attachment_links.append(href)
                         if ".pdf" in href.lower() or "blob" in href.lower():
                             pdf_link = href
                             break
                         if not pdf_link:
                             pdf_link = href
+
+            # Clase de la publicacion (AD, EAD, PAD, SIB, SD, ADR): el listado
+            # mezcla todas. La cola del link del adjunto la declara; el icono
+            # de clase del Subject es el respaldo. None si ninguna la dice.
+            doc_class = document_class(
+                [pdf_link, *attachment_links], icon_alt=_class_icon_alt(cells[3]),
+            )
 
             # FIXED: extraer product_type desde keywords del subject
             subject_lower = subject.lower()
@@ -320,10 +377,13 @@ def _parse_results_table(soup):
                 # usa para escribir una fila de ad_applicability por par real.
                 "Applicability": applicability,
                 "Effective_Date": effective_date or issue_date,
-                "Status": "Current",
+                # Un aviso de cancelacion (numero terminado en -CN) se guarda
+                # Cancelled; el resto de lo que lista EASA esta vigente.
+                "Status": "Cancelled" if _is_cancellation_notice(ad_number) else "Current",
                 "Product_Type": product_type,  # FIXED: ya no hardcodeado a ""
                 "Docket": "",
                 "PDF_Link": pdf_link,
+                "Document_Class": doc_class,
             })
 
         except Exception as e:
@@ -333,6 +393,48 @@ def _parse_results_table(soup):
             continue
 
     return results
+
+
+# Aviso de cancelacion: EASA le agrega "-CN" al numero de lo que cancela
+# (2024-0109-CN cancela el AD 2024-0109; 26-098-CN, el PAD 26-098).
+_CANCELLATION_RE = re.compile(r"-CN$", re.I)
+
+
+def _is_cancellation_notice(ad_number: str) -> bool:
+    return bool(_CANCELLATION_RE.search((ad_number or "").strip()))
+
+
+def drop_cancelled_proposals(rows: list[dict]) -> list[dict]:
+    """
+    Quita los PADs cancelados (clase PAD y numero -CN): la cancelacion de una
+    propuesta que nunca fue directiva no entra al catalogo. Los ADs cancelados
+    y los demas avisos -CN se quedan, con status Cancelled.
+    """
+    return [
+        r for r in rows
+        if not (r.get("Document_Class") == "PAD" and _is_cancellation_notice(r.get("AD_Number", "")))
+    ]
+
+
+# Link "send comment" que EASA pone bajo el Subject de un PAD abierto a
+# comentarios; get_text() lo pegaba al final ("... – Inspectionsend comment").
+_SEND_COMMENT_RE = re.compile(r"\s*send comment\s*$", re.I)
+
+
+def _subject_text(subject_cell) -> str:
+    """Texto del Subject sin el link "send comment" de los PADs."""
+    for link in subject_cell.find_all("a"):
+        if link.get_text(strip=True).lower() == "send comment":
+            link.decompose()
+    return _SEND_COMMENT_RE.sub("", subject_cell.get_text(strip=True))
+
+
+def _class_icon_alt(subject_cell):
+    """`alt` del icono de clase del Subject (`adclass_*.gif`), o None."""
+    for img in subject_cell.find_all("img"):
+        if "adclass_" in (img.get("src") or ""):
+            return img.get("alt")
+    return None
 
 
 def _parse_total_results(soup):
