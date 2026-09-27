@@ -40,25 +40,25 @@ más estricta.
 
 Checklist previo a encender `DRS_API_ENABLED` en producción:
 
-1. **Aviso de cortesía enviado** al equipo DRS de la FAA (lo hace el
-   equipo de Hyvento; no es un paso automatizable).
-2. **User-Agent con contacto.** El cliente (`scrapers/faa_drs_api.py`) se
+1. **User-Agent con contacto.** El cliente (`scrapers/faa_drs_api.py`) se
    identifica como `Hyvento-AD-Search/<version> (+mailto:<contacto>)`, con el
    contacto en `DRS_CONTACT_EMAIL`. Sin él (o con un valor sin forma de
    email) el cliente no se construye.
-3. **Ritmo de peticiones conservador.** El cliente ya pausa al menos 2 s
+2. **Ritmo de peticiones conservador.** El cliente ya pausa al menos 2 s
    entre peticiones (`min_interval`) y reintenta 429/5xx con backoff; no
    subir el ritmo sin revisar este punto.
-4. **Nunca republicar material incorporado por referencia** (boletines de
+3. **Nunca republicar material incorporado por referencia** (boletines de
    servicio y demás documentos que un AD cita pero no reproduce).
-5. **Revisar los términos otra vez en cada renovación de key** (cada 12
+4. **Revisar los términos otra vez en cada renovación de key** (cada 12
    meses): si DRS publica términos de uso, esta sección se actualiza.
-6. **Disclaimer y atribución en el frontend** ("no afiliado con la FAA" +
+5. **Disclaimer y atribución en el frontend** ("no afiliado con la FAA" +
    "Fuente: FAA DRS"). Vive en el repo `ad-scrapper`, no en este.
 
 `DRS_API_ENABLED` (y la variable de repositorio del mismo nombre) se queda
-apagado hasta cumplir la lista. Se recomienda además una revisión legal antes
-de comercializar el producto.
+apagado hasta cumplir la lista. El aviso de cortesía al equipo DRS de la FAA
+no la condiciona: se decidió encender DRS en el primer despliegue y enviar el
+aviso después (lo envía el equipo de Hyvento; no es un paso automatizable).
+Se recomienda además una revisión legal antes de comercializar el producto.
 
 El requisito cubre todo lo que sale de DRS: `drs_documents`, las filas de
 `ads` de los AD anteriores a 1994, el texto con provider `drs` y el script de
@@ -368,8 +368,8 @@ python populate_db.py --drs --drs-doctype ADFREAD --dry-run  # sin base: barrido
 
 ### Procedimiento de la primera corrida
 
-1. **Cumplir el checklist previo** (ver arriba): aviso de cortesía enviado,
-   `DRS_CONTACT_EMAIL` configurado y el resto de los puntos.
+1. **Cumplir el checklist previo** (ver arriba): `DRS_CONTACT_EMAIL`
+   configurado y el resto de los puntos.
 2. Aplicar en la base las migraciones de ad-scrapper con `drs_documents`,
    `drs_sync_state`, `ads.drs_document_guid` y las tres RPCs, y resolver en
    ad-scrapper que las alertas de búsquedas guardadas no traten como nuevas

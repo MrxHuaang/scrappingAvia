@@ -86,12 +86,13 @@ same name for the workflow job). ADs are U.S. government works in the public
 domain (17 U.S.C. §105), the DRS API publishes no terms of use, and the
 generic faa.gov disclaimer ("provided for U.S. Government-authorized use
 only") is a computer-system warning, not a usage license. **Before enabling it
-in production, work through the pre-enable checklist:** a courtesy notice
-sent to the FAA / DRS team, the DRS client identifying itself with a contact
-User-Agent (`DRS_CONTACT_EMAIL`), conservative request rates, never
+in production, work through the pre-enable checklist:** the DRS client
+identifying itself with a contact User-Agent (`DRS_CONTACT_EMAIL`), conservative request rates, never
 republishing material incorporated by reference, re-checking terms at each
 12-month key renewal, and the frontend disclaimer/attribution (tracked in
-`ad-scrapper`). Details and first-run procedure: `docs/drs-sync.md`.
+`ad-scrapper`). A courtesy notice to the FAA / DRS team follows the first
+deploy rather than gating it. Details and first-run procedure:
+`docs/drs-sync.md`.
 
 ## Usage
 

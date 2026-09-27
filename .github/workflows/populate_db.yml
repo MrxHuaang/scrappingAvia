@@ -208,11 +208,10 @@ jobs:
   # OFF by default. It runs only when the repository variable
   # DRS_API_ENABLED is "true" (Settings -> Secrets and variables -> Actions
   # -> Variables). Before setting it in production, work through the
-  # pre-enable checklist in docs/drs-sync.md: a courtesy notice to the FAA /
-  # DRS team, the contact User-Agent (DRS_CONTACT_EMAIL below), conservative
-  # request rates, never republishing material incorporated by reference,
-  # re-checking terms at each key renewal, and the frontend attribution
-  # (tracked in ad-scrapper).
+  # pre-enable checklist in docs/drs-sync.md: the contact User-Agent
+  # (DRS_CONTACT_EMAIL below), conservative request rates, never
+  # republishing material incorporated by reference, re-checking terms at
+  # each key renewal, and the frontend attribution (tracked in ad-scrapper).
   drs:
     name: faa_drs
     if: vars.DRS_API_ENABLED == 'true'
