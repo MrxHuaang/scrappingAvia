@@ -110,6 +110,10 @@ Reglas transversales:
   parcial).
 - Duplicados de clave natural dentro de un AD se deduplican en Python **antes** de
   declarar (la RPC rechaza el payload completo si los encuentra).
+- Un lote que Postgres aborta por deadlock (SQLSTATE `40P01`, en `code` del
+  error de PostgREST) se reenvía **una vez**, idéntico, como una llamada RPC
+  nueva: la transacción abortada ya se revirtió entera. Si el reenvío falla,
+  queda su error; ningún otro error se reintenta.
 - Todo fallo de la RPC incrementa `write_errors` → `status='error'` en `scrape_runs`
   y exit ≠ 0 del proceso (regla de la Fase 2a). `populate_relations` además lee
   `status` de la respuesta de la RPC (autoridad real, no lo declarado) y loguea

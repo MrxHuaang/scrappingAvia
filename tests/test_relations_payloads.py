@@ -3,11 +3,12 @@
 Complementa test_applicability_pairs.py: alli se prueba la forma de los pares,
 aqui el payload que sale de verdad hacia PostgREST/la RPC, incluido el
 contrato v2 (model_status, product_type, empty_evidence, lectura de la
-respuesta de la RPC).
+respuesta de la RPC, reenvio de un lote ante deadlock).
 """
 
 import pytest
 from bs4 import BeautifulSoup
+from postgrest.exceptions import APIError
 
 import populate_db
 import test_easa_row_parse
@@ -426,3 +427,66 @@ def test_db_reported_failed_status_is_counted_from_the_response(fake, caplog):
     joined = " ".join(r.message for r in caplog.records)
     assert "success_with_rows" in joined
     assert "failed" in joined
+
+
+# ------------------------------------------------- reintento ante deadlock
+
+class ScriptedRpcSupabase:
+    """`rpc()` levanta, en orden, los errores de `failures` y despues responde
+    como la RPC real. Registra cada llamada: un reintento es una llamada nueva
+    (una transaccion nueva en Postgres), nunca un reintento dentro de la misma."""
+
+    def __init__(self, *failures):
+        self.failures = list(failures)
+        self.calls = []
+
+    def rpc(self, name, params):
+        self.calls.append((name, params["p_ads"]))
+        if self.failures:
+            failure = self.failures.pop(0)
+
+            class _Failing:
+                def execute(self):
+                    raise failure
+            return _Failing()
+        return FakeRpcQuery(params["p_ads"])
+
+
+def _deadlock():
+    return APIError({"code": "40P01", "message": "deadlock detected"})
+
+
+_BATCH = [{"ad_id": "id-A", "status": "success_with_rows",
+           "rows": [{"make": "AIRBUS", "model": "A320"}]}]
+
+
+def test_a_deadlocked_batch_is_resent_once_and_counted(fake):
+    sb = ScriptedRpcSupabase(_deadlock())
+    counts = populate_db._send_applicability_batches(sb, _BATCH)
+
+    assert [batch for _name, batch in sb.calls] == [_BATCH, _BATCH]
+    assert counts["success_with_rows"] == 1
+    assert not populate_db._write_errors
+
+
+def test_two_deadlocks_in_a_row_keep_the_second_error(fake):
+    sb = ScriptedRpcSupabase(_deadlock(), APIError({"code": "40P01", "message": "deadlock again"}))
+    counts = populate_db._send_applicability_batches(sb, _BATCH)
+
+    assert len(sb.calls) == 2
+    assert counts["success_with_rows"] == 0
+    assert len(populate_db._write_errors) == 1
+    assert "deadlock again" in populate_db._write_errors[0]
+
+
+@pytest.mark.parametrize("error", [
+    APIError({"code": "22023", "message": "invalid payload"}),
+    APIError({"code": "40001", "message": "could not serialize access"}),
+    RuntimeError("connection reset"),
+], ids=["invalid-payload", "serialization-failure", "transport"])
+def test_other_errors_are_not_retried(fake, error):
+    sb = ScriptedRpcSupabase(error)
+    populate_db._send_applicability_batches(sb, _BATCH)
+
+    assert len(sb.calls) == 1
+    assert len(populate_db._write_errors) == 1

@@ -569,9 +569,30 @@ def _applicability_batches(payload: list[dict]) -> list[list[dict]]:
     return batches
 
 
+# SQLSTATE de deadlock. PostgREST lo devuelve en `code` y postgrest-py lo deja
+# en `APIError.code`; cualquier otra excepcion (transporte incluido) no lo trae.
+DEADLOCK_SQLSTATE = "40P01"
+
+
+def _replace_applicability(supabase, batch: list[dict]):
+    """Una llamada a `replace_ad_applicability` y, si Postgres la aborto por
+    deadlock, UN reenvio del mismo lote. Cada intento es una llamada nueva: la
+    transaccion abortada ya se revirtio entera, asi que reenviar no duplica
+    nada. Si el segundo intento falla, ese error es el que sube; cualquier otro
+    error no se reintenta."""
+    try:
+        return supabase.rpc("replace_ad_applicability", {"p_ads": batch}).execute()
+    except Exception as e:
+        if str(getattr(e, "code", "")) != DEADLOCK_SQLSTATE:
+            raise
+        logger.warning("  applicability: deadlock (40P01) en la RPC, se reenvia el lote una vez")
+    return supabase.rpc("replace_ad_applicability", {"p_ads": batch}).execute()
+
+
 def _send_applicability_batches(supabase, payload: list[dict]) -> dict[str, int]:
-    """Envia cada lote de `_applicability_batches(payload)` a la RPC y lee la
-    respuesta real (`ad_id, status, rows_now` por AD, en orden de payload).
+    """Envia cada lote de `_applicability_batches(payload)` a la RPC (con un
+    reenvio ante deadlock, `_replace_applicability`) y lee la respuesta real
+    (`ad_id, status, rows_now` por AD, en orden de payload).
 
     El status devuelto es la autoridad, no el declarado: la RPC puede
     degradar un elemento a `failed` en silencio (la migracion v2 lo hace con
@@ -583,7 +604,7 @@ def _send_applicability_batches(supabase, payload: list[dict]) -> dict[str, int]
     db_failed: list[str] = []
     for i, batch in enumerate(_applicability_batches(payload)):
         try:
-            resp = supabase.rpc("replace_ad_applicability", {"p_ads": batch}).execute()
+            resp = _replace_applicability(supabase, batch)
             for rec in resp.data or []:
                 st = rec.get("status")
                 counts[st] = counts.get(st, 0) + 1
