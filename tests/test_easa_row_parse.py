@@ -70,3 +70,35 @@ def test_row_without_applicability_cell_does_not_break():
     assert ad["Make"] == ""
     assert ad["Applicability"] == []
     assert ad["Product_Type"] == "Engine"
+
+
+# ------------------------------------------- markup que el parser no reconoce
+#
+# Un cambio de markup no puede parecerse a "el AD no aplica a nada". Estas
+# variantes del mismo row conservan los holders en el HTML; el parser no los
+# ve (o no ve su nombre), y lo que emite tiene que llevar el AD a `failed`
+# (tests/test_relations_payloads.py lo prueba hasta el payload de la RPC).
+
+HOLDER_CLASS_RENAMED = _MULTI_HOLDER_ROW.replace('class="tc_holder"', 'class="holder"')
+HOLDER_NAME_WRAPPED = _MULTI_HOLDER_ROW.replace(
+    "AIRBUS HELICOPTERS\n", "<span>AIRBUS HELICOPTERS</span>\n")
+HOLDER_SECTION_TRUNCATED = _MULTI_HOLDER_ROW[:_MULTI_HOLDER_ROW.index("SIKORSKY")]
+
+
+def test_a_renamed_holder_class_yields_no_holders():
+    [ad] = _parse(HOLDER_CLASS_RENAMED)
+    assert ad["Applicability"] == []
+
+
+def test_a_holder_whose_name_cannot_be_read_is_kept_without_make():
+    """Saltarlo dejaria a los otros holders como la applicability completa y
+    la RPC podaria las filas del que falta; con `make` vacio el AD falla."""
+    [ad] = _parse(HOLDER_NAME_WRAPPED)
+    assert ad["Applicability"][0] == {"make": "", "models": ["AS 350 B", "AS 350 BA"]}
+    assert [h["make"] for h in ad["Applicability"][1:]] == ["SIKORSKY", "KAMOV"]
+    assert ad["Make"] == "SIKORSKY"
+
+
+def test_a_truncated_holder_section_keeps_the_nameless_holder():
+    [ad] = _parse(HOLDER_SECTION_TRUNCATED)
+    assert [h["make"] for h in ad["Applicability"]] == ["AIRBUS HELICOPTERS", ""]
