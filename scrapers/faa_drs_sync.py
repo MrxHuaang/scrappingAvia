@@ -60,8 +60,11 @@ CURSOR_OVERLAP = timedelta(hours=1)
 #: pagina); una pagina de ADFRAWD reciente con texto regulatorio pesa varios
 #: MB, asi que se parte en tres para no acercarse al limite de cuerpo.
 UPSERT_BATCH = 250
-#: Numeros de AD por llamada a `link_ads_to_drs`.
-LINK_BATCH = 1000
+#: Numeros de AD por llamada a `link_ads_to_drs`. Cada AD enlazado reescribe
+#: su fila de `ads`: 1.000 numeros tardaron ~5,3 s en produccion, pegados al
+#: `statement_timeout` de 8 s del rol de PostgREST, y la primera carga fallo
+#: con 57014. 200 deja margen aunque otras fuentes escriban a la vez.
+LINK_BATCH = 200
 #: Numeros de AD por lectura de `drs_documents`. Cada AD tiene tres
 #: documentos como mucho, asi que la respuesta no llega al tope de 1000 filas
 #: de PostgREST.
