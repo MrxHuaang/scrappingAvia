@@ -297,7 +297,8 @@ def test_a_failed_page_stops_the_run_and_never_advances_the_cursor():
     assert res.documents == 750, "page 1 is kept: the upsert is idempotent"
     assert len(session.calls) == 3, "nothing is requested after the failed page"
     # What was uploaded still gets linked.
-    assert sorted(store.links[0]["p_ad_numbers"]) == sorted({d["ad_number"] for d in _sent(store)})
+    linked = [n for call in store.links for n in call["p_ad_numbers"]]
+    assert sorted(linked) == sorted({d["ad_number"] for d in _sent(store)})
     assert report.errors
 
 
