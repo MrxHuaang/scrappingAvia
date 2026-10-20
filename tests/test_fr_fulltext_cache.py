@@ -14,6 +14,7 @@ import requests
 
 from scrapers import federal_register as fr
 from scrapers.common.cache import load_json_cache
+from scrapers.common.http import RateLimiter
 
 _DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -33,13 +34,17 @@ class _Session:
 
     def __init__(self, responses: dict):
         self.responses, self.calls, self.headers = responses, [], {}
+        self.sent: list[tuple[str, dict]] = []
         self._lock = threading.Lock()
 
-    def get(self, url, timeout=None):
+    def get(self, url, headers=None, **_kwargs):
         doc = url.split("/granules/")[1].split("/")[0]
         with self._lock:
             self.calls.append(doc)
+            self.sent.append((url, dict(headers or {})))
         answer = self.responses[doc]
+        if isinstance(answer, list):  # una respuesta por intento
+            answer = answer.pop(0)
         if isinstance(answer, Exception):
             raise answer
         return _Resp(*answer)
@@ -47,12 +52,20 @@ class _Session:
 
 @pytest.fixture()
 def govinfo(monkeypatch, tmp_path):
-    """Cache vacío en tmp, clave presente y una Session falsa por prueba."""
+    """Cache vacío en tmp, clave presente y una Session falsa por prueba.
+
+    Un solo intento por documento y sin ritmo: las pruebas del cache cuentan
+    un GET por intento. El reintento y el corte se prueban aparte."""
     monkeypatch.setattr(fr, "_FULLTEXT_CACHE_PATH", str(tmp_path / "fr_fulltext_cache.json"))
     monkeypatch.setattr(fr, "_fulltext_cache", {})
     monkeypatch.setattr(fr, "_ft_attempted", set())
     monkeypatch.setattr(fr, "_fulltext_dirty", False)
     monkeypatch.setattr(fr, "_ft_local", threading.local())
+    monkeypatch.setattr(fr, "_govinfo_failures", 0)
+    monkeypatch.setattr(fr, "_govinfo_stopped", False)
+    monkeypatch.setattr(fr, "_govinfo_limiter", RateLimiter(1e9))
+    monkeypatch.setattr(fr, "GOVINFO_RETRIES", 1)
+    monkeypatch.setattr(fr, "GOVINFO_RETRY_DELAY", 0)
     monkeypatch.setenv("GOVINFO_API_KEY", "clave-de-prueba")
     session = _Session({})
     monkeypatch.setattr(requests, "Session", lambda: session)
@@ -185,6 +198,55 @@ def test_prefetch_is_concurrent_and_skips_final_entries(govinfo):
         "2024-08105": "extracted", "2024-00993": "extracted", "E7-1708": "error"}
     fr._prefetch_fulltext(docs)  # misma corrida: nada pendiente
     assert len(govinfo.calls) == 3
+
+
+def test_the_key_travels_in_a_header_never_in_the_url(govinfo):
+    govinfo.responses["2024-08105"] = (200, _html("2024-08105.htm"))
+    fr._fetch_fulltext_fields("2024-08105", "2024-04-17", ad="2024-06-03", amendment="39-22708")
+    ((url, headers),) = govinfo.sent
+    assert "clave-de-prueba" not in url
+    assert headers == {"X-Api-Key": "clave-de-prueba"}
+
+
+def test_a_429_is_retried_within_the_same_attempt(govinfo, monkeypatch):
+    monkeypatch.setattr(fr, "GOVINFO_RETRIES", 3)
+    govinfo.responses["2024-08105"] = [(429, "slow down"), (503, "busy"), (200, _html("2024-08105.htm"))]
+    entry = fr._fetch_fulltext_fields("2024-08105", "2024-04-17", ad="2024-06-03", amendment="39-22708")
+    assert entry["status"] == "extracted" and entry["detail"] is None
+    assert govinfo.calls == ["2024-08105"] * 3
+
+
+def test_exhausted_retries_are_an_error_attempt(govinfo, monkeypatch):
+    monkeypatch.setattr(fr, "GOVINFO_RETRIES", 2)
+    govinfo.responses["2024-08105"] = [(429, "slow down"), (429, "slow down")]
+    entry = fr._fetch_fulltext_fields("2024-08105", "2024-04-17", ad="2024-06-03")
+    assert (entry["status"], entry["detail"]) == ("error", "GovInfo HTTP 429 after 2 attempts")
+
+
+def test_consecutive_unanswered_documents_stop_the_fetches_of_the_run(govinfo, monkeypatch):
+    """Tras el limite, lo que falta no se pide ni se registra como intento:
+    queda pendiente para la corrida siguiente."""
+    monkeypatch.setattr(fr, "GOVINFO_MAX_CONSECUTIVE_FAILURES", 2)
+    govinfo.responses.update({"E7-1708": (429, "x"), "2024-00993": (429, "x"),
+                              "2024-08105": (200, _html("2024-08105.htm"))})
+    fr._fetch_fulltext_fields("E7-1708", "2007-02-05", ad="2007-03-13")
+    fr._fetch_fulltext_fields("2024-00993", "2024-01-18", ad="2024-02-51")
+    assert fr._fetch_fulltext_fields("2024-08105", "2024-04-17", ad="2024-06-03") == {}
+    assert govinfo.calls == ["E7-1708", "2024-00993"]
+    assert "2024-08105" not in fr._fulltext_cache and not fr.fulltext_attempted("2024-08105")
+    fr._prefetch_fulltext([{"document_number": "2024-08105", "publication_date": "2024-04-17",
+                            "docket_ids": ["Amendment 39-22708", "AD 2024-06-03"]}])
+    assert len(govinfo.calls) == 2
+
+
+def test_any_answer_resets_the_unanswered_count(govinfo, monkeypatch):
+    monkeypatch.setattr(fr, "GOVINFO_MAX_CONSECUTIVE_FAILURES", 2)
+    govinfo.responses.update({"E7-1708": (429, "x"), "2024-00993": (404, "Not Found"),
+                              "E8-2623": (429, "x"), "2024-08105": (200, _html("2024-08105.htm"))})
+    fr._fetch_fulltext_fields("E7-1708", "2007-02-05", ad="2007-03-13")
+    assert fr._fetch_fulltext_fields("2024-00993", "2024-01-18", ad="2024-02-51")["detail"] == "GovInfo HTTP 404"
+    fr._fetch_fulltext_fields("E8-2623", "2008-02-14", ad="2008-04-01")
+    assert fr._fetch_fulltext_fields("2024-08105", "2024-04-17", ad="2024-06-03")["status"] == "extracted"
 
 
 def test_header_ad_backs_up_docket_ids_without_the_ad(govinfo):

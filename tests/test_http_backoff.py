@@ -56,6 +56,27 @@ def test_exhausted_retries_return_none(monkeypatch):
     assert http.request_with_backoff("GET", "https://example.test/x", session=session, retries=2, delay=0) is None
 
 
+def test_throttle_runs_before_every_attempt_retries_included(monkeypatch):
+    monkeypatch.setattr(http.time, "sleep", lambda _s: None)
+    session, ticks = _Session([429, 200]), []
+    http.get_with_backoff("https://example.test/x", session=session, retries=3, delay=0,
+                          throttle=lambda: ticks.append(len(session.calls)))
+    assert ticks == [0, 1]
+
+
+def test_rate_limiter_spaces_the_starts(monkeypatch):
+    clock, slept = [100.0], []
+    monkeypatch.setattr(http.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(http.time, "sleep", lambda s: slept.append(round(s, 3)))
+    limiter = http.RateLimiter(4)  # un inicio cada 0.25 s
+    for _ in range(3):
+        limiter.wait()
+    assert slept == [0.25, 0.5]
+    clock[0] += 5  # tras una pausa larga no hay deuda acumulada
+    limiter.wait()
+    assert slept == [0.25, 0.5]
+
+
 def test_get_with_backoff_sends_no_body(monkeypatch):
     monkeypatch.setattr(http.time, "sleep", lambda _s: None)
     session = _Session([200])
