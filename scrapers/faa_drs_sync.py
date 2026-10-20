@@ -21,6 +21,12 @@ Garantias:
 - Se sube pagina por pagina. Si una pagina o una llamada falla, la corrida se
   detiene y el cursor NO avanza: lo ya subido queda (es idempotente) y la
   corrida siguiente vuelve a empezar desde el mismo cursor.
+- En `sync` el cursor se guarda al final, solo si lo que sigue a la subida
+  (filas pre-1994 y texto, `before_link`) y todos los lotes de
+  `link_ads_to_drs` salieron bien. Esos pasos solo tocan los ADs de las
+  paginas de la corrida: con el cursor ya avanzado, un fallo ahi dejaba esos
+  ADs sin enlazar para siempre. Sin avanzar, la corrida siguiente vuelve a
+  traer las mismas paginas y los reintenta.
 - El cursor avanza al maximo `docLastModifiedDate` visto, acotado por la hora
   de inicio de la corrida: un documento que DRS modifique mientras se pagina
   puede correr el offset y quedar sin ver, pero su fecha sera posterior al
@@ -350,6 +356,7 @@ class DoctypeResult:
     unchanged: int = 0
     skipped: list[str] = field(default_factory=list)   # "guid: motivo"
     advanced_to: str | None = None
+    pending_cursor: str | None = None  # listo para guardar, aun no guardado
     error: str | None = None
     auth_failed: bool = False
     ad_numbers: set[str] = field(default_factory=set)  # solo de paginas ya subidas
@@ -383,8 +390,21 @@ def _chunks(items: list, size: int) -> Iterable[list]:
         yield items[i:i + size]
 
 
-def sync_doctype(client: DrsClient, store: DrsStore, doctype: str, *, now: datetime | None = None) -> DoctypeResult:
-    """Una corrida de `doctype`: primera carga o incremental segun el cursor."""
+def _advance(store: DrsStore, result: DoctypeResult) -> None:
+    """Guarda el cursor pendiente de `result`; un fallo es error del doctype."""
+    try:
+        store.advance(result.doctype, result.pending_cursor, True)
+        result.advanced_to, result.pending_cursor = result.pending_cursor, None
+    except Exception as e:
+        result.error = f"advance_drs_cursor failed: {type(e).__name__}: {e}"
+
+
+def sync_doctype(client: DrsClient, store: DrsStore, doctype: str, *, now: datetime | None = None,
+                 advance: bool = True) -> DoctypeResult:
+    """Una corrida de `doctype`: primera carga o incremental segun el cursor.
+
+    Con `advance=False` el cursor queda en `pending_cursor` y lo guarda el
+    llamador (`sync`, despues de enlazar)."""
     result = DoctypeResult(doctype)
     started = now or datetime.now(timezone.utc)
     try:
@@ -441,13 +461,32 @@ def sync_doctype(client: DrsClient, store: DrsStore, doctype: str, *, now: datet
         if result.mode == "initial":
             log.warning(f"[DRS] {doctype}: la primera carga no trajo documentos; el cursor queda sin fijar")
         return result
-    cursor = format_cursor(min(max_seen, started))
-    try:
-        store.advance(doctype, cursor, True)
-        result.advanced_to = cursor
-    except Exception as e:
-        result.error = f"advance_drs_cursor failed: {type(e).__name__}: {e}"
+    result.pending_cursor = format_cursor(min(max_seen, started))
+    if advance:
+        _advance(store, result)
     return result
+
+
+def _link(store: DrsStore, touched: list[str], report: SyncReport) -> None:
+    """`link_ads_to_drs` por lotes de LINK_BATCH, cada uno con UN reintento
+    (57014 bajo carga, deadlock o conexion caida). Un lote fallido no
+    abandona los siguientes; los fallidos quedan en `link_error`."""
+    linked, failed, last = 0, 0, None
+    batches = list(_chunks(touched, LINK_BATCH))
+    for chunk in batches:
+        for attempt in (1, 2):
+            try:
+                linked += int(store.link(chunk) or 0)
+                break
+            except Exception as e:
+                last = f"{type(e).__name__}: {e}"
+                if attempt == 1:
+                    log.warning(f"[DRS] link_ads_to_drs: lote de {len(chunk)} fallo ({last}), se reintenta una vez")
+        else:
+            failed += 1
+    report.linked = linked
+    if failed:
+        report.link_error = f"{failed} de {len(batches)} lotes fallaron; ultimo error: {last}"
 
 
 def sync(client: DrsClient, store: DrsStore, doctypes: Iterable[str] = DOCTYPES, *,
@@ -460,15 +499,18 @@ def sync(client: DrsClient, store: DrsStore, doctypes: Iterable[str] = DOCTYPES,
     `before_link` corre entre las dos cosas, con el reporte: ahi
     `populate_db` crea las filas de `ads` de los ADs anteriores a 1994, que
     asi quedan enlazadas en la misma corrida. Si falla, se reporta y el
-    enlace corre igual."""
+    enlace corre igual.
+
+    Los cursores se guardan al final, y solo si `before_link` y todos los
+    lotes del enlace salieron bien (ver la docstring del modulo)."""
     report = SyncReport()
     for doctype in doctypes:
-        res = sync_doctype(client, store, doctype, now=now)
+        res = sync_doctype(client, store, doctype, now=now, advance=False)
         report.results.append(res)
         log.info(
             f"[DRS] {doctype}: {res.mode}, {res.pages} paginas, {res.documents} enviados "
             f"(ins {res.inserted}, upd {res.updated}, sin cambio {res.unchanged}), "
-            f"{res.duplicates} duplicados, {len(res.skipped)} descartados, cursor -> {res.advanced_to}"
+            f"{res.duplicates} duplicados, {len(res.skipped)} descartados, cursor listo: {res.pending_cursor}"
         )
         if res.auth_failed:
             break
@@ -481,12 +523,16 @@ def sync(client: DrsClient, store: DrsStore, doctypes: Iterable[str] = DOCTYPES,
 
     touched = sorted(set().union(*(r.ad_numbers for r in report.results)))
     if touched:
-        linked = 0
-        try:
-            for chunk in _chunks(touched, LINK_BATCH):
-                linked += int(store.link(chunk) or 0)
-            report.linked = linked
-        except Exception as e:
-            report.link_error = f"{type(e).__name__}: {e}"
+        _link(store, touched, report)
         log.info(f"[DRS] link_ads_to_drs: {len(touched)} numeros de AD, {report.linked} ADs enlazados")
+
+    pending = [r for r in report.results if r.pending_cursor]
+    if report.before_link_error or report.link_error:
+        if pending:
+            log.warning("[DRS] cursor sin avanzar: la corrida siguiente vuelve a traer estas paginas "
+                        "y reintenta filas, texto y enlace")
+        return report
+    for res in pending:
+        _advance(store, res)
+        log.info(f"[DRS] {res.doctype}: cursor -> {res.advanced_to}")
     return report

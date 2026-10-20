@@ -345,11 +345,47 @@ def test_a_rejected_key_stops_every_doctype():
     assert len(session.calls) == 1
 
 
-def test_a_failed_link_is_an_error_but_the_cursor_already_moved():
+def test_a_failed_link_is_an_error_and_holds_the_cursor():
+    """The link only covers this run's AD numbers: moving the cursor past them
+    would leave them unlinked for good. Held, the next run brings the same
+    pages back and retries."""
     store = FakeStore(fail_link=True)
     report = sync.sync(_client(FakeSession({"ADFRAWD": _docs(3)})), store, ["ADFRAWD"], now=NOW)
-    assert store.advances and report.link_error
+    assert store.advances == [] and report.link_error
+    assert len(store.links) == 2  # one retry
+    assert report.results[0].pending_cursor and report.results[0].advanced_to is None
     assert any("link_ads_to_drs" in e for e in report.errors)
+
+
+def test_a_link_batch_that_fails_once_is_retried_and_the_others_still_run(monkeypatch):
+    monkeypatch.setattr(sync, "LINK_BATCH", 1)
+    store = FakeStore(fail_link=1)
+    report = sync.sync(_client(FakeSession({"ADFRAWD": _docs(3)})), store, ["ADFRAWD"], now=NOW)
+    assert [c["p_ad_numbers"] for c in store.links] == [["2024-00-00"], ["2024-00-00"],
+                                                        ["2024-00-01"], ["2024-00-02"]]
+    assert report.linked == 3 and report.link_error is None
+    assert [a["p_doctype"] for a in store.advances] == ["ADFRAWD"]
+
+
+def test_a_batch_failing_twice_does_not_stop_the_next_batches(monkeypatch):
+    monkeypatch.setattr(sync, "LINK_BATCH", 1)
+    store = FakeStore(fail_link=2)
+    report = sync.sync(_client(FakeSession({"ADFRAWD": _docs(3)})), store, ["ADFRAWD"], now=NOW)
+    assert len(store.links) == 4 and report.linked == 2
+    assert report.link_error.startswith("1 de 3 lotes fallaron")
+    assert store.advances == []
+
+
+def test_a_failed_before_link_step_holds_the_cursor_but_still_links():
+    store = FakeStore()
+
+    def boom(_report):
+        raise RuntimeError("backfill failed")
+
+    report = sync.sync(_client(FakeSession({"ADFRAWD": _docs(3)})), store, ["ADFRAWD"], now=NOW,
+                       before_link=boom)
+    assert report.before_link_error and store.links
+    assert store.advances == []
 
 
 # ------------------------------------------------------------ dedupe/skip --
@@ -442,13 +478,14 @@ def test_the_supabase_store_sends_the_three_rpcs_exactly():
     assert report.errors == []
     assert sb.reads == [("drs_sync_state", "last_modified, initial_scan_done", [("doctype", "ADFRAWD")])]
     names = [n for n, _ in sb.rpcs]
-    assert names == ["upsert_drs_documents", "advance_drs_cursor", "link_ads_to_drs"]
+    # The cursor goes last: only once the run's AD numbers are linked.
+    assert names == ["upsert_drs_documents", "link_ads_to_drs", "advance_drs_cursor"]
     upsert = sb.rpcs[0][1]
     assert set(upsert) == {"p_doctype", "p_documents"} and upsert["p_doctype"] == "ADFRAWD"
     assert [set(d) for d in upsert["p_documents"]] == [RECORD_KEYS]
-    assert sb.rpcs[1][1] == {"p_doctype": "ADFRAWD", "p_last_modified": "2026-09-19T08:00:00.123Z",
+    assert sb.rpcs[1][1] == {"p_ad_numbers": ["2026-18-60"]}
+    assert sb.rpcs[2][1] == {"p_doctype": "ADFRAWD", "p_last_modified": "2026-09-19T08:00:00.123Z",
                              "p_initial_scan_done": True}
-    assert sb.rpcs[2][1] == {"p_ad_numbers": ["2026-18-60"]}
     assert report.results[0].inserted == 1 and report.linked == 1
 
 

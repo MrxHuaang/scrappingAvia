@@ -128,10 +128,11 @@ class FakeStore:
     """The three sync RPCs plus the cursor read, recorded call by call."""
 
     def __init__(self, state: dict[str, dict] | None = None, *, fail_upsert_on: int | None = None,
-                 fail_read: bool = False, fail_link: bool = False):
+                 fail_read: bool = False, fail_link: bool | int = False):
         self.state = {k: dict(v) for k, v in (state or {}).items()}
         self.fail_upsert_on = fail_upsert_on
         self.fail_read = fail_read
+        # True: every link call fails; an int: that many calls fail, then they answer.
         self.fail_link = fail_link
         self.upserts: list[dict] = []
         self.advances: list[dict] = []
@@ -170,8 +171,11 @@ class FakeStore:
 
     def link(self, ad_numbers):
         self.links.append({"p_ad_numbers": list(ad_numbers)})
-        if self.fail_link:
+        if self.fail_link is True:
             raise RuntimeError("link_ads_to_drs failed")
+        if self.fail_link:
+            self.fail_link -= 1
+            raise RuntimeError("canceling statement due to statement timeout (57014)")
         return len(ad_numbers)
 
     def documents(self, doctype, ad_numbers):
