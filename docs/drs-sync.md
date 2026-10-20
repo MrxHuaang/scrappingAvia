@@ -136,9 +136,20 @@ completo).
    guardados: el upsert es idempotente y la RPC no reescribe filas sin
    cambios.
 3. **Enlace**: al final, `link_ads_to_drs` con los números de AD de las
-   páginas subidas (en lotes de 1000). Si hay varios registros por AD, la RPC
+   páginas subidas (en lotes de 200, cada uno con un reintento; un lote
+   fallido no frena los siguientes). Si hay varios registros por AD, la RPC
    prefiere `Current`, luego el `doc_last_modified` más reciente y luego el
    guid.
+4. **Cursor**: se guarda recién ahora, y solo si las filas pre-1994, el
+   texto y todos los lotes del enlace salieron bien. Esos pasos solo tocan
+   los ADs de la corrida: con el cursor ya avanzado, un fallo ahí los dejaba
+   sin enlazar para siempre. Si algo falló, la corrida siguiente vuelve a
+   traer las mismas páginas y lo reintenta.
+
+El job `faa_drs` del workflow espera a que terminen los scrapes
+(`needs: scrape`, corra como corra cada uno): el enlace reescribe las mismas
+filas de `ads` que `federal_register`, y correr los dos a la vez es lo que
+hizo fallar la primera carga con 57014.
 
 Garantías:
 
