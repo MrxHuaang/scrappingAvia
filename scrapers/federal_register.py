@@ -28,7 +28,7 @@ from utils import (
 
 from scrapers.common.cache import load_json_cache, save_json_cache
 from scrapers.common.fr_applicability import applicability_fields
-from scrapers.common.http import API_HEADERS, get_with_backoff
+from scrapers.common.http import API_HEADERS, RateLimiter, get_with_backoff
 
 from scrapers.common.log import get_logger
 
@@ -65,9 +65,26 @@ _fulltext_cache: dict | None = None
 # Una Session por hilo: requests.Session no es thread-safe, y el prefetch
 # concurrente comparte el pool de conexiones por hilo.
 _ft_local = threading.local()
-# GovInfo admite 40 req/s; 8 hilos con ~1s de latencia por granulo dejan el
-# backfill completo en minutos en vez de horas (13.5k granulos en serie).
+# 8 hilos solapan la latencia de cada granulo (~1 s fuera de EE. UU.): el
+# backfill completo baja a minutos en vez de horas (13.5k granulos en serie).
+# El ritmo no lo deciden los hilos sino _govinfo_limiter.
 FULLTEXT_WORKERS = 8
+
+# GovInfo corta una rafaga con 429. Desde un runner de Actions cada granulo
+# tarda ~0.1 s, asi que 8 hilos sin freno pasan de 70 req/s: la corrida en frio
+# del 2026-10-18 bajo ~2000 granulos y recibio 429 en los otros 11.030. Un
+# limitador comun a los hilos fija el ritmo; un 429/5xx o un error de red se
+# reintenta con backoff, y si GOVINFO_MAX_CONSECUTIVE_FAILURES documentos
+# seguidos agotan los reintentos la corrida deja de pedir: lo que falta sigue
+# pendiente para la siguiente (no se registra un intento que no se hizo).
+GOVINFO_MAX_RPS = 15
+GOVINFO_RETRIES = 4
+GOVINFO_RETRY_DELAY = 2.0
+GOVINFO_MAX_CONSECUTIVE_FAILURES = 20
+_govinfo_limiter = RateLimiter(GOVINFO_MAX_RPS)
+_govinfo_lock = threading.Lock()
+_govinfo_failures = 0     # documentos seguidos que agotaron los reintentos
+_govinfo_stopped = False  # la corrida ya no pide a GovInfo
 
 # Cache v2, una entrada por document_number:
 #   {v: 2, status, anchor, sections[], sha, detail, docket, supersedes[],
@@ -176,6 +193,26 @@ def _body_fields(html_text: str, ad: str | None, amendment: str | None) -> dict:
     return out
 
 
+def _note_govinfo_answer(answered: bool) -> None:
+    """Cuenta los documentos seguidos sin respuesta de GovInfo (reintentos
+    agotados) y, al llegar a GOVINFO_MAX_CONSECUTIVE_FAILURES, corta los GET
+    del resto de la corrida. Cualquier respuesta, 4xx incluido, reinicia la
+    cuenta: un 404 es del documento, no del servicio."""
+    global _govinfo_failures, _govinfo_stopped
+    with _govinfo_lock:
+        if answered:
+            _govinfo_failures = 0
+            return
+        _govinfo_failures += 1
+        if _govinfo_failures >= GOVINFO_MAX_CONSECUTIVE_FAILURES and not _govinfo_stopped:
+            _govinfo_stopped = True
+            log.warning(
+                f"[Federal Register] GovInfo: {_govinfo_failures} documentos seguidos sin "
+                f"respuesta tras {GOVINFO_RETRIES} intentos; se deja de pedir full-text en "
+                f"esta corrida (lo pendiente se pide en la siguiente)"
+            )
+
+
 def _fetch_fulltext_fields(doc_number: str, publication_date: str,
                            ad: str | None = None,
                            amendment: str | None = None) -> dict:
@@ -193,7 +230,7 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str,
     cache = _load_fulltext_cache()
     cached = cache.get(doc_number)
     key = os.environ.get("GOVINFO_API_KEY", "").strip()
-    if not (_fulltext_pending(doc_number) and publication_date and key):
+    if _govinfo_stopped or not (_fulltext_pending(doc_number) and publication_date and key):
         return cached or {}
 
     _ft_attempted.add(doc_number)
@@ -202,18 +239,22 @@ def _fetch_fulltext_fields(doc_number: str, publication_date: str,
         session = requests.Session()
         session.headers.update({"User-Agent": "AD-Scraper/1.0"})
         _ft_local.session = session
-    url = (
-        f"https://api.govinfo.gov/packages/FR-{publication_date}"
-        f"/granules/{doc_number}/htm?api_key={key}"
-    )
+    # La key viaja en cabecera, nunca en la URL: get_with_backoff loguea el
+    # error de red tal cual, y el de requests trae la URL completa.
+    url = f"https://api.govinfo.gov/packages/FR-{publication_date}/granules/{doc_number}/htm"
+    failures: list[str] = []
+    resp = get_with_backoff(url, session=session, headers={"X-Api-Key": key}, timeout=40,
+                            retries=GOVINFO_RETRIES, delay=GOVINFO_RETRY_DELAY,
+                            throttle=_govinfo_limiter.wait, failures=failures, tag="GovInfo")
+    _note_govinfo_answer(resp is not None)
     detail = None
-    try:
-        resp = session.get(url, timeout=40)
-        result = _body_fields(resp.text, ad, amendment) if resp.ok else None
-        if result is None:
-            detail = f"GovInfo HTTP {resp.status_code}"
-    except requests.RequestException as e:
-        result, detail = None, f"GovInfo request failed: {type(e).__name__}"
+    if resp is None:
+        tries = f" after {len(failures)} attempts" if len(failures) > 1 else ""
+        result, detail = None, f"GovInfo {failures[-1]}{tries}"
+    elif not resp.ok:
+        result, detail = None, f"GovInfo HTTP {resp.status_code}"
+    else:
+        result = _body_fields(resp.text, ad, amendment)
     if result is None:  # HTTP != 2xx o red
         result = {"v": _FT_CACHE_VERSION, "status": "error", "anchor": None, "sections": []}
     result["detail"] = detail or _ATTEMPT_DETAIL.get((result["status"], bool(result.get("anchor"))))
@@ -274,10 +315,9 @@ def _prefetch_fulltext(docs: list[dict]) -> None:
 
     El parseo despues corre en serie y encuentra todo cacheado. En serie, un
     backfill completo son ~13.5k GETs a GovInfo de ~1s cada uno (horas); con
-    FULLTEXT_WORKERS hilos baja a minutos y sigue muy por debajo del limite de
-    40 req/s de la API.
+    FULLTEXT_WORKERS hilos baja a minutos, al ritmo de GOVINFO_MAX_RPS.
     """
-    if not FETCH_FULL_TEXT:
+    if not FETCH_FULL_TEXT or _govinfo_stopped:
         return
     pending = []
     for d in docs:

@@ -13,11 +13,13 @@ alrededor de la base.
 import os
 import threading
 
+import httpx
 import pytest
 import requests
 
 import populate_db
 from scrapers import federal_register as fr
+from scrapers.common.http import RateLimiter
 
 _DIR = os.path.join(os.path.dirname(__file__), "fixtures", "fr_text")
 
@@ -79,6 +81,7 @@ class FakeTextDb:
         self.calls: list[dict] = []
         self.reads: list[list[str]] = []
         self.fail_rpc = 0  # cuántas llamadas fallan antes de responder
+        self.drop_rpc = 0  # cuántas llamadas pierden la conexión (GOAWAY)
         self.fail_reads = False
 
     def table(self, name):
@@ -91,6 +94,10 @@ class FakeTextDb:
 
         class _Call:
             def execute(self_inner):
+                if db.drop_rpc:
+                    db.drop_rpc -= 1
+                    raise httpx.RemoteProtocolError(
+                        "<ConnectionTerminated error_code:0, last_stream_id:19999, additional_data:None>")
                 if db.fail_rpc:
                     db.fail_rpc -= 1
                     raise RuntimeError("PGRST202 function not found")
@@ -121,6 +128,10 @@ def cache(monkeypatch, tmp_path):
     monkeypatch.setattr(fr, "_ft_attempted", set())
     monkeypatch.setattr(fr, "_fulltext_dirty", False)
     monkeypatch.setattr(fr, "_ft_local", threading.local())
+    monkeypatch.setattr(fr, "_govinfo_failures", 0)
+    monkeypatch.setattr(fr, "_govinfo_stopped", False)
+    monkeypatch.setattr(fr, "_govinfo_limiter", RateLimiter(1e9))
+    monkeypatch.setattr(fr, "GOVINFO_RETRIES", 1)
     monkeypatch.setattr(populate_db, "_write_errors", [])
     return fr._fulltext_cache
 
@@ -134,7 +145,7 @@ def govinfo(cache, monkeypatch):
     class _Session:
         headers: dict = {}
 
-        def get(self, url, timeout=None):
+        def get(self, url, **_kwargs):
             answer = answers[url.split("/granules/")[1].split("/")[0]]
             if isinstance(answer, Exception):
                 raise answer
@@ -381,6 +392,31 @@ def test_every_rpc_failure_is_a_write_error(govinfo):
     counts = _populate(db, *DOCS)
     assert len(db.calls) == 3
     assert counts["rpc_failed"] == 1 and sum(counts.values()) == 3
+    assert len(populate_db._write_errors) == 1
+
+
+def test_a_dropped_connection_is_resent_once(govinfo):
+    """GOAWAY tras ~10k streams: la llamada en vuelo se reenvía por una
+    conexión nueva y no cuenta como escritura fallida."""
+    for doc in DOCS:
+        govinfo[doc] = (200, _html(doc))
+        _fetch(doc)
+    db = FakeTextDb()
+    db.drop_rpc = 1
+    counts = _populate(db, *DOCS)
+    assert len(db.calls) == 4
+    assert "rpc_failed" not in counts and sum(counts.values()) == 3
+    assert not populate_db._write_errors
+
+
+def test_a_connection_dropped_twice_is_a_write_error(govinfo):
+    govinfo["2024-08105"] = (200, _html("2024-08105"))
+    _fetch("2024-08105")
+    db = FakeTextDb()
+    db.drop_rpc = 2
+    counts = _populate(db, "2024-08105")
+    assert len(db.calls) == 2
+    assert counts == {"rpc_failed": 1}
     assert len(populate_db._write_errors) == 1
 
 
