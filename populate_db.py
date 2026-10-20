@@ -20,6 +20,7 @@ import sys
 import traceback
 from datetime import datetime, timezone
 
+import httpx
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -590,10 +591,14 @@ def _replace_applicability(supabase, batch: list[dict]):
     """Una llamada a `replace_ad_applicability` y, si Postgres la aborto por
     deadlock, UN reenvio del mismo lote. Cada intento es una llamada nueva: la
     transaccion abortada ya se revirtio entera, asi que reenviar no duplica
-    nada. Si el segundo intento falla, ese error es el que sube; cualquier otro
-    error no se reintenta."""
+    nada. Lo mismo si la conexion se cayo sin respuesta (ver
+    `_replace_text_sections`): reemplazar dos veces el mismo lote deja la
+    base igual. Si el segundo intento falla, ese error es el que sube;
+    cualquier otro error no se reintenta."""
     try:
         return supabase.rpc("replace_ad_applicability", {"p_ads": batch}).execute()
+    except httpx.TransportError as e:
+        logger.warning(f"  applicability: conexion caida ({type(e).__name__}), se reenvia el lote una vez")
     except Exception as e:
         if str(getattr(e, "code", "")) != DEADLOCK_SQLSTATE:
             raise
@@ -778,8 +783,23 @@ def _text_needs_send(entry: dict, fresh: bool, stored: dict[str, str | None] | N
     return entry.get("status") == "extracted" and stored[ad_id] is None
 
 
+def _replace_text_sections(supabase, params: dict):
+    """Una llamada a `replace_ad_text_sections` y UN reenvio si la conexion se
+    cayo sin respuesta. El servidor cierra la conexion HTTP/2 tras ~10k
+    streams (GOAWAY) y la llamada en vuelo falla con ConnectionTerminated: la
+    corrida del 2026-10-18 perdio asi un AD de 13.089 y salio en error. El
+    reenvio va por una conexion nueva, y mandar dos veces el mismo intento
+    deja la base igual. Cualquier otro error sube sin reintento."""
+    try:
+        return supabase.rpc("replace_ad_text_sections", params).execute()
+    except httpx.TransportError as e:
+        logger.warning(f"  text: conexion caida ({type(e).__name__}), se reenvia la llamada una vez")
+    return supabase.rpc("replace_ad_text_sections", params).execute()
+
+
 def _send_text_sections(supabase, payload: list[tuple[str, dict, list[dict]]]) -> dict[str, int]:
-    """Una llamada a `replace_ad_text_sections` por AD y el estado que la base
+    """Una llamada a `replace_ad_text_sections` por AD (con un reenvio si se
+    cae la conexion, `_replace_text_sections`) y el estado que la base
     guardo (ok | partial | unanchored | empty | error), contado. Cada fallo
     de la RPC es un error de escritura; tras TEXT_MAX_CONSECUTIVE_FAILURES
     seguidos se abandona el resto con un solo error."""
@@ -787,9 +807,9 @@ def _send_text_sections(supabase, payload: list[tuple[str, dict, list[dict]]]) -
     consecutive = 0
     for n, (ad_id, attempt, sections) in enumerate(payload):
         try:
-            resp = supabase.rpc("replace_ad_text_sections", {
+            resp = _replace_text_sections(supabase, {
                 "p_ad_id": ad_id, "p_attempt": attempt, "p_sections": sections,
-            }).execute()
+            })
             stored = resp.data if isinstance(resp.data, str) else "unknown"
             counts[stored] = counts.get(stored, 0) + 1
             consecutive = 0
