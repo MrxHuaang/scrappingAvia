@@ -1389,6 +1389,19 @@ def _easa_known_ad_numbers(supabase) -> set[str]:
     return known
 
 
+def _actions_error(title: str, message: str) -> None:
+    """Anotacion `::error` de GitHub Actions (titulo visible en el resumen
+    del run), solo dentro de Actions. El exit 1 ya marca el job; esto dice
+    por que sin abrir el log."""
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    one_line = " ".join(message.split())
+    # Escapes de workflow commands: %, CR y LF en el mensaje; ademas : y , en el titulo.
+    msg = one_line.replace("%", "%25")
+    ttl = title.replace("%", "%25").replace(":", "%3A").replace(",", "%2C")
+    print(f"::error title={ttl}::{msg}", flush=True)
+
+
 def run_easa() -> list[dict]:
     """
     Recorrido incremental por defecto; completo los domingos o con EASA_FULL=1.
@@ -1784,9 +1797,10 @@ def main():
                 )
             else:
                 raw_results = RUNNERS[source]()
-        except Exception:
+        except Exception as e:
             error_msg = traceback.format_exc()
             logger.error(f"[{source}] ERROR durante scraping:\n{error_msg}")
+            _actions_error(f"{source} scrape failed", f"{type(e).__name__}: {e}")
             total_errors += 1
 
         # Normalizar

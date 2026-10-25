@@ -136,7 +136,6 @@ def test_scraper_consults_the_callback_after_accumulating(monkeypatch):
         def raise_for_status(self): pass
 
     monkeypatch.setattr(easa, "get_with_backoff", lambda *a, **k: FakeResp())
-    monkeypatch.setattr(easa, "BeautifulSoup", lambda *a, **k: object())
 
     def stop_after_two(rows):
         calls.append(rows)
