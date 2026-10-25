@@ -12,7 +12,7 @@ beautifulsoup4==4.15.0
     # via zephr-scrapers (pyproject.toml)
 blinker==1.9.0
     # via flask
-certifi==2026.7.22
+certifi==2026.10.23
     # via
     #   httpcore
     #   httpx
@@ -87,7 +87,7 @@ pydantic-core==2.46.4
     # via pydantic
 pyjwt[crypto]==2.15.1
     # via supabase-auth
-pypdf==6.19.0
+pypdf==6.21.2
     # via zephr-scrapers (pyproject.toml)
 python-dotenv==1.2.2
     # via zephr-scrapers (pyproject.toml)
