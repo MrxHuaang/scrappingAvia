@@ -25,6 +25,35 @@ EASA_EXPORT_CSV = f"{EASA_BASE_URL}/search/export/csv"
 # FIXED: EASA muestra 20 ADs por pagina (sin link de paginacion en HTML — es JS)
 _PAGE_SIZE = 20
 
+# Desde ~2026-10-21 ad.easa.europa.eu contesta HTTP 200 con su pagina de
+# mantenimiento ("EASA - Maintenance Page", "The SPT service is currently
+# unavailable") en cada URL. Sin tabla ni total, el recorrido leia "pagina 1
+# sin resultados", paraba y la corrida salia `completed` con 0 ADs durante
+# dias. Mientras dure, EASA publica lo nuevo en EASA_INTERIM_URL.
+EASA_INTERIM_URL = ("https://www.easa.europa.eu/en/domains/aircraft-products/"
+                    "airworthiness-directives-ad/safety-publications-tool-interim-solution")
+
+
+class EasaUnavailable(RuntimeError):
+    """El listado de EASA no esta disponible: pagina de mantenimiento, o una
+    pagina 1 vacia en un listado sin filtros (el catalogo tiene ~18k
+    publicaciones). Nunca es "0 ADs": la corrida tiene que fallar."""
+
+
+def _is_maintenance_page(soup) -> bool:
+    title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    if "maintenance page" in title.lower():
+        return True
+    return "service is currently unavailable" in soup.get_text(" ", strip=True).lower()
+
+
+def _check_available(soup, page: int, url: str) -> None:
+    if _is_maintenance_page(soup):
+        raise EasaUnavailable(
+            f"{url} (pagina {page}) devuelve la pagina de mantenimiento de EASA "
+            f"(SPT no disponible); publicaciones nuevas en {EASA_INTERIM_URL}"
+        )
+
 HEADERS = browser_headers()
 
 
@@ -88,6 +117,7 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
                 raise requests.RequestException(f"pagina {page}: reintentos agotados")
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
+            _check_available(soup, page, url)
 
             # FIXED: leer total de resultados del texto "Displaying X to Y out of total of Z"
             if total_available is None:
@@ -99,6 +129,13 @@ def search_ads(keyword=None, model_keyword=None, doc_types=None, date_from=None,
             parsed = _parse_results_table(soup)
 
             if not parsed:
+                # Sin filtros el listado es el catalogo entero: una pagina 1
+                # vacia es un listado roto o caido, no un catalogo vacio.
+                if page == 1 and not params and total_available != 0:
+                    raise EasaUnavailable(
+                        f"{url}: la pagina 1 del listado sin filtros no trae filas "
+                        f"(total leido: {total_available}); markup cambiado o sitio caido"
+                    )
                 log.info(f"[EASA] Pagina {page}: sin resultados, deteniendo.")
                 break
 
@@ -166,6 +203,7 @@ def search_main_page(model_keyword=None, max_pages=5):
             resp = session.get(url, headers=HEADERS, timeout=30)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
+            _check_available(soup, page, url)
 
             if total_available is None:
                 total_available = _parse_total_results(soup)
